@@ -33,3 +33,31 @@ final class SessionNamingTests: XCTestCase {
         XCTAssertEqual(TranscriptReader.firstPrompt(path: url.path), "이 화면 버그 고쳐줘")
     }
 }
+
+final class HookInstallerMarkerTests: XCTestCase {
+    func testClaudeTermReplacesLegacyHooks() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("hk-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let settings = dir.appendingPathComponent("settings.json")
+        let legacy = HookInstaller(settingsURL: settings, executablePath: "/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions")
+        try legacy.install()
+        // 사용자의 다른 hook 은 그대로 남아야 한다
+        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as! [String: Any]
+        var hooks = object["hooks"] as! [String: Any]
+        hooks["Stop"] = [["hooks": [["type": "command", "command": "say done"]]]]
+        object["hooks"] = hooks
+        try JSONSerialization.data(withJSONObject: object).write(to: settings)
+
+        let term = HookInstaller(settingsURL: settings, executablePath: "/x/ClaudeTerm.app/Contents/MacOS/ClaudeTermDaemon",
+                                 marker: "ClaudeTermDaemon")
+        XCTAssertEqual(try term.status(), .notInstalled)
+        XCTAssertTrue(try term.hasLegacyHooks())
+        try term.install(replacingLegacy: true)
+        XCTAssertEqual(try term.status(), .installed)
+        XCTAssertFalse(try term.hasLegacyHooks())
+        XCTAssertEqual(try legacy.status(), .notInstalled)
+        let after = try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as! [String: Any]
+        XCTAssertNotNil((after["hooks"] as! [String: Any])["Stop"])
+    }
+}

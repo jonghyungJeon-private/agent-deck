@@ -7,10 +7,15 @@ import TermWire
 // 내장 터미널의 세션을 붙잡고 있는 데몬. 앱을 끄거나 업데이트해도 셸·claude 가 계속 돌게 한다.
 // 화면을 그리지 않고, 화면마다 지난 출력만 상한을 두고 보관한다(앱이 다시 붙을 때 되살리는 용도).
 //   ClaudeTermDaemon            : 데몬(이미 떠 있으면 바로 끝남)
+//   ClaudeTermDaemon hook       : Claude Code hook(세션 기록)
 //   ClaudeTermDaemon ctl ...    : 시험·진단용 클라이언트 (list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>)
 
 if CommandLine.arguments.dropFirst().first == "ctl" {
     exit(Ctl.run(Array(CommandLine.arguments.dropFirst(2))))
+}
+// Claude Code hook(SessionStart/SessionEnd): 세션 기록을 남긴다. 데몬 실행 파일이 맡아 AppKit 을 띄우지 않고 가볍게 끝난다.
+if CommandLine.arguments.dropFirst().first == "hook" {
+    exit(HookHandler.runFromCommandLine())
 }
 
 signal(SIGPIPE, SIG_IGN)
@@ -189,8 +194,12 @@ final class Daemon {
         }
     }
 
+    /// 이 데몬 실행의 ID(앱이 데몬이 바뀌었는지 알아보는 데 쓴다)
+    let instance = UUID().uuidString
+
     var state: DaemonState {
-        DaemonState(pid: getpid(), footprint: Memory.footprint(), panes: order.compactMap { panes[$0]?.info })
+        DaemonState(pid: getpid(), footprint: Memory.footprint(), panes: order.compactMap { panes[$0]?.info },
+                    instance: instance)
     }
 
     func broadcastState() {

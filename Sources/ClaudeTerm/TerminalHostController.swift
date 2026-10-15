@@ -96,7 +96,11 @@ final class TerminalHostController: NSViewController {
         let tab = model.connected ? model.workspace.selectedTab : nil
         let visible = tab?.visibleRoot
         // 꺼진 화면이 보이게 되면 이때 되살린다(attach 보다 먼저 만들어지도록 같은 연결로 먼저 보낸다)
-        model.revive(visible?.panes ?? [])
+        // 되살린 화면은 예전 뷰(실패해 비어 있을 수 있음)를 버리고 새로 붙는다
+        for id in model.revive(visible?.panes ?? []) {
+            terminals[id]?.detach()
+            terminals[id] = nil
+        }
         let ids = Set(visible?.panes ?? [])
         for (id, terminal) in terminals where !ids.contains(id) {
             terminal.detach()

@@ -182,11 +182,14 @@ public struct DaemonState: Codable, Equatable {
     /// 데몬 자신의 메모리(phys_footprint, 바이트)
     public var footprint: UInt64
     public var panes: [PaneInfo]
+    /// 데몬이 뜰 때마다 새로 정하는 ID. PID 는 재부팅 뒤 다시 쓰일 수 있어 데몬이 바뀌었는지는 이것으로 본다(예전 데몬은 nil).
+    public var instance: String?
 
-    public init(pid: Int32, footprint: UInt64, panes: [PaneInfo]) {
+    public init(pid: Int32, footprint: UInt64, panes: [PaneInfo], instance: String? = nil) {
         self.pid = pid
         self.footprint = footprint
         self.panes = panes
+        self.instance = instance
     }
 }
 

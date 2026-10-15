@@ -10,6 +10,8 @@ private extension Color {
 /// 어두운 바탕에 고정폭 글꼴, 색은 상태와 포커스에만 쓴다.
 struct SidebarView: View {
     @ObservedObject var model: TermModel
+    /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
+    @State private var expandedAgent: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -42,6 +44,13 @@ struct SidebarView: View {
                                     Divider()
                                     openMenu(row.cwd)
                                 }
+                        case .agent(let agent, let depth, let owner):
+                            AgentRowView(agent: agent, depth: depth, owner: owner, expanded: expandedAgent == agent.id)
+                                .onTapGesture {
+                                    // 띄운 claude 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
+                                    model.focus(pane: agent.paneId)
+                                    expandedAgent = expandedAgent == agent.id ? nil : agent.id
+                                }
                         case .gap:
                             Spacer().frame(height: 10)
                         }
@@ -49,6 +58,7 @@ struct SidebarView: View {
                 }
                 .padding(.vertical, 4)
             }
+            hookBanner
             footer
         }
         .frame(minWidth: 220, maxHeight: .infinity)
@@ -72,6 +82,59 @@ struct SidebarView: View {
         .padding(.leading, 14)
         .padding(.trailing, 8)
         .frame(height: TerminalHostController.tabBarHeight)
+    }
+
+    /// hook 이 없거나 예전 앱 것이면 눈에 띄게 알린다(이름·되살리기·상태 표시가 여기에 달려 있다)
+    @ViewBuilder
+    private var hookBanner: some View {
+        let message: String? = {
+            switch model.hookState {
+            case .missing: return "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다."
+            case .legacy: return "예전 ClaudeSessions 앱으로 연결돼 있습니다. ClaudeTerm 으로 옮겨 두면 그 앱을 지워도 됩니다."
+            case .error(let detail): return "Claude Code 설정을 읽지 못했습니다: \(detail)"
+            default: return nil
+            }
+        }()
+        let canConnect: Bool = {
+            if case .error = model.hookState { return false }
+            return true
+        }()
+        if let message {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(message)
+                    .font(Font(TermAppearance.uiFont(11)))
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                    .fixedSize(horizontal: false, vertical: true)
+                if canConnect {
+                    Button {
+                        model.connectHooks()
+                    } label: {
+                        Text(model.hookState == .legacy ? "ClaudeTerm 으로 옮기기" : "연결하기")
+                            .font(Font(TermAppearance.uiFont(11, bold: true)))
+                            .foregroundStyle(Color(TermAppearance.chrome))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 4)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent)))
+                    }
+                    .buttonStyle(.plain)
+                    .help("~/.claude/settings.json 에 SessionStart·SessionEnd hook 을 넣습니다(바꾸기 전 백업)")
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(TermAppearance.accent), lineWidth: 1))
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
+        }
+        if let notice = model.notice {
+            Text(notice)
+                .font(Font(TermAppearance.uiFont(10)))
+                .foregroundStyle(Color(TermAppearance.textDim))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.bottom, 6)
+                .onTapGesture { model.notice = nil }
+        }
     }
 
     private var footer: some View {
@@ -208,7 +271,13 @@ struct WorktreeRowView: View {
                     .foregroundStyle(Color(TermAppearance.textDim))
             }
             Spacer(minLength: 4)
-            if section.rows.isEmpty {
+            if section.agents.contains(where: \.isRunning) {
+                Text("● 작업 중 \(section.agents.filter(\.isRunning).count)")
+                    .font(Font(TermAppearance.uiFont(10, bold: true)))
+                    .foregroundStyle(Color(TermAppearance.yellow))
+            } else if !section.agents.isEmpty {
+                Text("최근 작업").font(Font(TermAppearance.uiFont(10))).foregroundStyle(Color(TermAppearance.textDim))
+            } else if section.rows.isEmpty {
                 Text("세션 없음").font(Font(TermAppearance.uiFont(10))).foregroundStyle(Color(TermAppearance.textDim).opacity(0.7))
             }
         }
@@ -280,6 +349,8 @@ enum SidebarItem: Identifiable, Equatable {
     case group(FolderGroup)
     case worktree(WorktreeSection)
     case session(PaneRow, depth: Int)
+    /// 하위 에이전트(owner: 띄운 claude 화면 이름 — 다른 줄 아래에 있을 때만)
+    case agent(SubagentActivity, depth: Int, owner: String?)
     case gap(String)
 
     var id: String {
@@ -287,20 +358,90 @@ enum SidebarItem: Identifiable, Equatable {
         case .group(let group): return "g:" + group.path
         case .worktree(let section): return "w:" + section.path
         case .session(let row, _): return "s:" + row.id
+        case .agent(let agent, _, _): return "a:" + agent.sessionId + agent.id
         case .gap(let path): return "gap:" + path
         }
     }
 
     static func flatten(_ groups: [FolderGroup]) -> [SidebarItem] {
         var items: [SidebarItem] = []
+        let owners = Dictionary(groups.flatMap { $0.sections.flatMap(\.rows) }.map { ($0.id, $0.name) },
+                                uniquingKeysWith: { first, _ in first })
         for group in groups {
             items.append(.group(group))
             for section in group.sections {
-                if !section.isMain { items.append(.worktree(section)) }
-                items += section.rows.map { .session($0, depth: section.isMain ? 1 : 2) }
+                let depth = section.isMain ? 1 : 2
+                if !section.isMain {
+                    items.append(.worktree(section))
+                    // 이 작업 트리에서 일하는 하위 에이전트(띄운 claude 는 다른 줄에 있으므로 이름을 함께 보인다)
+                    items += section.agents.map { .agent($0, depth: depth, owner: owners[$0.paneId]) }
+                }
+                for row in section.rows {
+                    items.append(.session(row, depth: depth))
+                    items += row.agents.map { .agent($0, depth: depth + 1, owner: nil) }
+                }
             }
             items.append(.gap(group.path))
         }
         return items
+    }
+}
+
+/// 하위 에이전트 한 줄. 누르면 띄운 claude 화면으로 넘어가고 마지막 메시지를 펼친다.
+struct AgentRowView: View {
+    let agent: SubagentActivity
+    let depth: Int
+    let owner: String?
+    let expanded: Bool
+    @State private var hovering = false
+
+    private var when: String {
+        if agent.isRunning { return "작업 중" }
+        let minutes = max(1, Int(Date().timeIntervalSince(agent.lastActive) / 60))
+        return "\(minutes)분 전"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("↳")
+                    .font(Font(TermAppearance.uiFont(11)))
+                    .foregroundStyle(Color(TermAppearance.textDim))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agent.description)
+                        .font(Font(TermAppearance.uiFont(11)))
+                        .foregroundStyle(Color(agent.isRunning ? TermAppearance.textPrimary : TermAppearance.textDim))
+                    HStack(spacing: 0) {
+                        Text(when)
+                            .foregroundStyle(Color(agent.isRunning ? TermAppearance.yellow : TermAppearance.textDim))
+                        Text([agent.agentType, owner.map { "\($0) 의 하위 에이전트" }].compactMap { $0 }
+                            .map { " · " + $0 }.joined())
+                            .foregroundStyle(Color(TermAppearance.textDim))
+                    }
+                    .font(Font(TermAppearance.uiFont(10)))
+                }
+                .lineLimit(1)
+                .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            if expanded {
+                Text(agent.lastText ?? "아직 남긴 메시지가 없습니다.")
+                    .font(Font(TermAppearance.uiFont(10)))
+                    .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
+                    .lineLimit(8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.chromeRaised)))
+            }
+        }
+        .padding(.leading, 14 + CGFloat(depth) * 15)
+        .padding(.trailing, 10)
+        .padding(.vertical, 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .help("누르면 이 에이전트를 띄운 claude 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
     }
 }

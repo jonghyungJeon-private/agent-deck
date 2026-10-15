@@ -101,7 +101,15 @@ final class SplitTreeTests: XCTestCase {
     func testResumeCommandKeepsOtherFlags() {
         let argv = ["claude", "--dangerously-skip-permissions", "-n", "demo-1350", "--session-id", "old", "--model", "opus"]
         XCTAssertEqual(PaneRecipe.keptArgs(argv), ["--dangerously-skip-permissions", "--model", "opus"])
-        XCTAssertEqual(PaneRecipe.keptArgs(["claude", "--resume=abc", "-c", "x y"]), ["x y"])
+        XCTAssertEqual(PaneRecipe.keptArgs(["claude", "--resume=abc", "-c", "x y"]), [])
+        // 값 없는 --resume 뒤의 옵션을 먹지 않는다
+        XCTAssertEqual(PaneRecipe.keptArgs(["claude", "--resume", "--model", "opus"]), ["--model", "opus"])
+        // 처음 질문·--worktree 는 버린다(되살릴 때 질문이 다시 전송되거나 작업 트리가 새로 생기지 않게)
+        XCTAssertEqual(PaneRecipe.keptArgs(["claude", "로그인 버그 고쳐줘", "--dangerously-skip-permissions", "-w", "feat"]),
+                       ["--dangerously-skip-permissions"])
+        XCTAssertEqual(PaneRecipe.keptArgs(["claude", "--add-dir", "a", "b", "--effort", "high", "질문"]),
+                       ["--add-dir", "a", "b", "--effort", "high"])
+        XCTAssertEqual(PaneRecipe.keptArgs(["claude", "--model=opus", "--name=x", "--model"]), ["--model=opus"])
         let recipe = PaneRecipe(cwd: "/x", sessionId: "71713d11", claudeArgs: ["--dangerously-skip-permissions", "it's"])
         XCTAssertEqual(recipe.resumeCommand, "claude --resume 71713d11 --dangerously-skip-permissions 'it'\\''s'")
         XCTAssertNil(PaneRecipe(cwd: "/x").resumeCommand)

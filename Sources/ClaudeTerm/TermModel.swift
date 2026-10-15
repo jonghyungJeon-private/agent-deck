@@ -16,6 +16,8 @@ struct PaneRow: Identifiable, Equatable {
     var git: GitLocation?
     /// claude 를 띄웠던 실행 인자(세션 지정 인자 뺀 것). 되살릴 때 같은 옵션으로 띄운다.
     var claudeArgs: [String]? = nil
+    /// 이 claude 가 띄운 하위 에이전트 중 작업 트리를 특정하지 못한 것(목록에서 이 줄 아래에 보인다)
+    var agents: [SubagentActivity] = []
     /// 데몬이 꺼져 사라진 화면(탭을 열면 되살린다)
     var dormant = false
 
@@ -53,6 +55,8 @@ struct WorktreeSection: Identifiable, Equatable {
     var isMain: Bool
     var isClaude: Bool
     var rows: [PaneRow]
+    /// 이 작업 트리에서 일하는 하위 에이전트(다른 폴더의 claude 가 띄운 것)
+    var agents: [SubagentActivity] = []
 
     var id: String { path }
 }
@@ -78,6 +82,19 @@ final class TermModel: ObservableObject {
     @Published var daemonFootprint: UInt64 = 0
     @Published var appFootprint: UInt64 = 0
     @Published var lastError: String?
+    /// Claude Code hook 연결 상태(세션 짝짓기·이름·되살리기·상태 표시의 바탕)
+    @Published var hookState: HookState = .unknown
+    @Published var notice: String?
+
+    enum HookState: Equatable {
+        case unknown
+        case ok
+        /// 연결 안 됨(또는 앱을 옮겨 경로가 바뀜)
+        case missing
+        /// 예전 ClaudeSessions 앱의 hook 으로 기록 중(그 앱을 지우면 끊긴다)
+        case legacy
+        case error(String)
+    }
 
     let client = DaemonClient()
     /// 오른쪽 터미널이 붙을 곳(TerminalHostController)
@@ -87,10 +104,18 @@ final class TermModel: ObservableObject {
     /// 세션별 첫 질문(찾으면 고정). 못 찾았으면 그때 파일 크기를 적어 두고 커질 때만 다시 본다.
     private var firstPrompts: [String: (prompt: String?, size: UInt64)] = [:]
     let names = SessionNames()
+    /// 하위 에이전트 훑기(worker 전용). 10초에 한 번만.
+    private let subagents = SubagentScanner()
+    private var lastAgentScan = Date.distantPast
+    private var lastAgents: [SubagentActivity] = []
     /// 되살린 시각(그 직후 잠깐은 세션 정보를 지키려고)
     private var revivedAt: [String: Date] = [:]
     /// 만들라고 보냈지만 아직 목록에 안 나타난 화면(그 사이 온 목록 때문에 배치에서 빠지지 않게)
-    private var awaiting: Set<String> = []
+    private var awaiting: [String: Date] = [:]
+    /// 만들기를 보냈는데 이만큼 지나도 데몬 목록에 안 나타나면 실패로 본다(연결이 끊겼거나 데몬이 만들지 못함)
+    static let createTimeout: TimeInterval = 15
+    /// 되살리기에 실패한 시각(바로 다시 시도해 같은 실패를 되풀이하지 않게)
+    private var reviveFailedAt: [String: Date] = [:]
     /// 닫으라고 보냈지만 아직 목록에 남은 화면(새 탭으로 다시 붙지 않게)
     private var closing: Set<String> = []
     /// 데몬 목록을 한 번이라도 받았는지(받기 전엔 저장된 배치를 맞춰 볼 수 없다)
@@ -101,7 +126,41 @@ final class TermModel: ObservableObject {
     /// 목록에서 고른 줄 = 지금 탭의 포커스 화면
     var selectedId: String? { workspace.selectedTab?.focused }
 
+    /// hook 은 데몬 실행 파일이 맡는다(AppKit 을 띄우지 않아 가볍다)
+    private var hookInstaller: HookInstaller {
+        let path = Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ClaudeTermDaemon").path
+        return HookInstaller(executablePath: path, marker: "ClaudeTermDaemon")
+    }
+
+    func checkHooks() {
+        let installer = hookInstaller
+        worker.async { [weak self] in
+            let state: HookState
+            do {
+                let status = try installer.status()
+                let legacy = try installer.hasLegacyHooks()
+                state = status == .installed ? .ok : (legacy ? .legacy : .missing)
+            } catch {
+                state = .error(error.localizedDescription)
+            }
+            DispatchQueue.main.async { self?.hookState = state }
+        }
+    }
+
+    /// ~/.claude/settings.json 에 hook 을 넣는다(사용자가 누를 때만). 예전 ClaudeSessions hook 은 같이 뺀다.
+    func connectHooks() {
+        do {
+            let backup = try hookInstaller.install(replacingLegacy: true)
+            notice = "Claude Code 에 연결했습니다. 새로 시작하는 claude 세션부터 적용됩니다."
+                + (backup.map { "\n이전 설정 백업: \(($0.path as NSString).abbreviatingWithTildeInPath)" } ?? "")
+        } catch {
+            notice = "연결하지 못했습니다: \(error.localizedDescription)"
+        }
+        checkHooks()
+    }
+
     func start() {
+        checkHooks()
         if let data = try? Data(contentsOf: Self.layoutURL),
            let saved = try? JSONDecoder().decode(Workspace.self, from: data) {
             workspace = saved
@@ -123,7 +182,13 @@ final class TermModel: ObservableObject {
 
     func reconnect() {
         connected = client.connect()
-        if connected { client.list() } else { lastError = "데몬에 연결하지 못했습니다" }
+        if connected {
+            // 다시 붙었으면 배치가 그대로여도 화면을 새로 만들어 붙인다(끊길 때 화면을 모두 버렸으므로)
+            reconciled = false
+            client.list()
+        } else {
+            lastError = "데몬에 연결하지 못했습니다"
+        }
     }
 
     private func tick() {
@@ -145,8 +210,8 @@ final class TermModel: ObservableObject {
         worker.async { [weak self] in
             guard let self else { return }
             let newRows = self.makeRows(state.panes) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
-            let newGroups = Self.makeGroups(newRows)
-            DispatchQueue.main.async { self.show(newRows, newGroups, daemonPid: state.pid) }
+            let newGroups = Self.makeGroups(newRows, agents: self.scanAgents(newRows))
+            DispatchQueue.main.async { self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance) }
         }
     }
 
@@ -197,8 +262,29 @@ final class TermModel: ObservableObject {
         }
     }
 
+    /// 실행 중인 claude 의 하위 에이전트를 10초에 한 번 훑는다(worker 에서)
+    private func scanAgents(_ rows: [PaneRow]) -> [SubagentActivity] {
+        guard Date().timeIntervalSince(lastAgentScan) >= 10 else { return lastAgents }
+        lastAgentScan = Date()
+        let sessions = rows.compactMap { row -> (paneId: String, sessionId: String, transcript: String, worktrees: [String])? in
+            guard !row.dormant, let session = row.session,
+                  let path = session.transcriptPath ?? TranscriptReader.locate(sessionId: session.sessionId)
+            else { return nil }
+            let worktrees = row.git.map { GitWorktrees.list($0).filter { !$0.isMain }.map(\.path) } ?? []
+            return (row.id, session.sessionId, path, worktrees)
+        }
+        lastAgents = subagents.scan(sessions)
+        return lastAgents
+    }
+
     /// 폴더(저장소)별로 묶는다. 처음 나온 순서를 지키고, 저장소는 작업 트리 목록을 함께 보여 준다.
-    static func makeGroups(_ rows: [PaneRow]) -> [FolderGroup] {
+    /// 하위 에이전트는 일하는 작업 트리 아래에, 작업 트리를 모르면 띄운 claude 줄 아래에 붙인다.
+    static func makeGroups(_ rows: [PaneRow], agents: [SubagentActivity] = []) -> [FolderGroup] {
+        let rows = rows.map { row -> PaneRow in
+            var row = row
+            row.agents = agents.filter { $0.paneId == row.id && $0.worktreePath == nil }
+            return row
+        }
         var order: [String] = []
         var byKey: [String: [PaneRow]] = [:]
         var locations: [String: GitLocation] = [:]
@@ -223,23 +309,38 @@ final class TermModel: ObservableObject {
                                 isClaude: tree.isClaude, rows: members.filter {
                                     let root = $0.git?.worktreeRoot ?? key
                                     return root == tree.path || (tree.isMain && !known.contains(root))
-                                })
+                                }, agents: tree.isMain ? [] : agents.filter { $0.worktreePath == tree.path })
             }
             return FolderGroup(path: key, isGit: true, sections: sections)
         }
     }
 
-    private func show(_ newRows: [PaneRow], _ newGroups: [FolderGroup], daemonPid: Int32) {
+    private func show(_ newRows: [PaneRow], _ newGroups: [FolderGroup], daemonPid: Int32, instance: String?) {
         if newRows != rows {
             rows = newRows
             host?.refreshTitles()
         }
         if newGroups != groups { groups = newGroups }
         let live = newRows.filter { !$0.dormant }.map(\.id)
-        awaiting.subtract(live)
+        if live.contains(where: { reviveFailedAt[$0] != nil }) { lastError = nil } // 다시 시도해 되살아났다
+        live.forEach { awaiting[$0] = nil; reviveFailedAt[$0] = nil }
+        let failed = awaiting.filter { Date().timeIntervalSince($0.value) > Self.createTimeout }.map(\.key)
+        failed.forEach { awaiting[$0] = nil }
         closing.formIntersection(live)
         var next = workspace
-        var changed = next.reconcile(live: live, keep: awaiting, ignore: closing, daemonPid: daemonPid)
+        // 만들지 못한 화면: 되살리던 것은 다시 "꺼짐"으로(탭을 다시 열면 재시도), 새로 만들던 것은 뺀다
+        for id in failed where next.allPanes.contains(id) {
+            if next.recipes[id] != nil {
+                next.dormant.insert(id)
+                reviveFailedAt[id] = Date()
+                lastError = "화면을 되살리지 못했습니다. 잠시 뒤 탭을 다시 열면 다시 시도합니다."
+            } else {
+                next.forget(pane: id)
+                lastError = "새 화면을 만들지 못했습니다."
+            }
+        }
+        var changed = next.reconcile(live: live, keep: Set(awaiting.keys), ignore: closing,
+                                     daemonPid: daemonPid, daemonInstance: instance) || !failed.isEmpty
         // 되살리기 정보: 지금 폴더, claude 세션, 실행 옵션
         for row in newRows where !row.dormant && next.allPanes.contains(row.id) {
             var recipe = PaneRecipe(cwd: row.cwd, sessionId: row.session?.sessionId, claudeArgs: row.claudeArgs)
@@ -262,6 +363,9 @@ final class TermModel: ObservableObject {
         if newlyDormant { client.list() } // 꺼진 화면을 목록에 바로 보이게
     }
 
+    /// 꺼진 화면 대화 파일에서 읽은 제목(세션당 한 번만 읽는다 — 매번 읽으면 2초마다 최대 16MB 를 읽게 된다). worker 전용.
+    private var dormantTitles: [String: String?] = [:]
+
     /// 꺼진 화면의 목록 줄(worker 에서)
     private func dormantRow(id: String, recipe: PaneRecipe) -> PaneRow {
         let pane = PaneInfo(id: id, title: "", cwd: recipe.cwd, pid: 0, tty: nil, foreground: nil, cols: 0, rows: 0,
@@ -270,10 +374,17 @@ final class TermModel: ObservableObject {
         if let sid = recipe.sessionId {
             if let titled = names.userTitle(SessionNames.sessionKey(sid)) ?? names.savedAutoTitle(session: sid) {
                 name = titled
-            } else if let path = TranscriptReader.locate(sessionId: sid) {
-                let summary = TranscriptReader.read(path: path)
-                if let custom = summary.customTitle, !SessionNaming.isAutomatic(custom, cwd: recipe.cwd) { name = custom }
-                else if let ai = summary.aiTitle { name = ai }
+            } else {
+                if dormantTitles[sid] == nil {
+                    var title: String?
+                    if let path = TranscriptReader.locate(sessionId: sid) {
+                        let summary = TranscriptReader.read(path: path)
+                        if let custom = summary.customTitle, !SessionNaming.isAutomatic(custom, cwd: recipe.cwd) { title = custom }
+                        else { title = summary.aiTitle }
+                    }
+                    dormantTitles[sid] = .some(title)
+                }
+                if let title = dormantTitles[sid] ?? nil { name = title }
             }
         } else if let user = names.userTitle(SessionNames.paneKey(id)) {
             name = user
@@ -284,9 +395,12 @@ final class TermModel: ObservableObject {
 
     /// 꺼진 화면을 같은 자리(같은 ID)에 되살린다. 탭을 열어 화면이 보이게 될 때 부른다(한꺼번에 다 띄우지 않게).
     /// claude 세션이 있었으면 그 셸에서 `claude --resume <세션>` 을 원래 옵션으로 실행한다.
-    func revive(_ ids: [String]) {
-        let targets = ids.filter { workspace.dormant.contains($0) }
-        guard !targets.isEmpty, client.isConnected else { return }
+    @discardableResult
+    func revive(_ ids: [String]) -> [String] {
+        let targets = ids.filter { id in
+            workspace.dormant.contains(id) && (reviveFailedAt[id].map { Date().timeIntervalSince($0) > 30 } ?? true)
+        }
+        guard !targets.isEmpty, client.isConnected else { return [] }
         let size = host?.estimatedSize(splitting: nil) ?? (cols: 120, rows: 36)
         var next = workspace
         for id in targets {
@@ -297,7 +411,7 @@ final class TermModel: ObservableObject {
             let resumable = testPrefix != nil || (recipe.sessionId.map { TranscriptReader.locate(sessionId: $0) != nil } ?? false)
             let command = recipe.resumeCommand.map { (testPrefix.map { $0 + " " } ?? "") + $0 + "\n" }
             let cwd = FileManager.default.fileExists(atPath: recipe.cwd) ? recipe.cwd : NSHomeDirectory()
-            awaiting.insert(id)
+            awaiting[id] = Date()
             revivedAt[id] = Date()
             client.create(CreateRequest(id: id, cwd: cwd, cols: size.cols, rows: size.rows,
                                         input: resumable ? command : nil))
@@ -306,6 +420,7 @@ final class TermModel: ObservableObject {
         workspace = next // 그리는 중에 불리므로 다시 그리기는 하지 않는다
         saveLayout()
         client.list()
+        return targets
     }
 
     /// 화면 이름 하나로 정하기(worker 에서). 앞의 것이 있으면 그것을 쓴다:
@@ -431,7 +546,7 @@ final class TermModel: ObservableObject {
         let cwd = cwd ?? focusedRow?.cwd ?? NSHomeDirectory()
         let size = host?.estimatedSize(splitting: axis) ?? (cols: 120, rows: 36)
         let id = UUID().uuidString
-        awaiting.insert(id)
+        awaiting[id] = Date()
         client.create(CreateRequest(id: id, cwd: cwd, cols: size.cols, rows: size.rows,
                                     input: command.map { $0 + "\n" }))
         var next = workspace

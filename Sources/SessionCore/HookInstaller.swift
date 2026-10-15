@@ -4,16 +4,21 @@ import Foundation
 /// 사용자의 다른 설정·hook 은 그대로 두고, 바꾸기 전에 백업을 남긴다.
 public struct HookInstaller {
     public static let events = ["SessionStart", "SessionEnd"]
-    /// 이 앱이 넣은 hook 인지 알아보는 표식. 실행 파일 경로가 바뀌어도(앱 이동) 찾을 수 있게 끝부분만 본다.
-    static let commandSuffix = "ClaudeSessions\" hook"
+    /// 같은 세션 기록(SessionStore)을 남기는 hook 의 실행 파일 이름들. ClaudeSessions 앱은 ClaudeTerm 으로 바뀌어 정리 대상이다.
+    public static let legacyMarkers = ["ClaudeSessions"]
 
     public let settingsURL: URL
     public let executablePath: String
+    /// 이 앱이 넣은 hook 인지 알아보는 표식(실행 파일 이름). 경로가 바뀌어도(앱 이동) 찾을 수 있게 끝부분만 본다.
+    public let marker: String
 
-    public init(settingsURL: URL = Paths.claudeSettings, executablePath: String) {
+    public init(settingsURL: URL = Paths.claudeSettings, executablePath: String, marker: String = "ClaudeSessions") {
         self.settingsURL = settingsURL
         self.executablePath = executablePath
+        self.marker = marker
     }
+
+    static func suffix(_ marker: String) -> String { "\(marker)\" hook" }
 
     public enum Status: Equatable {
         case notInstalled
@@ -41,12 +46,12 @@ public struct HookInstaller {
         return "\"\(escaped)\" hook"
     }
 
-    static func isOurs(_ command: String) -> Bool { command.hasSuffix(commandSuffix) }
+    func isOurs(_ command: String) -> Bool { command.hasSuffix(Self.suffix(marker)) }
 
     /// 지금 settings.json 의 이 앱 hook 이 가리키는 실행 파일들
     public func installedExecutablePaths() throws -> [String] {
         let hooks = try loadSettings()["hooks"] as? [String: Any] ?? [:]
-        return Self.events.flatMap { commands(in: hooks[$0]) }.filter(Self.isOurs).compactMap { command in
+        return Self.events.flatMap { commands(in: hooks[$0]) }.filter(isOurs).compactMap { command in
             guard command.hasPrefix("\""), let end = command.dropFirst().firstIndex(of: "\"") else { return nil }
             return String(command[command.index(after: command.startIndex)..<end]).replacingOccurrences(of: "\\", with: "")
         }
@@ -65,7 +70,7 @@ public struct HookInstaller {
         let hooks = settings["hooks"] as? [String: Any] ?? [:]
         var found = 0, current = 0
         for event in Self.events {
-            for command in commands(in: hooks[event]) where Self.isOurs(command) {
+            for command in commands(in: hooks[event]) where isOurs(command) {
                 found += 1
                 if command == self.command { current += 1 }
             }
@@ -74,11 +79,21 @@ public struct HookInstaller {
         return current == Self.events.count && found == current ? .installed : .outdated
     }
 
-    /// 이미 있던 이 앱의 hook 은 지우고 현재 경로로 다시 넣는다. 백업 경로를 돌려준다(원본이 없었으면 nil).
+    /// 같은 기록을 남기는 다른(예전) 앱의 hook 이 남아 있는지
+    public func hasLegacyHooks() throws -> Bool {
+        let hooks = try loadSettings()["hooks"] as? [String: Any] ?? [:]
+        return Self.events.flatMap { commands(in: hooks[$0]) }.contains { command in
+            Self.legacyMarkers.filter { $0 != marker }.contains { command.hasSuffix(Self.suffix($0)) }
+        }
+    }
+
+    /// 이미 있던 이 앱의 hook 은 지우고 현재 경로로 다시 넣는다. replacingLegacy 면 예전 앱(ClaudeSessions)의 hook 도 뺀다
+    /// (같은 기록을 두 번 남기지 않게, 그 앱을 지워도 hook 이 깨지지 않게). 백업 경로를 돌려준다(원본이 없었으면 nil).
     @discardableResult
-    public func install() throws -> URL? {
+    public func install(replacingLegacy: Bool = false) throws -> URL? {
         var settings = try loadSettings()
-        var hooks = removingOurs(from: settings["hooks"] as? [String: Any] ?? [:])
+        var hooks = removingOurs(from: settings["hooks"] as? [String: Any] ?? [:],
+                                 also: replacingLegacy ? Self.legacyMarkers.filter { $0 != marker } : [])
         for event in Self.events {
             var groups = hooks[event] as? [Any] ?? []
             groups.append(["hooks": [["type": "command", "command": command, "timeout": 10]]])
@@ -152,8 +167,9 @@ public struct HookInstaller {
         }
     }
 
-    /// 이 앱의 hook 항목만 지운다. 비게 된 그룹·이벤트도 정리한다.
-    private func removingOurs(from hooks: [String: Any]) -> [String: Any] {
+    /// 이 앱의 hook 항목만 지운다(also 의 표식도 함께). 비게 된 그룹·이벤트도 정리한다.
+    private func removingOurs(from hooks: [String: Any], also: [String] = []) -> [String: Any] {
+        let suffixes = ([marker] + also).map(Self.suffix)
         var result = hooks
         for event in Self.events {
             guard let groups = hooks[event] as? [Any] else { continue }
@@ -161,7 +177,7 @@ public struct HookInstaller {
                 guard var dict = group as? [String: Any], let inner = dict["hooks"] as? [Any] else { return group }
                 let kept = inner.filter { item in
                     guard let command = (item as? [String: Any])?["command"] as? String else { return true }
-                    return !Self.isOurs(command)
+                    return !suffixes.contains { command.hasSuffix($0) }
                 }
                 if kept.isEmpty { return nil }
                 dict["hooks"] = kept

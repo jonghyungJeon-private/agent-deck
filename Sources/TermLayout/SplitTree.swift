@@ -204,21 +204,56 @@ public struct PaneRecipe: Codable, Equatable {
 }
 
 extension PaneRecipe {
-    /// 세션을 지정하던 인자(값을 하나 받는 것)와 홀로 쓰는 것. 되살릴 때는 빼고 --resume 으로 바꾼다.
-    static let sessionFlagsWithValue: Set<String> = ["--resume", "-r", "--session-id", "-n", "--name"]
-    static let sessionFlags: Set<String> = ["--continue", "-c", "--fork-session"]
+    /// 되살릴 때 이어받는 claude 옵션(허용 목록). 세션 지정·처음 질문·--worktree·--print 처럼
+    /// 다시 실행하면 뜻이 달라지는 것은 모두 뺀다(처음 질문이 인자로 남아 있으면 되살릴 때 다시 전송된다).
+    static let keptFlags: Set<String> = [
+        "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--ide", "--chrome", "--no-chrome",
+        "--strict-mcp-config", "--verbose", "--disable-slash-commands",
+    ]
+    /// 값을 하나 받는 옵션
+    static let keptValueFlags: Set<String> = [
+        "--model", "--effort", "--permission-mode", "--fallback-model", "--agent", "--append-system-prompt",
+        "--settings", "--autocompact", "--plugin-dir",
+    ]
+    /// 값을 여러 개 받는 옵션(다음 옵션이 나올 때까지)
+    static let keptListFlags: Set<String> = [
+        "--add-dir", "--mcp-config", "--allowedTools", "--allowed-tools", "--disallowedTools", "--disallowed-tools",
+    ]
 
-    /// claude 실행 인자(맨 앞 실행 파일 포함)에서 세션 지정 인자를 뺀 나머지
+    /// claude 실행 인자(맨 앞 실행 파일 포함)에서 되살릴 때 쓸 옵션만 고른다
     public static func keptArgs(_ argv: [String]) -> [String] {
         var kept: [String] = []
-        var skipNext = false
-        for arg in argv.dropFirst() {
-            if skipNext { skipNext = false; continue }
-            if sessionFlagsWithValue.contains(arg) { skipNext = true; continue }
-            if sessionFlags.contains(arg) { continue }
-            if sessionFlagsWithValue.contains(where: { arg.hasPrefix($0 + "=") }) { continue }
-            kept.append(arg)
+        var index = argv.index(after: argv.startIndex)
+        func takeValues(max: Int) {
+            var taken = 0
+            while index < argv.endIndex, taken < max, !argv[index].hasPrefix("-") {
+                kept.append(argv[index])
+                index += 1
+                taken += 1
+            }
         }
+        while index < argv.endIndex {
+            let arg = argv[index]
+            index += 1
+            guard arg.hasPrefix("-") else { continue } // 처음 질문 같은 위치 인자는 버린다
+            let name = arg.split(separator: "=", maxSplits: 1).first.map(String.init) ?? arg
+            if arg.contains("=") {
+                if keptValueFlags.contains(name) || keptListFlags.contains(name) { kept.append(arg) }
+            } else if keptFlags.contains(arg) {
+                kept.append(arg)
+            } else if keptValueFlags.contains(arg) {
+                kept.append(arg)
+                takeValues(max: 1)
+            } else if keptListFlags.contains(arg) {
+                kept.append(arg)
+                takeValues(max: .max)
+            } else {
+                // 모르는 옵션은 뒤따르는 값까지 버린다(값인지 위치 인자인지 알 수 없으므로 둘 다 버려도 안전)
+                while index < argv.endIndex, !argv[index].hasPrefix("-") { index += 1 }
+            }
+        }
+        // 값 없이 끝난 값 옵션(예: 맨 끝 --model)은 빼서 claude 가 다음 인자를 값으로 먹지 않게 한다
+        if let last = kept.last, keptValueFlags.contains(last) || keptListFlags.contains(last) { kept.removeLast() }
         return kept
     }
 
@@ -243,6 +278,8 @@ public struct Workspace: Codable, Equatable {
     public var recipes: [String: PaneRecipe] = [:]
     /// 배치를 맞춘 데몬. 다른 데몬(강제 종료·재부팅 뒤 새로 뜬 것)이면 사라진 화면을 지우지 않고 꺼진 화면으로 둔다.
     public var daemonPid: Int32?
+    /// 배치를 맞춘 데몬 실행 ID(있으면 PID 대신 이것으로 데몬이 바뀌었는지 본다)
+    public var daemonInstance: String?
     /// 꺼진 화면(탭을 열면 같은 자리에 되살린다)
     public var dormant: Set<String> = []
 
@@ -251,7 +288,7 @@ public struct Workspace: Codable, Equatable {
         self.selected = selected
     }
 
-    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, dormant }
+    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant }
 
     // 예전 배치 파일(되살리기 정보 없음)도 읽는다
     public init(from decoder: Decoder) throws {
@@ -260,6 +297,7 @@ public struct Workspace: Codable, Equatable {
         selected = try c.decodeIfPresent(String.self, forKey: .selected)
         recipes = try c.decodeIfPresent([String: PaneRecipe].self, forKey: .recipes) ?? [:]
         daemonPid = try c.decodeIfPresent(Int32.self, forKey: .daemonPid)
+        daemonInstance = try c.decodeIfPresent(String.self, forKey: .daemonInstance)
         dormant = try c.decodeIfPresent(Set<String>.self, forKey: .dormant) ?? []
     }
 
@@ -310,11 +348,17 @@ public struct Workspace: Codable, Equatable {
     /// - 어느 탭에도 없는 화면은 새 탭으로 붙인다.
     @discardableResult
     public mutating func reconcile(live: [String], keep: Set<String> = [], ignore: Set<String> = [],
-                                   daemonPid: Int32? = nil) -> Bool {
+                                   daemonPid: Int32? = nil, daemonInstance: String? = nil) -> Bool {
         let before = self
         let liveSet = Set(live)
-        let restarted = daemonPid != nil && self.daemonPid != nil && daemonPid != self.daemonPid
+        let restarted: Bool
+        if let daemonInstance, let saved = self.daemonInstance {
+            restarted = daemonInstance != saved
+        } else {
+            restarted = daemonPid != nil && self.daemonPid != nil && daemonPid != self.daemonPid
+        }
         if let daemonPid { self.daemonPid = daemonPid }
+        if let daemonInstance { self.daemonInstance = daemonInstance }
         for pane in allPanes where !liveSet.contains(pane) && !keep.contains(pane) {
             if dormant.contains(pane) { continue }
             if restarted, recipes[pane] != nil {
