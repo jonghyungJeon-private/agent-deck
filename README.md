@@ -1,126 +1,37 @@
-# Claude Sessions
+# Claude Term
 
-재부팅하거나 터미널 앱을 다시 켜도 **열려 있던 Claude Code 세션을 메뉴바에서 클릭 한 번으로 이어 여는** macOS 앱.
+Claude Code 세션을 위한 가벼운 터미널 앱(macOS, 사내 배포용·서명 없음).
+왼쪽은 폴더(git 저장소)·작업 트리별로 묶은 세션 목록, 오른쪽은 Ghostty 식 탭·분할 터미널이다.
+셸과 claude 는 앱이 아니라 백그라운드 데몬이 붙잡고 있어서 앱을 끄거나 업데이트해도 세션이 계속 돌고,
+데몬까지 꺼져도(강제 종료·재부팅) 탭을 열면 `claude --resume` 으로 같은 자리에 되살린다.
 
-- 목록: **실행 중**은 터미널(Ghostty·iTerm2…)별 → 프로젝트(git 저장소)별, **꺼짐**은 프로젝트별로 묶어 보여줌
-- 실행 중인 세션: 클릭하면 그 세션이 돌고 있는 터미널의 탭으로 이동
-- 꺼진 세션(창 닫기·앱 종료·재부팅): 클릭하면 터미널 **새 탭**에서 `claude --resume <id>` 로 이어 열기
-- 세션 제목(Claude 자동 제목 / `-n` 이름), 폴더·브랜치, 마지막 요청을 보여줌
-
-- **모두 열기 (배치 유지)**: 꺼진 세션을 원래 창·탭·분할 배치대로 한 번에 연다
-  - 배치는 **터미널마다 따로** 기록한다(`layout-iterm2.json`, `layout-ghostty.json`). 창이 여러 개면 창마다 기록한다.
-  - 15초마다 지금 배치로 갱신하되, 통째로 닫힌 창의 기록은 남겨 둔다(창을 하나씩 닫거나 터미널을 끄는 도중이어도 자리를 잃지 않는다).
-  - 같은 창·탭의 세션이 아직 열려 있으면(예: 분할 A|B 중 A 만 닫음) 새 창 대신 **그 옆을 나눠** 붙이고, 탭이 통째로 닫혔으면 그 창에 새 탭으로 연다(iTerm2).
-- **중복 실행 방지**: 열기 직전에 claude 프로세스를 다시 확인한다. 이미 떠 있는 세션, 방금 열라고 보낸 세션(claude 가 뜰 때까지 최대 45초)은 다시 열지 않는다.
-  연속 클릭, 앱과 명령줄 동시 실행도 같은 잠금을 쓴다. 목록에는 주황색 "여는 중…"으로 보인다.
-- 빈 화면 판단: 그 화면(tty)에 셸 말고 다른 프로그램(claude, vim, ssh, 서버 등)이 하나라도 돌면 그 화면에는 입력하지 않는다.
-
-지원 터미널(설정에서 선택):
-
-| | 새 탭으로 열기 | 탭 찾기 | 배치 기록 | 되살린 빈 창 채우기 |
-|---|---|---|---|---|
-| iTerm2 3.5+ | ✔ | tty 로 정확히 | tty 로 정확히 | ✔ (같은 모양 창이 있으면) |
-| Ghostty 1.3+ | ✔ | 화면 제목으로 | 화면 제목으로(같은 제목이 여럿이면 비워 둠) | 꺼둠 — 항상 새 창에 배치를 만든다 (아래 참고) |
-
-Ghostty 는 화면별 tty 를 알려주지 않아 Claude 가 바꾸는 화면 제목("✳ 세션 제목")으로 짝짓는다. 같은 제목의 화면·세션이 여럿이면 자리를 바꿔 기록할 수 있어 짝짓지 않는다.
-Ghostty 가 되살린 빈 셸에 명령을 입력하는 기능은 시험 중 Ghostty 가 멈춘 일이 있어(2026-10-13) 원인을 확인할 때까지 꺼 두었다.
-분할 방향은 두 터미널 모두 알려주지 않으므로 새 창에 다시 만들 때는 설정의 "분할 방향"을 쓴다.
-요구 사항: macOS 13+, Claude Code.
+목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지"만, 최대한 가볍게. 편집기·파일 트리·diff·브라우저는 넣지 않는다.
+(예전 메뉴바 앱 ClaudeSessions 는 이 앱으로 대체되어 코드에서 뺐다. 세션 기록 위치 `~/Library/Application Support/ClaudeSessions/` 는 그대로 쓴다.)
 
 ## 설치 (사내)
 
 ```bash
-scripts/install.sh <ClaudeSessions-x.y.z.zip 경로 또는 URL>
+scripts/install.sh dist/ClaudeTerm-0.1.0.zip      # 또는 사내 저장소 URL
 ```
 
-서명되지 않은 앱이라 스크립트가 격리 속성(quarantine)을 지우고 `/Applications` 에 넣는다(쓸 수 없는 계정이면 `~/Applications`).
-새 앱을 옆에 다 복사한 뒤 바꿔 끼우므로, 중간에 실패해도 기존 앱과 hook 경로는 그대로다.
-zip 을 브라우저로 받아 직접 열면 macOS 가 막으니 스크립트를 쓴다.
-
-처음 실행하면:
-1. 앱을 열면 세션 목록 창이 뜬다 → **Claude Code 연결** (창은 메뉴바 아이콘이나 앱을 다시 열어 불러올 수 있다. 아이콘이 노치에 가려질 수 있음)
-   `~/.claude/settings.json` 에 SessionStart / SessionEnd hook 이 추가된다(기존 설정 유지, `settings.json.bak-claude-sessions-*` 백업).
-   이미 열려 있던 세션 중 실행 인자에 세션 ID 가 있는 것은 바로 가져온다.
-2. 세션을 처음 열 때 "ClaudeSessions 가 Ghostty 를 제어하려고 합니다" → **허용**
-3. (권장) 설정 → **로그인 시 자동 실행**
-
-## 동작 방식
-
-```
-claude 시작 ── SessionStart hook ──▶ ~/Library/Application Support/ClaudeSessions/sessions/<id>.json
-/exit · Ctrl-D · /clear ── SessionEnd ──▶ 기록 삭제
-창 닫기 · 앱 종료 ── SessionEnd(other) ──▶ 기록 유지(꺼짐)
-재부팅 ── (hook 없음) ──▶ 기록 유지, claude 프로세스가 없으니 꺼짐
-```
-
-- 같은 세션을 두 화면에서 열었다가 하나만 닫으면, 남은 claude 로 기록을 옮긴다(hook 또는 앱의 5초 새로 고침).
-- 기록 파일은 앱·명령줄·여러 hook 이 동시에 고쳐도 서로 덮어쓰지 않게 잠금(`sessions/.lock`) 안에서 바꾼다.
-- iTerm2 는 앱을 강제 종료해도 세션 프로세스를 살려 두었다가 다시 켤 때 붙인다. 이때 세션은 "실행 중"으로 남고 다시 열지 않는다.
-
-- 실행 중 여부는 기록한 claude PID + 프로세스 시작 시각으로 판단한다(PID 재사용 구분).
-- `claude -p` 같은 비대화형 실행, 터미널 없이 뜬 세션(SDK·IDE)은 기록하지 않는다.
-- 제목·마지막 요청은 `~/.claude/projects/**/<id>.jsonl` 의 `ai-title` / `custom-title` / `last-prompt` 에서 읽는다.
-- 꺼진 세션은 설정한 보관 기간(기본 14일)이 지나면 목록에서 정리된다.
-
-## 설정
-
-| 항목 | 기본값 | 설명 |
-|---|---|---|
-| 꺼진 세션 열 곳 | 세션이 돌던 터미널 | "항상 위 터미널"로 바꾸면 Ghostty 세션도 설정한 터미널(예: iTerm2)에 같은 배치로 연다 |
-| 실행 명령 | `claude --resume {id}` | 새 탭의 셸에 입력된다. `{id}` `{name}` `{cwd}` 사용 가능(셸 인용 처리됨, 따옴표로 감쌀 필요 없음) |
-| 권한 확인 건너뛰기 | 꺼짐 | 켜면 명령 끝에 `--dangerously-skip-permissions` 를 붙인다. 세션 우클릭 → "권한 확인 없이 이어 열기" 로 한 번만 쓸 수도 있다 |
-| 분할 방향 | 좌우 | 모두 열기에서 새 창에 분할을 다시 만들 때 |
-| 꺼진 세션 보관 | 14일 | |
-| Dock 에 표시 | 켜짐 | 끄면 메뉴바 전용 |
-| 로그인 시 자동 실행 | 꺼짐 | |
-
-Dock 아이콘을 누르거나 앱을 다시 열면 세션 목록 창이 뜬다. 아이콘은 `scripts/make-icon.swift` 로 다시 그릴 수 있다.
-
-## 명령줄
-
-```bash
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions list         # 기록 목록 (● 실행 중 / ◐ 여는 중 / ○ 꺼짐)
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions refresh      # 앱의 새로 고침과 같은 정리 후 목록
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions open <id>    # 터미널 새 탭에서 이어 열기(이미 열려 있으면 거절)
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions restore-all  # 꺼진 세션을 기록된 배치대로 모두 열기
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions layout [--save]  # 터미널별 지금 배치·화면별 세션·기록된 배치(진단용)
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions focus <id>   # 실행 중 세션의 탭으로 이동
-ClaudeSessions.app/Contents/MacOS/ClaudeSessions hook         # (Claude Code hook 용)
-```
-
-## 제거
-
-설정 → **연결 해제** (hook 제거) 후 앱 삭제. 기록은 `~/Library/Application Support/ClaudeSessions` 에 있다.
+- `/Applications`(쓸 수 없으면 `~/Applications`)에 설치하고 Gatekeeper 격리 속성을 지운다. 실행 중이면 바꿔 끼운다(세션은 유지).
+- 처음 열면 사이드바 아래 **연결하기** 를 눌러 Claude Code hook 을 넣는다(세션 이름·되살리기·상태 표시에 필요).
+  예전 ClaudeSessions 를 쓰던 PC 는 **ClaudeTerm 으로 옮기기** 가 뜨며, 누르면 그 hook 을 이 앱 것으로 바꾼다(설정 백업을 남김).
 
 ## 개발
 
 ```bash
 swift build && swift test
-scripts/build-app.sh                 # dist/ClaudeSessions.app, dist/ClaudeSessions-<버전>.zip (universal)
-VERSION=0.2.0 ARCHS=arm64 scripts/build-app.sh
+scripts/build-term-proto.sh                     # dist/ClaudeTerm.app + dist/ClaudeTerm-<버전>.zip
+VERSION=0.2.0 scripts/build-term-proto.sh
 ```
 
-`CLAUDE_SESSIONS_HOME=<폴더>` 로 기록 위치를 바꿔 실제 기록과 분리해 테스트할 수 있다.
+- 시험은 실제 기록·데몬과 분리해서: `CLAUDE_TERM_HOME=<폴더> CLAUDE_SESSIONS_HOME=<폴더>`.
+- 구조: `Sources/ClaudeTerm`(앱), `Sources/ClaudeTermDaemon`(PTY 를 붙잡는 데몬, `hook`·`ctl` 명령), `Sources/TermWire`(앱↔데몬 메시지),
+  `Sources/TermLayout`(탭·분할·되살리기 정보, 작업 트리 읽기), `Sources/SessionCore`(hook 처리·세션 기록·대화 파일 읽기·프로세스 정보),
+  `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
 
-알려진 한계:
-- 분할 방향·비율은 터미널이 알려주지 않아 새로 만들 때는 설정의 방향으로 차례로 나눈다(2×2 같은 혼합 배치는 근사). 살아 있는 화면 옆에 붙일 때도 오른쪽(아래)에 붙는다.
-- `CLAUDE_CONFIG_DIR` 로 Claude 설정 폴더를 바꾼 경우는 아직 지원하지 않는다(항상 `~/.claude`).
-
-### 구조
-
-- `Sources/SessionCore` — hook 처리, 기록 저장소, settings.json 병합, 대화 파일 요약, 프로세스 정보
-- `Sources/ClaudeSessions` — 메뉴바 UI, 설정 창, 터미널 연동(`TerminalLauncher`; 터미널 추가 시 여기에 구현 추가)
-- `Sources/TermWire`, `Sources/CPTY`, `Sources/ClaudeTermDaemon`, `Sources/ClaudeTerm` — 내장 터미널 시제품(아래)
-
-## 내장 터미널 시제품 (ClaudeTerm)
-
-외부 터미널 대신 앱 안에 터미널을 두는 실험. 왼쪽은 세션 목록, 오른쪽은 터미널(SwiftTerm).
-기존 ClaudeSessions.app 과 별개 앱이며 배포 대상이 아니다.
-
-```bash
-scripts/build-term-proto.sh          # dist/ClaudeTerm.app
-open dist/ClaudeTerm.app
-```
+## 자세한 동작
 
 - 셸·claude 는 앱이 아니라 `ClaudeTermDaemon` 이 붙잡고 있다. 앱을 끄거나 다시 빌드해도 계속 돌고, 앱을 다시 켜면 그대로 붙는다.
   데몬은 화면도 앱 연결도 없이 60초가 지나면 스스로 끝난다. 재부팅하면 셸·claude 는 끝난다.
@@ -136,7 +47,7 @@ open dist/ClaudeTerm.app
   데몬이 바뀌면(강제 종료·재부팅 뒤 새로 뜸) 사라진 화면을 지우지 않고 "꺼짐"(속 빈 점)으로 남기고, 그 탭을 열 때
   같은 자리·같은 ID 로 셸을 다시 띄워 `claude --resume <세션>` 을 원래 옵션으로 실행한다(대화가 없던 세션·셸은 셸만).
   한꺼번에 다 띄우지 않아 가볍다. 같은 데몬에서 셸·claude 가 스스로 끝난 화면은 Ghostty 처럼 닫힌다.
-- Claude Code hook(SessionStart·SessionEnd)은 ClaudeTerm 이 직접 맡는다(`ClaudeTermDaemon hook`, AppKit 없이 가볍게 끝남).
+- Claude Code hook(SessionStart·SessionEnd 와 작업 상태용 hook — 아래 "작업 상태 표시와 알림")은 ClaudeTerm 이 직접 맡는다(`ClaudeTermDaemon hook`, AppKit 없이 가볍게 끝남).
   연결이 안 됐거나 예전 ClaudeSessions 앱 hook 이면 사이드바 아래에 안내와 "연결하기/옮기기" 버튼이 뜬다.
   누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 ClaudeSessions hook 은 같이 뺀다. 세션 기록 위치는 그대로.
 - 되살릴 때 이어받는 claude 옵션은 허용 목록(권한·모델·effort·add-dir·MCP·허용 도구 등)만. 처음 질문·`--worktree`·세션 지정은 뺀다.
@@ -176,4 +87,29 @@ open dist/ClaudeTerm.app
   틈 끌기(`drag`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
-아직 없는 것: 상태 표시(작업 중·입력 대기·완료)와 알림, 글꼴·색 설정.
+## 작업 상태 표시와 알림
+
+claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 대기 · 권한 요청" 같은 글), 묶음 점(안의 가장 급한 상태),
+탭 제목 앞 점(탭 안 화면 중 가장 급한 상태), 분할 테두리 제목 앞("입력 대기 · <이름>")에 보인다. 색만으로 구분하지 않게 글·모양도 다르다.
+
+| 상태 | 색·모양 | 언제 (Claude Code hook) |
+|---|---|---|
+| 작업 중 | 노랑 점 | `UserPromptSubmit`(질문을 보냄) |
+| 입력 대기 | 빨강 테두리 점, 안 보는 탭은 붉은 바탕 + 아래 줄 | `PermissionRequest`(권한 요청), `Notification` 의 `permission_prompt`·`elicitation_dialog`·`elicitation_url_dialog`·`agent_needs_input` |
+| 완료 | 청록 점 | `Stop`(응답을 마침). 그 화면을 보면(앱이 앞에 있을 때) "쉬는 중"으로 바뀐다 |
+| 오류 | 빨강 점 | `StopFailure`(API 오류 등, 오류 종류를 함께 보임) |
+| 쉬는 중 | 초록 속 빈 점 | 완료를 확인했거나 `Notification` 의 `idle_prompt`(입력 없이 약 60초) |
+
+- hook 은 세션 기록 파일(`sessions/<세션>.json`)에 `state`·`stateAt`·`stateMessage`·`pane`·`stateSeq`(상태를 적을 때마다 오르는 번호 — 같은 초 안의 변화도 구분해 알림이 빠지지 않게. 날짜 형식은 예전 빌드와 같다)를 적고, 앱은 2초마다 목록을 다시 만들며 읽는다.
+  화면 짝짓기는 hook 이 적은 화면 ID(`pane`)가 먼저다.
+- 알림: 입력 대기·완료·오류로 바뀌면 macOS 알림을 보낸다(누르면 그 화면으로). 지금 보고 있는 화면, 앱을 켠 직후 이미 그 상태였던 화면은 알리지 않는다.
+  Dock 아이콘 배지에 확인이 필요한 화면 수가 뜬다. `CLAUDE_TERM_NO_NOTIFY=1` 이면 알림을 보내지 않는다(시험용).
+- **기존 사용자는 사이드바 아래 "갱신하기"를 한 번 눌러야 한다.** 예전 연결(SessionStart·SessionEnd 만)으로는 상태 hook 이 없어
+  claude 화면이 상태 없이 claude 색 점으로만 보인다. 갱신은 그 뒤 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
+- 알려진 한계:
+  - Esc 로 중단하면 `Stop` 이 오지 않아 "작업 중"으로 남는다. 약 60초 뒤 `idle_prompt` 가 와서 "쉬는 중"으로 바로잡힌다.
+  - 권한 요청 `Notification` 은 늦게 올 수 있어 `PermissionRequest` 로 바로 "입력 대기"로 바꾼다. 허락한 뒤에는 따로 오는 hook 이 없어,
+    "입력 대기" 시각보다 2초 넘게 뒤에 대화 파일이 늘면 다시 일하는 것으로 보고 "작업 중"으로 바꾼다(추정).
+  - "완료 → 쉬는 중"은 앱이 앞에 있고 그 화면을 고르고 있을 때만 바뀐다.
+
+아직 없는 것: 글꼴·색 설정.

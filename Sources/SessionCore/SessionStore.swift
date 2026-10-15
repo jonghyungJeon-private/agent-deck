@@ -19,6 +19,16 @@ public struct SessionRecord: Codable, Equatable, Identifiable {
     public var termProgram: String?
     /// claude 의 제어 터미널(예: /dev/ttys015)
     public var tty: String?
+    /// ClaudeTerm 화면 ID(셸 환경 CLAUDE_SESSIONS_PANE). 있으면 화면과 정확히 짝짓는다.
+    public var pane: String?
+    /// 작업 상태(hook 이 적는다): working | waiting | done | idle | error
+    public var state: String?
+    public var stateAt: Date?
+    /// 상태에 딸린 글(입력 대기 이유, 오류 종류)
+    public var stateMessage: String?
+    /// 상태를 적을 때마다 1씩 오르는 번호. 날짜는 초 단위로만 저장되므로(예전 빌드와 같은 형식)
+    /// 같은 초 안의 상태 변화(입력 대기 → 완료)는 이 번호로 구분한다. 예전 기록에는 없다.
+    public var stateSeq: Int?
 
     public var id: String { sessionId }
 

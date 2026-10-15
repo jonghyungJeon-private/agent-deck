@@ -1,6 +1,20 @@
 import AppKit
 import TermLayout
 
+/// 분할 테두리 제목: 이름과 claude 작업 상태
+struct PaneTitle: Equatable {
+    var name: String
+    var status: WorkStatus = .none
+
+    /// 테두리에 이름 앞에 붙일 상태(쉬는 중·모름은 붙이지 않는다)
+    var statusLabel: String? {
+        switch status {
+        case .working, .waiting, .done, .error: return status.label
+        default: return nil
+        }
+    }
+}
+
 /// 한 탭의 분할 화면을 배치한다. 나눠져 있으면 herdr 처럼 화면마다 테두리와 제목을 두르고,
 /// 포커스된 화면 테두리를 강조색으로 그려 어디에 입력되는지 한눈에 보이게 한다. 화면 사이 틈을 끌어 크기를 바꾼다.
 final class SplitContainerView: NSView {
@@ -17,7 +31,7 @@ final class SplitContainerView: NSView {
 
     private(set) var tree: SplitNode?
     private var paneViews: [String: NSView] = [:]
-    private var titles: [String: String] = [:]
+    private var titles: [String: PaneTitle] = [:]
     private var focused: String?
     private var frames: [String: CGRect] = [:]
     private var dividers: [SplitNode.Divider] = []
@@ -26,7 +40,7 @@ final class SplitContainerView: NSView {
 
     private var bordered: Bool { paneViews.count > 1 }
 
-    func update(tree: SplitNode?, views: [String: NSView], focused: String?, titles: [String: String]) {
+    func update(tree: SplitNode?, views: [String: NSView], focused: String?, titles: [String: PaneTitle]) {
         self.tree = tree
         self.focused = focused
         self.titles = titles
@@ -42,7 +56,7 @@ final class SplitContainerView: NSView {
         needsDisplay = true
     }
 
-    func setFocused(_ id: String?, titles: [String: String]) {
+    func setFocused(_ id: String?, titles: [String: PaneTitle]) {
         guard focused != id || self.titles != titles else { return }
         focused = id
         self.titles = titles
@@ -97,19 +111,27 @@ final class SplitContainerView: NSView {
             color.setStroke()
             path.stroke()
             // 제목: 위 테두리 위에 바탕을 깔고 쓴다(herdr 처럼 ─ 제목 ───)
-            let title = " \(titles[id] ?? "") " as NSString
+            // 상태가 있으면 "입력 대기 · 이름" 처럼 앞에 상태를 그 색(굵게)으로 붙인다
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: TermAppearance.uiFont(11, bold: isFocused),
                 .foregroundColor: isFocused ? TermAppearance.accent : TermAppearance.textDim,
             ]
-            let size = title.size(withAttributes: attributes)
+            let paneTitle = titles[id]
+            let title = NSMutableAttributedString(string: " ", attributes: attributes)
+            if let paneTitle, let label = paneTitle.statusLabel {
+                title.append(NSAttributedString(string: label, attributes: [
+                    .font: TermAppearance.uiFont(11, bold: true), .foregroundColor: paneTitle.status.color,
+                ]))
+                title.append(NSAttributedString(string: " · ", attributes: attributes))
+            }
+            title.append(NSAttributedString(string: "\(paneTitle?.name ?? "") ", attributes: attributes))
+            let size = title.size()
             let maxWidth = max(0, frame.width - 24)
             let titleRect = CGRect(x: frame.minX + 10, y: frame.minY - size.height / 2,
                                    width: min(size.width, maxWidth), height: size.height)
             TermAppearance.background.setFill()
             titleRect.fill()
-            title.draw(with: titleRect, options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin],
-                       attributes: attributes)
+            title.draw(with: titleRect, options: [.truncatesLastVisibleLine, .usesLineFragmentOrigin])
         }
     }
 

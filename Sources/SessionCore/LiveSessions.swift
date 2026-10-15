@@ -36,7 +36,7 @@ public enum LiveSessions {
                   !args.dropFirst().contains(where: { $0 == "-p" || $0 == "--print" || $0.hasPrefix("--print=") })
             else { return nil }
             return Process(pid: pid, startTime: info.startTime, tty: info.tty,
-                           argumentSessionId: RunningSessionScanner.sessionId(fromArguments: args),
+                           argumentSessionId: ClaudeArguments.sessionId(args),
                            termProgram: ProcessUtil.environment(pid)?["TERM_PROGRAM"], cwd: ProcessUtil.cwd(pid))
         }
     }

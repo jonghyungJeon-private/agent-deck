@@ -16,6 +16,11 @@ struct PaneRow: Identifiable, Equatable {
     var git: GitLocation?
     /// claude 를 띄웠던 실행 인자(세션 지정 인자 뺀 것). 되살릴 때 같은 옵션으로 띄운다.
     var claudeArgs: [String]? = nil
+    /// 작업 상태와 그 상태가 된 시각(hook 기록)
+    var status: WorkStatus = .none
+    var statusAt: Date?
+    /// 상태 번호(hook 이 상태를 적을 때마다 오름, 예전 기록엔 없음) — 같은 초의 상태 변화를 구분한다
+    var statusSeq: Int?
     /// 이 claude 가 띄운 하위 에이전트 중 작업 트리를 특정하지 못한 것(목록에서 이 줄 아래에 보인다)
     var agents: [SubagentActivity] = []
     /// 데몬이 꺼져 사라진 화면(탭을 열면 되살린다)
@@ -93,6 +98,8 @@ final class TermModel: ObservableObject {
         case missing
         /// 예전 ClaudeSessions 앱의 hook 으로 기록 중(그 앱을 지우면 끊긴다)
         case legacy
+        /// 이 앱 hook 이 있지만 예전 것(상태 표시 이벤트가 빠짐, 또는 앱을 옮김)
+        case update
         case error(String)
     }
 
@@ -139,7 +146,11 @@ final class TermModel: ObservableObject {
             do {
                 let status = try installer.status()
                 let legacy = try installer.hasLegacyHooks()
-                state = status == .installed ? .ok : (legacy ? .legacy : .missing)
+                switch status {
+                case .installed: state = .ok
+                case .outdated: state = .update
+                case .notInstalled: state = legacy ? .legacy : .missing
+                }
             } catch {
                 state = .error(error.localizedDescription)
             }
@@ -159,8 +170,17 @@ final class TermModel: ObservableObject {
         checkHooks()
     }
 
+    let notifier = Notifier()
+    /// 알림을 보낸 상태(세션별 "세션#상태 번호", 번호 없는 예전 기록은 "상태@시각") — 같은 상태로 두 번 보내지 않는다
+    private var notified: [String: String] = [:]
+    private var notifyPrimed = false
+
     func start() {
         checkHooks()
+        notifier.onOpen = { [weak self] pane in self?.focus(pane: pane) }
+        notifier.start()
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
+                                               queue: .main) { [weak self] _ in self?.markSeen() }
         if let data = try? Data(contentsOf: Self.layoutURL),
            let saved = try? JSONDecoder().decode(Workspace.self, from: data) {
             workspace = saved
@@ -204,19 +224,20 @@ final class TermModel: ObservableObject {
     private func apply(_ state: DaemonState) {
         daemonFootprint = state.footprint
         appFootprint = Memory.footprint()
+        let seen = seenDone
         let dormant = workspace.allPanes.filter { workspace.dormant.contains($0) }.compactMap { id in
             workspace.recipes[id].map { (id, $0) }
         }
         worker.async { [weak self] in
             guard let self else { return }
-            let newRows = self.makeRows(state.panes) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
+            let newRows = self.makeRows(state.panes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
             let newGroups = Self.makeGroups(newRows, agents: self.scanAgents(newRows))
             DispatchQueue.main.async { self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance) }
         }
     }
 
     /// worker 에서만 부른다(titles 도 worker 에서만 쓴다)
-    private func makeRows(_ panes: [PaneInfo]) -> [PaneRow] {
+    private func makeRows(_ panes: [PaneInfo], seen: [String: WorkStateRules.Seen] = [:]) -> [PaneRow] {
         // hook 기록 중 실행 중인 세션을 화면에 짝짓는다. claude 에서 부모 프로세스를 따라 올라가 화면의 셸을 만나면 그 화면이다.
         // (Kiro CLI 처럼 셸을 자기 가상 터미널로 한 겹 감싸는 도구가 있으면 claude 의 tty 가 화면의 tty 와 다르다.)
         // 계보로 못 찾으면 tty 로 짝짓는다.
@@ -224,7 +245,12 @@ final class TermModel: ObservableObject {
         func device(_ tty: String?) -> String? { tty.map { ($0 as NSString).lastPathComponent } } // "/dev/ttys002" ↔ "ttys002"
         let shells = Dictionary(panes.map { ($0.pid, $0.id) }, uniquingKeysWith: { first, _ in first })
         var sessionByPane: [String: SessionRecord] = [:]
-        for record in running {
+        // hook 이 남긴 화면 ID 가 맞으면 그대로(가장 정확). 같은 화면에 여럿이면 최근 것.
+        let paneIds = Set(panes.map(\.id))
+        for record in running.sorted(by: { ($0.activeSince ?? $0.startedAt) < ($1.activeSince ?? $1.startedAt) }) {
+            if let pane = record.pane, paneIds.contains(pane) { sessionByPane[pane] = record }
+        }
+        for record in running where !sessionByPane.values.contains(where: { $0.sessionId == record.sessionId }) {
             var pid = record.pid
             for _ in 0..<32 {
                 guard pid > 1, let info = ProcessUtil.info(pid) else { break }
@@ -256,9 +282,11 @@ final class TermModel: ObservableObject {
                 ?? device(pane.tty).flatMap { tty in running.first { device($0.tty) == tty } }
             let shell = wrapped ? innermostShell(pane.pid) : pane.pid
             let cwd = session.flatMap { ProcessUtil.cwd($0.pid) ?? $0.cwd } ?? ProcessUtil.cwd(shell) ?? pane.cwd
-            return PaneRow(pane: pane, session: session, name: name(pane: pane, session: session, cwd: cwd),
-                           cwd: cwd, git: GitWorktrees.locate(cwd),
-                           claudeArgs: session.flatMap { ProcessUtil.arguments($0.pid) }.map(PaneRecipe.keptArgs))
+            var row = PaneRow(pane: pane, session: session, name: name(pane: pane, session: session, cwd: cwd),
+                              cwd: cwd, git: GitWorktrees.locate(cwd),
+                              claudeArgs: session.flatMap { ProcessUtil.arguments($0.pid) }.map(PaneRecipe.keptArgs))
+            (row.status, row.statusAt, row.statusSeq) = workStatus(session, isClaude: row.isClaude, seen: seen)
+            return row
         }
     }
 
@@ -320,6 +348,9 @@ final class TermModel: ObservableObject {
             rows = newRows
             host?.refreshTitles()
         }
+        notifyAttention(newRows)
+        markSeen()
+        updateDockBadge()
         if newGroups != groups { groups = newGroups }
         let live = newRows.filter { !$0.dormant }.map(\.id)
         if live.contains(where: { reviveFailedAt[$0] != nil }) { lastError = nil } // 다시 시도해 되살아났다
@@ -363,8 +394,63 @@ final class TermModel: ObservableObject {
         if newlyDormant { client.list() } // 꺼진 화면을 목록에 바로 보이게
     }
 
+    /// 화면에서 확인한 "완료"의 시각(세션별). 이보다 늦은 완료만 "완료"로, 아니면 "쉬는 중"으로 보인다.
+    private var seenDone: [String: WorkStateRules.Seen] = [:]
+
+    /// 작업 상태(worker 에서). hook 이 없는 때는 가볍게 보완한다(WorkStateRules.effective):
+    /// 입력 대기 뒤에 대화 파일이 다시 늘면(권한을 허락해 이어서 일함) 작업 중으로 본다.
+    /// 대화 파일 수정 시각은 이름 정하기(titles)와 따로, 입력 대기일 때만 stat 한 번으로 읽는다
+    /// (이 앱에서 이름을 바꾼 세션은 이름 정하기가 대화 파일을 읽지 않아 titles 가 비거나 낡는다).
+    private func workStatus(_ session: SessionRecord?, isClaude: Bool,
+                            seen: [String: WorkStateRules.Seen]) -> (WorkStatus, Date?, Int?) {
+        guard let session else { return (isClaude ? .unknown : .none, nil, nil) }
+        let at = session.stateAt
+        let modified = session.state == "waiting"
+            ? WorkStateRules.transcriptModifiedAt(session.transcriptPath ?? titles[session.sessionId]?.path)
+            : nil
+        let state = WorkStateRules.effective(state: session.state, at: at, seq: session.stateSeq,
+                                             transcriptModifiedAt: modified, seen: seen[session.sessionId])
+        return (WorkStatus(state: state, message: session.stateMessage), at, session.stateSeq)
+    }
+
     /// 꺼진 화면 대화 파일에서 읽은 제목(세션당 한 번만 읽는다 — 매번 읽으면 2초마다 최대 16MB 를 읽게 된다). worker 전용.
     private var dormantTitles: [String: String?] = [:]
+
+    /// 지금 보고 있는 화면의 "완료"는 확인한 것으로 친다(앱이 앞에 있을 때만)
+    func markSeen() {
+        guard NSApp.isActive, let id = selectedId, let row = row(id), row.status == .done,
+              let sid = row.session?.sessionId, let at = row.statusAt,
+              !WorkStateRules.isSeen(seenDone[sid], seq: row.statusSeq, at: at)
+        else { return }
+        seenDone[sid] = WorkStateRules.Seen(seq: row.statusSeq, at: at)
+        notifier.clear(paneId: id)
+        client.list() // 바로 "쉬는 중"으로 다시 그린다
+    }
+
+    /// 입력 대기·완료·오류로 바뀐 화면을 알린다. 지금 보고 있는 화면은 알리지 않는다.
+    /// 앱을 켠 직후의 첫 목록은 지금 상태로 기억만 하고 알리지 않는다(켤 때마다 알림이 쏟아지지 않게).
+    private func notifyAttention(_ rows: [PaneRow]) {
+        for row in rows where !row.dormant {
+            guard let sid = row.session?.sessionId, let at = row.statusAt, row.status.needsAttention else { continue }
+            // 시각만 보면(초 단위 저장) 같은 초에 입력 대기 → 완료가 이어질 때 완료 알림이 빠진다 → 상태 번호로
+            let key = WorkStateRules.notificationKey(sessionId: sid, seq: row.statusSeq, state: row.status.debugName, at: at)
+            guard notified[sid] != key else { continue }
+            notified[sid] = key
+            guard notifyPrimed else { continue }
+            let watching = NSApp.isActive && row.id == selectedId
+            guard !watching, let label = row.status.label else { continue }
+            notifier.post(title: "\(label) · \(row.name)", body: row.status.detail ?? row.cwd,
+                          paneId: row.id, key: key)
+        }
+        notifyPrimed = true
+    }
+
+    /// Dock 아이콘에 확인이 필요한 화면 수
+    private func updateDockBadge() {
+        let count = rows.filter { !$0.dormant && $0.status.needsAttention }.count
+        let label = count > 0 ? "\(count)" : nil
+        if NSApp.dockTile.badgeLabel != label { NSApp.dockTile.badgeLabel = label }
+    }
 
     /// 꺼진 화면의 목록 줄(worker 에서)
     private func dormantRow(id: String, recipe: PaneRecipe) -> PaneRow {
@@ -507,6 +593,7 @@ final class TermModel: ObservableObject {
             host?.focusChanged()
         }
         saveLayout()
+        markSeen() // 탭·화면을 옮겨 "완료"를 보게 됐으면 확인 처리
     }
 
     /// 끌어서 비율을 바꾸는 동안 매번 쓰지 않게 잠시 모았다 쓴다

@@ -2,10 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "ClaudeSessions",
+    name: "ClaudeTerm",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "ClaudeSessions", targets: ["ClaudeSessions"]),
         // 내장 터미널 시제품: 화면 앱 + 세션을 붙잡고 있는 데몬
         .executable(name: "ClaudeTerm", targets: ["ClaudeTerm"]),
         .executable(name: "ClaudeTermDaemon", targets: ["ClaudeTermDaemon"]),
@@ -16,7 +15,6 @@ let package = Package(
     ],
     targets: [
         .target(name: "SessionCore"),
-        .executableTarget(name: "ClaudeSessions", dependencies: ["SessionCore"]),
         .testTarget(name: "SessionCoreTests", dependencies: ["SessionCore"]),
 
         // 앱과 데몬이 주고받는 메시지 형식

@@ -1,7 +1,9 @@
 import Foundation
 
-/// Claude Code 의 SessionStart / SessionEnd hook 으로 실행되는 부분.
-/// `ClaudeSessions hook` 으로 호출되며, 어떤 경우에도 Claude 쪽에 오류를 내지 않는다.
+/// Claude Code hook 으로 실행되는 부분(`ClaudeTermDaemon hook`). 어떤 경우에도 Claude 쪽에 오류를 내지 않고,
+/// 아무것도 출력하지 않는다(UserPromptSubmit 의 출력은 claude 문맥에 붙으므로).
+/// - SessionStart / SessionEnd: 세션 기록(되살리기·짝짓기)
+/// - UserPromptSubmit / Stop / StopFailure / Notification / PermissionRequest: 작업 상태(목록 표시·알림)
 public enum HookHandler {
     /// 사용자가 직접 끝내거나 떠난 경우(/exit, Ctrl-D, /clear, 세션 안에서 /resume 으로 전환, 로그아웃). 이때만 기록을 지운다.
     /// 그 밖의 사유(창 닫기·앱 종료 등 "other")와 재부팅(훅 자체가 안 불림)은 기록을 남겨 복원 대상으로 둔다.
@@ -14,7 +16,17 @@ public enum HookHandler {
         let transcript_path: String?
         let source: String?
         let reason: String?
+        let notification_type: String?
+        let message: String?
+        let error: String?
     }
+
+    /// 상태를 적는 hook 이벤트
+    public static let statusEvents: Set<String> = ["UserPromptSubmit", "Stop", "StopFailure", "Notification", "PermissionRequest"]
+    /// 사람의 입력을 기다리는 알림 종류
+    static let waitingNotifications: Set<String> = [
+        "permission_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input",
+    ]
 
     public struct Context {
         public var claudePid: pid_t
@@ -55,6 +67,8 @@ public enum HookHandler {
             switch event.hook_event_name {
             case "SessionStart": try sessionStart(event, context: context, store: store, reservations: reservations)
             case "SessionEnd": try sessionEnd(event, context: context, store: store)
+            case let name where statusEvents.contains(name):
+                try status(event, context: context, store: store, reservations: reservations)
             default: break
             }
         }
@@ -76,6 +90,11 @@ public enum HookHandler {
         record.activeSince = context.now
         record.tty = proc.tty ?? record.tty
         record.termProgram = context.environment["TERM_PROGRAM"] ?? record.termProgram
+        record.pane = context.environment["CLAUDE_SESSIONS_PANE"] ?? record.pane
+        record.state = "idle"
+        record.stateAt = context.now
+        record.stateMessage = nil
+        record.stateSeq = (record.stateSeq ?? 0) + 1
         try store.save(record)
         // 열라고 보낸 세션이 실제로 떴다
         reservations.release([event.session_id])
@@ -84,6 +103,46 @@ public enum HookHandler {
             && other.endedAt == nil && other.isSameProcess(as: record) {
             store.remove(other.sessionId)
         }
+    }
+
+    /// 작업 상태를 적는다. 기록이 없으면(hook 을 세션 도중에 넣은 경우) 먼저 세션을 기록한다.
+    static func status(_ event: Input, context: Context, store: SessionStore, reservations: LaunchReservations) throws {
+        let state: String
+        var message: String?
+        switch event.hook_event_name {
+        case "UserPromptSubmit": state = "working"
+        case "Stop": state = "done"
+        case "StopFailure":
+            state = "error"
+            message = event.error
+        case "PermissionRequest":
+            state = "waiting"
+            message = "권한 요청"
+        case "Notification":
+            guard let type = event.notification_type else { return }
+            if waitingNotifications.contains(type) {
+                state = "waiting"
+                message = event.message
+            } else if type == "idle_prompt" {
+                state = "idle"
+            } else {
+                return
+            }
+        default: return
+        }
+        if store.load(event.session_id) == nil {
+            try sessionStart(event, context: context, store: store, reservations: reservations)
+        }
+        guard var record = store.load(event.session_id), record.endedAt == nil else { return }
+        // 오래 기다림 알림(입력 없이 약 60초)은 작업 중을 쉬는 중으로 바로잡는다(Esc 로 멈추면 Stop 이 오지 않는다).
+        // 권한·질문 대기는 더 구체적이므로 덮지 않는다.
+        if state == "idle", record.state == "waiting" { return }
+        record.state = state
+        record.stateAt = context.now
+        record.stateMessage = message.map { String($0.prefix(200)) }
+        record.stateSeq = (record.stateSeq ?? 0) + 1
+        record.pane = context.environment["CLAUDE_SESSIONS_PANE"] ?? record.pane
+        try store.save(record)
     }
 
     static func sessionEnd(_ event: Input, context: Context, store: SessionStore) throws {

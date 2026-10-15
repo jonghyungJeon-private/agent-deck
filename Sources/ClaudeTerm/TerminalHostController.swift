@@ -138,14 +138,19 @@ final class TerminalHostController: NSViewController {
 
     private func updateTabBar() {
         let workspace = model.workspace
-        tabBar.update(tabs: workspace.tabs.map {
-            TabBarView.Tab(title: model.tabTitle($0), paneCount: $0.root.panes.count, zoomed: $0.zoomed)
+        // 탭마다 화면 상태를 찾으므로 줄을 한 번만 사전으로 만든다(탭·화면 수만큼 목록을 훑지 않게)
+        let statuses = Dictionary(model.rows.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
+        tabBar.update(tabs: workspace.tabs.map { tab in
+            TabBarView.Tab(title: model.tabTitle(tab), paneCount: tab.root.panes.count, zoomed: tab.zoomed,
+                           status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }))
         }, selected: workspace.selectedIndex)
     }
 
-    /// 분할 테두리에 쓰는 화면 제목
-    private var paneTitles: [String: String] {
-        Dictionary(uniqueKeysWithValues: terminals.keys.map { ($0, model.paneLabel($0)) })
+    /// 분할 테두리에 쓰는 화면 제목과 상태
+    private var paneTitles: [String: PaneTitle] {
+        Dictionary(uniqueKeysWithValues: terminals.keys.map { id in
+            (id, PaneTitle(name: model.paneLabel(id), status: model.row(id)?.status ?? .none))
+        })
     }
 
     private func focusTerminal() {

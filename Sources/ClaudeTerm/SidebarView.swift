@@ -90,7 +90,8 @@ struct SidebarView: View {
         let message: String? = {
             switch model.hookState {
             case .missing: return "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다."
-            case .legacy: return "예전 ClaudeSessions 앱으로 연결돼 있습니다. ClaudeTerm 으로 옮겨 두면 그 앱을 지워도 됩니다."
+            case .legacy: return "예전 ClaudeSessions 앱으로 연결돼 있습니다. ClaudeTerm 으로 옮기면 작업 상태(작업 중·입력 대기·완료)도 보이고 그 앱을 지워도 됩니다."
+            case .update: return "작업 상태(작업 중·입력 대기·완료) 표시와 알림을 쓰려면 Claude Code 연결을 갱신하세요."
             case .error(let detail): return "Claude Code 설정을 읽지 못했습니다: \(detail)"
             default: return nil
             }
@@ -109,7 +110,7 @@ struct SidebarView: View {
                     Button {
                         model.connectHooks()
                     } label: {
-                        Text(model.hookState == .legacy ? "ClaudeTerm 으로 옮기기" : "연결하기")
+                        Text(model.hookState == .legacy ? "ClaudeTerm 으로 옮기기" : model.hookState == .update ? "갱신하기" : "연결하기")
                             .font(Font(TermAppearance.uiFont(11, bold: true)))
                             .foregroundStyle(Color(TermAppearance.chrome))
                             .padding(.horizontal, 10)
@@ -117,7 +118,7 @@ struct SidebarView: View {
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent)))
                     }
                     .buttonStyle(.plain)
-                    .help("~/.claude/settings.json 에 SessionStart·SessionEnd hook 을 넣습니다(바꾸기 전 백업)")
+                    .help("~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로)")
                 }
             }
             .padding(10)
@@ -195,22 +196,24 @@ struct ChromeButton: View {
     }
 }
 
-/// 상태 점. claude 는 claude 색, 셸은 흐리게.
-/// 꺼진 화면은 속이 빈 점
+/// 상태 점. 꺼진 화면·쉬는 중은 속이 빈 점, 입력 대기는 테두리를 두른 점(색만으로 구분하지 않게 모양도 다르게).
 struct StatusDot: View {
-    let isClaude: Bool
+    let status: WorkStatus
     var dormant = false
 
     var body: some View {
-        let color = Color(isClaude ? TermAppearance.claudeColor : TermAppearance.textDim.withAlphaComponent(0.6))
+        let color = Color(dormant ? TermAppearance.textDim.withAlphaComponent(0.8) : status.color)
+        let hollow = dormant || status == .idle
         Group {
-            if dormant {
+            if hollow {
                 Circle().strokeBorder(color, lineWidth: 1.2)
+            } else if case .waiting = status {
+                Circle().fill(color).padding(2).overlay(Circle().strokeBorder(color, lineWidth: 1))
             } else {
                 Circle().fill(color)
             }
         }
-        .frame(width: 7, height: 7)
+        .frame(width: 8, height: 8)
     }
 }
 
@@ -221,7 +224,7 @@ struct GroupRowView<MenuContent: View>: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            StatusDot(isClaude: group.sections.contains { $0.rows.contains(where: \.isClaude) })
+            StatusDot(status: WorkStatus.top(group.sections.flatMap { $0.rows.map(\.status) }))
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: 1) {
                 Text(group.name)
@@ -300,7 +303,7 @@ struct SessionRowView: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            StatusDot(isClaude: row.isClaude, dormant: row.dormant)
+            StatusDot(status: row.status, dormant: row.dormant)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: 1) {
                 Text(row.title)
@@ -312,7 +315,12 @@ struct SessionRowView: View {
                         .foregroundStyle(Color(TermAppearance.textDim))
                 } else {
                 HStack(spacing: 0) {
-                    Text(row.program)
+                    if let label = row.status.label {
+                        Text(label + " · ")
+                            .foregroundStyle(Color(row.status.color))
+                            .fontWeight(row.status.needsAttention ? .bold : .regular)
+                    }
+                    Text(row.status.detail ?? row.program)
                         .foregroundStyle(Color(row.isClaude ? TermAppearance.claudeColor : TermAppearance.textDim))
                     // 제목이 이미 폴더 이름이면 같은 말을 되풀이하지 않고 터미널 장치로 구분한다
                     Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")

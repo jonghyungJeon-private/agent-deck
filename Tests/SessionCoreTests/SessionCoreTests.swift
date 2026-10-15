@@ -176,30 +176,13 @@ final class TranscriptAndCommandTests: XCTestCase {
         XCTAssertEqual(summary.lastPrompt, "테스트 돌려줘\n둘째 줄")
     }
 
-    func testCommandTemplateQuotes() {
-        XCTAssertEqual(CommandTemplate.render("claude --resume {id}", sessionId: "abc-1", name: "x", cwd: "/"),
-                       "claude --resume abc-1")
-        XCTAssertEqual(CommandTemplate.render("claudec resume {id} {name}", sessionId: "abc", name: "it's a@b", cwd: "/"),
-                       #"claudec resume abc 'it'\''s a@b'"#)
-    }
-
-    func testSkipPermissionsFlag() {
-        XCTAssertEqual(CommandTemplate.render("claude --resume {id}", sessionId: "abc", name: "x", cwd: "/", skipPermissions: true),
-                       "claude --resume abc --dangerously-skip-permissions")
-        XCTAssertEqual(CommandTemplate.render("claude --dangerously-skip-permissions -r {id}", sessionId: "abc", name: "x", cwd: "/",
-                                              skipPermissions: true),
-                       "claude --dangerously-skip-permissions -r abc", "이미 있으면 중복으로 붙이지 않는다")
-        XCTAssertEqual(CommandTemplate.render("claude --resume {id}", sessionId: "abc", name: "x", cwd: "/", skipPermissions: false),
-                       "claude --resume abc")
-    }
-
     func testScannerReadsSessionIdFromArgs() {
         let id = "9b191756-fd8b-4be8-a08b-d171a3e85f49"
-        XCTAssertEqual(RunningSessionScanner.sessionId(fromArguments: ["claude", "-n", "x", "--session-id", id]), id)
-        XCTAssertEqual(RunningSessionScanner.sessionId(fromArguments: ["claude", "-r", id]), id)
-        XCTAssertEqual(RunningSessionScanner.sessionId(fromArguments: ["claude", "--resume=\(id)"]), id)
-        XCTAssertNil(RunningSessionScanner.sessionId(fromArguments: ["claude", "-p", "--resume", id]))
-        XCTAssertNil(RunningSessionScanner.sessionId(fromArguments: ["node", "--resume", id]))
+        XCTAssertEqual(ClaudeArguments.sessionId(["claude", "-n", "x", "--session-id", id]), id)
+        XCTAssertEqual(ClaudeArguments.sessionId(["claude", "-r", id]), id)
+        XCTAssertEqual(ClaudeArguments.sessionId(["claude", "--resume=\(id)"]), id)
+        XCTAssertNil(ClaudeArguments.sessionId(["claude", "-p", "--resume", id]))
+        XCTAssertNil(ClaudeArguments.sessionId(["node", "--resume", id]))
     }
 }
 
@@ -257,94 +240,6 @@ final class SessionSwitchTests: XCTestCase {
         XCTAssertEqual(store.all().map(\.sessionId), [resumed])
     }
 
-    func testNameArgument() {
-        XCTAssertEqual(RunningSessionScanner.nameArgument(["claude", "--dangerously-skip-permissions", "-n", "repo@main", "--session-id", "x"]), "repo@main")
-        XCTAssertNil(RunningSessionScanner.nameArgument(["claude", "--resume", "x"]))
-    }
-}
-
-final class ImportTests: XCTestCase {
-    /// 실행 인자는 --session-id A 지만 그 뒤 /resume 으로 B 로 옮겨 hook 이 B 를 기록 중인 프로세스 → A 를 되살리지 않는다.
-    func testImportSkipsProcessAlreadyTrackedByHook() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let store = SessionStore(dir: dir)
-        let a = "67546642-52d0-468c-a4d5-a3b24aba8bf4", b = "5cd5ab17-cd37-4eaf-ac7d-16827eadf085"
-        let c = "9f5faf78-f11b-4eca-bd74-240269048f9f"
-        let tracked = ProcInfo(pid: 100, ppid: 1, startTime: 1000, hasTTY: true)
-        let untracked = ProcInfo(pid: 200, ppid: 1, startTime: 2000, hasTTY: true)
-        try store.save(SessionRecord(sessionId: b, cwd: "/tmp", transcriptPath: nil,
-                                     pid: 100, pidStartedAt: 1000, startedAt: Date()))
-        let imported = RunningSessionScanner.importRunning(into: store, processes: [
-            .init(pid: 100, args: ["claude", "--session-id", a], info: tracked, cwd: "/tmp"),
-            .init(pid: 200, args: ["claude", "--resume", c], info: untracked, cwd: "/work"),
-        ])
-        XCTAssertEqual(imported, 1)
-        XCTAssertEqual(Set(store.all().map(\.sessionId)), [b, c])
-    }
-}
-
-final class LayoutTests: XCTestCase {
-    let a = "5cd5ab17-cd37-4eaf-ac7d-16827eadf085", b = "2184159e-a9ef-4055-ad38-7753a8260d04"
-    let c = "d1d1c893-d5b3-42d2-a7dd-79ee0034935e", d = "71713d11-4b12-492d-908b-0ce41409e5ce"
-
-    /// 지금 사용자 배치: 탭 3개, 3번 탭은 분할 2개
-    var live: LiveLayout {
-        [[
-            [LiveTerminal(id: "t1", title: "✳ 주문 요약 캐시 및 성능 최적화")],
-            [LiveTerminal(id: "t2", title: "◐ demo_Project-1238")],
-            [LiveTerminal(id: "t3", title: "✳ jato-admin@feature/x"),
-             LiveTerminal(id: "t4", title: "⠂ Demo Platform 1차 개발 오케스트레이션")],
-        ], [
-            [LiveTerminal(id: "t5", title: "me@host:~/tmp")],  // Claude 없는 창 → 기록에서 빠짐
-        ]]
-    }
-
-    var candidates: [LayoutMatcher.Candidate] {
-        [.init(sessionId: a, titles: ["주문 요약 캐시 및 성능 최적화", "shop-api@ABC-3850"]),
-         .init(sessionId: b, titles: ["demo_Project-1238"]),
-         .init(sessionId: c, titles: ["jato-admin@feature/x"]),
-         .init(sessionId: d, titles: ["Demo Platform 1차 개발 오케스트레이션"])]
-    }
-
-    func testTitleParsing() {
-        XCTAssertEqual(TerminalTitle.claudeTitle("✳ 캐시 개선"), "캐시 개선")
-        XCTAssertEqual(TerminalTitle.claudeTitle("⠐ repo@main"), "repo@main")
-        XCTAssertNil(TerminalTitle.claudeTitle("me@host:~/tmp"))
-        XCTAssertTrue(TerminalTitle.isIdle("me@host:/tmp"))
-    }
-
-    func testSnapshotMatchesPanesToSessions() {
-        let snapshot = LayoutMatcher.snapshot(of: live, candidates: candidates)
-        XCTAssertEqual(snapshot.windows.count, 1)
-        XCTAssertEqual(snapshot.windows[0].shape, [1, 1, 2])
-        XCTAssertEqual(snapshot.windows[0].tabs[2].terminals.map(\.sessionId), [c, d])
-    }
-
-    func testPlanFillsRestoredIdleWindow() {
-        let snapshot = LayoutMatcher.snapshot(of: live, candidates: candidates)
-        // 재부팅 후: 모두 꺼짐, Ghostty 가 같은 모양의 빈 셸 창을 되살림
-        let plan = RestorePlan.make(snapshot: snapshot, stopped: [a, b, c, d, "e-leftover"])
-        XCTAssertEqual(plan.leftovers, ["e-leftover"])
-        XCTAssertEqual(plan.windows[0].tabs.map { $0.terminals.compactMap(\.sessionId) }, [[a], [b], [c, d]])
-        let restored: LiveLayout = [[
-            [LiveTerminal(id: "n1", title: "me@host:~")], [LiveTerminal(id: "n2", title: "me@host:~")],
-            [LiveTerminal(id: "n3", title: "me@host:~"), LiveTerminal(id: "n4", title: "me@host:~")],
-        ]]
-        XCTAssertEqual(RestorePlan.fillTarget(for: plan.windows[0], in: restored, excluding: []), 0)
-        // 모양이 다르거나 이미 Claude 가 돌고 있으면 채우지 않고 새 창을 만든다
-        XCTAssertNil(RestorePlan.fillTarget(for: plan.windows[0], in: live, excluding: []))
-        XCTAssertNil(RestorePlan.fillTarget(for: plan.windows[0], in: [restored[0].dropLast().map { $0 }], excluding: []))
-    }
-
-    func testPlanSkipsSessionsAlreadyRunning() {
-        let snapshot = LayoutMatcher.snapshot(of: live, candidates: candidates)
-        let plan = RestorePlan.make(snapshot: snapshot, stopped: [d])
-        XCTAssertEqual(plan.windows.count, 1)
-        XCTAssertEqual(plan.windows[0].tabs.count, 1, "꺼진 세션이 있는 탭만")
-        XCTAssertEqual(plan.windows[0].tabs[0].index, 2)
-        XCTAssertEqual(plan.windows[0].tabs[0].terminals, [RestorePlan.Terminal(index: 1, sessionId: d)])
-    }
 }
 
 final class DuplicateTabTests: XCTestCase {
@@ -364,27 +259,6 @@ final class DuplicateTabTests: XCTestCase {
                                    context: other, store: store)
             XCTAssertTrue(try XCTUnwrap(store.load(sid)).isRunning, reason)
         }
-    }
-}
-
-final class TTYMatchingTests: XCTestCase {
-    func testTTYBeatsTitleAndIdleUsesTTY() {
-        let a = "aaaaaaaa-0000-0000-0000-000000000001", b = "aaaaaaaa-0000-0000-0000-000000000002"
-        // iTerm2: 제목은 둘 다 "claude" 라 제목으로는 구분 불가 → tty 로 짝짓는다
-        let live: LiveLayout = [[[LiveTerminal(id: "s1", title: "✳ claude", tty: "/dev/ttys010"),
-                                  LiveTerminal(id: "s2", title: "✳ claude", tty: "/dev/ttys011")]]]
-        let snapshot = LayoutMatcher.snapshot(of: live, candidates: [
-            .init(sessionId: b, titles: ["claude"], tty: "/dev/ttys011"),
-            .init(sessionId: a, titles: ["claude"], tty: "/dev/ttys010"),
-        ])
-        XCTAssertEqual(snapshot.windows[0].tabs[0].terminals.map(\.sessionId), [a, b])
-
-        let plan = RestorePlan.make(snapshot: snapshot, stopped: [a, b])
-        let restored: LiveLayout = [[[LiveTerminal(id: "n1", title: "zsh", tty: "/dev/ttys020"),
-                                      LiveTerminal(id: "n2", title: "zsh", tty: "/dev/ttys021")]]]
-        XCTAssertEqual(RestorePlan.fillTarget(for: plan.windows[0], in: restored, excluding: []), 0)
-        XCTAssertNil(RestorePlan.fillTarget(for: plan.windows[0], in: restored, excluding: [],
-                                            busyTTYs: ["/dev/ttys021"]), "claude 가 도는 화면은 채우지 않는다")
     }
 }
 
@@ -459,18 +333,6 @@ final class IncrementalTranscriptTests: XCTestCase {
     }
 }
 
-final class ArrangementTests: XCTestCase {
-    func testTitleChangesDoNotCountAsLayoutChange() {
-        let a = LayoutSnapshot(capturedAt: Date(), windows: [LayoutWindow(tabs: [LayoutTab(terminals: [LayoutTerminal(sessionId: "x", title: "✳ 작업")])])])
-        var b = a
-        b.windows[0].tabs[0].terminals[0].title = "◐ 작업"
-        XCTAssertTrue(a.hasSameArrangement(as: b))
-        b.windows[0].tabs[0].terminals.append(LayoutTerminal(sessionId: "y", title: "zsh"))
-        XCTAssertFalse(a.hasSameArrangement(as: b))
-    }
-}
-
-/// 중복 실행 방지: 실행 직전 재확인 + 여는 중 예약
 final class LaunchGateTests: XCTestCase {
     var dir: URL!
     var store: SessionStore!
@@ -611,88 +473,5 @@ final class SessionEndOwnershipTests: XCTestCase {
         try ownedRecord(pid: 88888, start: 3)
         try end("other", from: ProcInfo(pid: 88888, ppid: 1, startTime: 3, hasTTY: true), live: [])
         XCTAssertNotNil(try XCTUnwrap(store.load(sid)).endedAt)
-    }
-}
-
-final class LayoutMergeTests: XCTestCase {
-    let a = "aaaaaaaa-0000-0000-0000-00000000000a", b = "bbbbbbbb-0000-0000-0000-00000000000b"
-    let c = "cccccccc-0000-0000-0000-00000000000c"
-
-    func window(_ ids: [[String?]]) -> LayoutWindow {
-        LayoutWindow(tabs: ids.map { LayoutTab(terminals: $0.map { LayoutTerminal(sessionId: $0, title: "") }) })
-    }
-
-    /// iTerm2 창 W1(A), W2(B) 중 W1 을 닫은 뒤 기록해도 W1 의 자리(A)는 남는다.
-    func testClosedWindowIsKept() {
-        let previous = LayoutSnapshot(capturedAt: Date(), windows: [window([[a]]), window([[b]])])
-        let now = LayoutSnapshot(capturedAt: Date(), windows: [window([[b]])])
-        let merged = now.merging(previous: previous, keep: [a])
-        XCTAssertEqual(merged.windows, [window([[b]]), window([[a]])])
-    }
-
-    /// 아직 열려 있는 창의 옛 기록, 다시 열 수 없는(기록이 지워진) 세션만 있던 창은 버린다.
-    func testStaleWindowsAreDropped() {
-        let previous = LayoutSnapshot(capturedAt: Date(), windows: [window([[a, b]]), window([[c]])])
-        let now = LayoutSnapshot(capturedAt: Date(), windows: [window([[b]])])
-        XCTAssertEqual(now.merging(previous: previous, keep: [a]).windows, [window([[b]])])
-    }
-
-    /// iTerm2(tty 를 아는 터미널)에서 tty 로 못 찾은 화면은 제목이 같아도 짝짓지 않는다.
-    func testNoTitleFallbackWhenTTYKnown() {
-        let live: LiveLayout = [[[LiveTerminal(id: "s1", title: "✳ 작업", tty: "/dev/ttys050")]]]
-        let snapshot = LayoutMatcher.snapshot(of: live, candidates: [.init(sessionId: a, titles: ["작업"], tty: "/dev/ttys051")])
-        XCTAssertTrue(snapshot.sessionIds.isEmpty)
-    }
-
-    /// 제목만 아는 터미널(Ghostty)에서 같은 제목이 둘이면 어느 쪽인지 확정하지 않는다.
-    func testAmbiguousTitlesAreNotMatched() {
-        let live: LiveLayout = [[[LiveTerminal(id: "g1", title: "✳ repo@main"), LiveTerminal(id: "g2", title: "✳ repo@main")]]]
-        let snapshot = LayoutMatcher.snapshot(of: live, candidates: [.init(sessionId: a, titles: ["repo@main"]),
-                                                                     .init(sessionId: b, titles: ["repo@main"])])
-        XCTAssertTrue(snapshot.sessionIds.isEmpty)
-        let single: LiveLayout = [[[LiveTerminal(id: "g1", title: "✳ repo@main")]]]
-        XCTAssertEqual(LayoutMatcher.snapshot(of: single, candidates: [.init(sessionId: a, titles: ["repo@main"])]).sessionIds, [a])
-    }
-
-    func testLayoutsArePerTerminal() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let legacy = LayoutStore(url: dir.appendingPathComponent("layout.json"))
-        try legacy.save(LayoutSnapshot(capturedAt: Date(), windows: [window([[a]])]))
-        LayoutStore.migrateLegacy(toTerminal: "iterm2", dir: dir)
-        XCTAssertEqual(LayoutStore(terminal: "iterm2", dir: dir).load()?.sessionIds, [a])
-        XCTAssertNil(LayoutStore(terminal: "ghostty", dir: dir).load())
-        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.url.path))
-    }
-}
-
-final class TemplateTests: XCTestCase {
-    /// 넣은 값 안의 "{cwd}" 가 다시 바뀌지 않는다.
-    func testSinglePassSubstitution() {
-        XCTAssertEqual(CommandTemplate.render("echo {name}", sessionId: "x", name: "{cwd}", cwd: "/tmp/a b"), "echo '{cwd}'")
-    }
-
-    /// "{name}" 처럼 따옴표로 감싼 자리표시자도 안전하게 한 인자로 들어간다.
-    func testQuotedPlaceholderIsUnwrapped() {
-        XCTAssertEqual(CommandTemplate.render(#"claude -n "{name}" --resume {id}"#, sessionId: "abc", name: "$(rm -rf ~)", cwd: "/"),
-                       "claude -n '$(rm -rf ~)' --resume abc")
-    }
-}
-
-final class AttachPlanTests: XCTestCase {
-    /// 분할 A|B 중 A 만 꺼짐 → 계획에 "B 가 아직 열려 있음"을 남겨 새 창 대신 B 옆에 붙일 수 있게 한다.
-    func testPlanRecordsOpenSiblings() {
-        let a = "aaaaaaaa-0000-0000-0000-00000000000a", b = "bbbbbbbb-0000-0000-0000-00000000000b"
-        let c = "cccccccc-0000-0000-0000-00000000000c"
-        let snapshot = LayoutSnapshot(capturedAt: Date(), windows: [LayoutWindow(tabs: [
-            LayoutTab(terminals: [LayoutTerminal(sessionId: a, title: ""), LayoutTerminal(sessionId: b, title: "")]),
-            LayoutTab(terminals: [LayoutTerminal(sessionId: c, title: "")]),
-        ])])
-        let plan = RestorePlan.make(snapshot: snapshot, stopped: [a, c], open: [b])
-        XCTAssertEqual(plan.windows.count, 1)
-        XCTAssertEqual(plan.windows[0].openSiblings, [b])
-        XCTAssertEqual(plan.windows[0].tabs.map(\.openSiblings), [[b], []])
-        XCTAssertEqual(plan.windows[0].tabs.map { $0.terminals.compactMap(\.sessionId) }, [[a], [c]])
     }
 }

@@ -3,7 +3,9 @@ import Foundation
 /// ~/.claude/settings.json 에 이 앱의 SessionStart / SessionEnd hook 을 넣고 뺀다.
 /// 사용자의 다른 설정·hook 은 그대로 두고, 바꾸기 전에 백업을 남긴다.
 public struct HookInstaller {
-    public static let events = ["SessionStart", "SessionEnd"]
+    /// 세션 기록(SessionStart/End)과 작업 상태(나머지) hook
+    public static let events = ["SessionStart", "SessionEnd", "UserPromptSubmit", "Stop", "StopFailure", "Notification",
+                                "PermissionRequest"]
     /// 같은 세션 기록(SessionStore)을 남기는 hook 의 실행 파일 이름들. ClaudeSessions 앱은 ClaudeTerm 으로 바뀌어 정리 대상이다.
     public static let legacyMarkers = ["ClaudeSessions"]
 

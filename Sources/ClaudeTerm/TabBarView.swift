@@ -6,7 +6,13 @@ final class TabBarView: NSView {
         var title: String
         var paneCount: Int
         var zoomed: Bool
+        /// 탭 안 화면들의 대표 상태(WorkStatus.top). claude 가 없으면 .none 이라 점을 안 그린다.
+        var status: WorkStatus = .none
     }
+
+    /// 상태 점 지름과 제목까지 간격
+    private static let dotSize: CGFloat = 8
+    private static let dotGap: CGFloat = 6
 
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
@@ -40,7 +46,11 @@ final class TabBarView: NSView {
 
     private func titleAttributes(_ index: Int) -> [NSAttributedString.Key: Any] {
         let isSelected = index == selected
-        let color = isSelected ? TermAppearance.chrome : index == hovered ? TermAppearance.textPrimary : TermAppearance.textDim
+        // 입력 대기 탭은 붉은 바탕 위라 흐린 글자 대신 밝은 글자로
+        var waiting = false
+        if tabs.indices.contains(index), case .waiting = tabs[index].status { waiting = true }
+        let color = isSelected ? TermAppearance.chrome
+            : index == hovered || waiting ? TermAppearance.textPrimary : TermAppearance.textDim
         return [.font: TermAppearance.uiFont(12, bold: isSelected), .foregroundColor: color]
     }
 
@@ -64,6 +74,7 @@ final class TabBarView: NSView {
         let height = bounds.height
         for (index, tab) in tabs.enumerated() {
             var width: CGFloat = 12
+            if tab.status != .none { width += Self.dotSize + Self.dotGap }
             width += (Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(index)).width
             if let badge = badge(tab) {
                 width += 6 + (badge as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width
@@ -96,7 +107,18 @@ final class TabBarView: NSView {
                 TermAppearance.chromeRaised.setFill()
                 rect.fill()
             }
+            // 안 보고 있는 탭이 입력 대기면 바탕을 붉게 물들이고 아래에 붉은 줄(색과 모양 둘 다로 눈에 띄게)
+            if !isSelected, case .waiting = tab.status {
+                TermAppearance.red.withAlphaComponent(index == hovered ? 0.26 : 0.18).setFill()
+                rect.fill()
+                TermAppearance.red.setFill()
+                CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
+            }
             var x = rect.minX + 12
+            if tab.status != .none {
+                drawDot(tab.status, at: CGPoint(x: x + Self.dotSize / 2, y: rect.midY), onAccent: isSelected)
+                x += Self.dotSize + Self.dotGap
+            }
             let title = Self.short(tab.title) as NSString
             let attributes = titleAttributes(index)
             let size = title.size(withAttributes: attributes)
@@ -129,6 +151,35 @@ final class TabBarView: NSView {
         let plusSize = plus.size(withAttributes: plusAttributes)
         plus.draw(at: CGPoint(x: plusRect.midX - plusSize.width / 2, y: (plusRect.height - plusSize.height) / 2),
                   withAttributes: plusAttributes)
+    }
+
+    /// 상태 점(사이드바와 같은 모양): 쉬는 중은 속 빈 점, 입력 대기는 테두리 두른 점, 나머지는 찬 점.
+    /// 강조색(지금 탭) 위에서는 바탕색 테두리를 둘러 점이 묻히지 않게 한다.
+    private func drawDot(_ status: WorkStatus, at center: CGPoint, onAccent: Bool) {
+        let size = Self.dotSize
+        let rect = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
+        let color = status.color
+        if onAccent {
+            TermAppearance.chrome.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: -1.5, dy: -1.5)).fill()
+        }
+        switch status {
+        case .idle:
+            color.setStroke()
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.6, dy: 0.6))
+            ring.lineWidth = 1.2
+            ring.stroke()
+        case .waiting:
+            color.setStroke()
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
+            ring.lineWidth = 1
+            ring.stroke()
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+        default:
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+        }
     }
 
     // MARK: - 마우스

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# 내장 터미널 시제품 ClaudeTerm.app 을 dist/ 에 만든다(기존 ClaudeSessions.app 과 별개).
-#   scripts/build-term-proto.sh            # release
+# ClaudeTerm.app 을 dist/ 에 만들고, 배포용 zip(dist/ClaudeTerm-<버전>.zip)도 만든다.
+#   scripts/build-term-proto.sh                    # release
+#   VERSION=0.2.0 scripts/build-term-proto.sh
 #   CONFIG=debug scripts/build-term-proto.sh
+# 동료 설치: scripts/install.sh dist/ClaudeTerm-<버전>.zip
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${CONFIG:-release}"
+VERSION="${VERSION:-0.1.0}"
 BUNDLE_ID="${BUNDLE_ID:-dev.claude-sessions.term}"
 swift build -c "$CONFIG" --product ClaudeTermDaemon
 swift build -c "$CONFIG" --product ClaudeTerm
@@ -26,7 +29,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleName</key><string>ClaudeTerm</string>
 	<key>CFBundleDisplayName</key><string>Claude Term</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
-	<key>CFBundleShortVersionString</key><string>0.0.1</string>
+	<key>CFBundleShortVersionString</key><string>$VERSION</string>
 	<key>CFBundleVersion</key><string>$(date +%Y%m%d%H%M)</string>
 	<key>LSMinimumSystemVersion</key><string>13.0</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
@@ -39,4 +42,8 @@ cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp -R Resources/Fonts "$APP/Contents/Resources/Fonts"
 codesign --force --sign - "$APP/Contents/MacOS/ClaudeTermDaemon"
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+ZIP="dist/ClaudeTerm-$VERSION.zip"
+rm -f "$ZIP"
+ditto -c -k --keepParent "$APP" "$ZIP"
 echo "✔ $APP"
+echo "✔ $ZIP"
