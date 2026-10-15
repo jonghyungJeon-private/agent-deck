@@ -16,7 +16,8 @@ struct SubagentActivity: Identifiable, Equatable {
     var lastText: String?
 
     /// 최근 1분 안에 기록이 늘었으면 일하는 중으로 본다
-    var isRunning: Bool { Date().timeIntervalSince(lastActive) < 60 }
+    var running: Bool? = nil
+    var isRunning: Bool { running ?? (Date().timeIntervalSince(lastActive) < 60) }
 }
 
 /// 하위 에이전트 기록(~/.claude/projects/<폴더>/<세션>/subagents/agent-*.jsonl)을 훑어 어느 작업 트리에서 일하는지 알아낸다.

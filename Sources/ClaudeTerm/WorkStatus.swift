@@ -6,6 +6,7 @@ enum WorkStatus: Equatable {
     case none
     /// claude 인데 상태 hook 이 아직 없다(연결 갱신 전)
     case unknown
+    case codexUnknown
     case working
     /// 권한·질문 등 사람의 입력을 기다린다
     case waiting(String?)
@@ -27,7 +28,7 @@ enum WorkStatus: Equatable {
 
     var label: String? {
         switch self {
-        case .none, .unknown: return nil
+        case .none, .unknown, .codexUnknown: return nil
         case .working: return "작업 중"
         case .waiting: return "입력 대기"
         case .done: return "완료"
@@ -47,6 +48,7 @@ enum WorkStatus: Equatable {
         switch self {
         case .none: return TermAppearance.textDim.withAlphaComponent(0.6)
         case .unknown: return TermAppearance.claudeColor
+        case .codexUnknown: return TermAppearance.codexColor
         case .working: return TermAppearance.yellow
         case .waiting, .error: return TermAppearance.red
         case .done: return TermAppearance.cyan
@@ -62,7 +64,7 @@ enum WorkStatus: Equatable {
         case .done: return 4
         case .working: return 3
         case .idle: return 2
-        case .unknown: return 1
+        case .unknown, .codexUnknown: return 1
         case .none: return 0
         }
     }
@@ -79,7 +81,7 @@ enum WorkStatus: Equatable {
     var debugName: String {
         switch self {
         case .none: return "none"
-        case .unknown: return "unknown"
+        case .unknown, .codexUnknown: return "unknown"
         case .working: return "working"
         case .waiting(let message): return "waiting" + (message.map { "(\($0))" } ?? "")
         case .done: return "done"

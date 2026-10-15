@@ -9,12 +9,17 @@ public struct HookInstaller {
     /// 같은 세션 기록(SessionStore)을 남기는 hook 의 실행 파일 이름들. ClaudeSessions 앱은 ClaudeTerm 으로 바뀌어 정리 대상이다.
     public static let legacyMarkers = ["ClaudeSessions"]
 
+    public let eventNames: [String]
+    public let subcommand: String
     public let settingsURL: URL
     public let executablePath: String
     /// 이 앱이 넣은 hook 인지 알아보는 표식(실행 파일 이름). 경로가 바뀌어도(앱 이동) 찾을 수 있게 끝부분만 본다.
     public let marker: String
 
-    public init(settingsURL: URL = Paths.claudeSettings, executablePath: String, marker: String = "ClaudeSessions") {
+    public init(settingsURL: URL = Paths.claudeSettings, executablePath: String, marker: String = "ClaudeSessions",
+                events: [String] = HookInstaller.events, subcommand: String = "hook") {
+        self.eventNames = events
+        self.subcommand = subcommand
         self.settingsURL = settingsURL
         self.executablePath = executablePath
         self.marker = marker
@@ -45,15 +50,15 @@ public struct HookInstaller {
             if "\"\\$`".contains(ch) { out.append("\\") }
             out.append(ch)
         }
-        return "\"\(escaped)\" hook"
+        return "\"\(escaped)\" \(subcommand)"
     }
 
-    func isOurs(_ command: String) -> Bool { command.hasSuffix(Self.suffix(marker)) }
+    func isOurs(_ command: String) -> Bool { command.hasSuffix("\(marker)\" \(subcommand)") }
 
     /// 지금 settings.json 의 이 앱 hook 이 가리키는 실행 파일들
     public func installedExecutablePaths() throws -> [String] {
         let hooks = try loadSettings()["hooks"] as? [String: Any] ?? [:]
-        return Self.events.flatMap { commands(in: hooks[$0]) }.filter(isOurs).compactMap { command in
+        return eventNames.flatMap { commands(in: hooks[$0]) }.filter(isOurs).compactMap { command in
             guard command.hasPrefix("\""), let end = command.dropFirst().firstIndex(of: "\"") else { return nil }
             return String(command[command.index(after: command.startIndex)..<end]).replacingOccurrences(of: "\\", with: "")
         }
@@ -71,20 +76,20 @@ public struct HookInstaller {
         let settings = try loadSettings()
         let hooks = settings["hooks"] as? [String: Any] ?? [:]
         var found = 0, current = 0
-        for event in Self.events {
+        for event in eventNames {
             for command in commands(in: hooks[event]) where isOurs(command) {
                 found += 1
                 if command == self.command { current += 1 }
             }
         }
         if found == 0 { return .notInstalled }
-        return current == Self.events.count && found == current ? .installed : .outdated
+        return current == eventNames.count && found == current ? .installed : .outdated
     }
 
     /// 같은 기록을 남기는 다른(예전) 앱의 hook 이 남아 있는지
     public func hasLegacyHooks() throws -> Bool {
         let hooks = try loadSettings()["hooks"] as? [String: Any] ?? [:]
-        return Self.events.flatMap { commands(in: hooks[$0]) }.contains { command in
+        return eventNames.flatMap { commands(in: hooks[$0]) }.contains { command in
             Self.legacyMarkers.filter { $0 != marker }.contains { command.hasSuffix(Self.suffix($0)) }
         }
     }
@@ -96,7 +101,7 @@ public struct HookInstaller {
         var settings = try loadSettings()
         var hooks = removingOurs(from: settings["hooks"] as? [String: Any] ?? [:],
                                  also: replacingLegacy ? Self.legacyMarkers.filter { $0 != marker } : [])
-        for event in Self.events {
+        for event in eventNames {
             var groups = hooks[event] as? [Any] ?? []
             groups.append(["hooks": [["type": "command", "command": command, "timeout": 10]]])
             hooks[event] = groups
@@ -139,11 +144,11 @@ public struct HookInstaller {
             let stamp = Self.stampFormatter.string(from: Date())
             let dir = settingsURL.deletingLastPathComponent()
             // 같은 초에 여러 번 바꿔도 처음 백업을 지우지 않는다
-            var url = dir.appendingPathComponent("settings.json.bak-claude-sessions-\(stamp)")
+            var url = dir.appendingPathComponent("\(settingsURL.lastPathComponent).bak-claude-sessions-\(stamp)")
             var n = 1
             while fm.fileExists(atPath: url.path) {
                 n += 1
-                url = dir.appendingPathComponent("settings.json.bak-claude-sessions-\(stamp)-\(n)")
+                url = dir.appendingPathComponent("\(settingsURL.lastPathComponent).bak-claude-sessions-\(stamp)-\(n)")
             }
             try fm.copyItem(at: settingsURL, to: url)
             backup = url
@@ -171,9 +176,9 @@ public struct HookInstaller {
 
     /// 이 앱의 hook 항목만 지운다(also 의 표식도 함께). 비게 된 그룹·이벤트도 정리한다.
     private func removingOurs(from hooks: [String: Any], also: [String] = []) -> [String: Any] {
-        let suffixes = ([marker] + also).map(Self.suffix)
+        let suffixes = ([marker] + also).map { "\($0)\" \(subcommand)" }
         var result = hooks
-        for event in Self.events {
+        for event in eventNames {
             guard let groups = hooks[event] as? [Any] else { continue }
             let cleaned: [Any] = groups.compactMap { group in
                 guard var dict = group as? [String: Any], let inner = dict["hooks"] as? [Any] else { return group }

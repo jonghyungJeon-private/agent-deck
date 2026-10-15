@@ -1,12 +1,30 @@
 # Claude Term
 
-Claude Code 세션을 위한 가벼운 터미널 앱(macOS, 사내 배포용·서명 없음).
+Claude Code·Codex CLI 세션을 위한 가벼운 터미널 앱(macOS, 사내 배포용·서명 없음).
 왼쪽은 폴더(git 저장소)·작업 트리별로 묶은 세션 목록, 오른쪽은 Ghostty 식 탭·분할 터미널이다.
 셸과 claude 는 앱이 아니라 백그라운드 데몬이 붙잡고 있어서 앱을 끄거나 업데이트해도 세션이 계속 돌고,
 데몬까지 꺼져도(강제 종료·재부팅) 탭을 열면 `claude --resume` 으로 같은 자리에 되살린다.
 
 목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지"만, 최대한 가볍게. 편집기·파일 트리·diff·브라우저는 넣지 않는다.
 (예전 메뉴바 앱 ClaudeSessions 는 이 앱으로 대체되어 코드에서 뺐다. 세션 기록 위치 `~/Library/Application Support/ClaudeSessions/` 는 그대로 쓴다.)
+
+## Codex CLI
+
+- 사이드바의 **+ codex**(좁은 사이드바에서는 **+ 새 세션 → Codex**)와 폴더·작업 트리의 오른쪽 클릭 메뉴에서 실행한다.
+- 실행 중인 대화형 Codex만 화면의 셸 계보로 찾는다. `exec`·`app-server`·node 래퍼는 세션으로 세지 않는다.
+- `CODEX_THREAD_ID`와 `CLAUDE_SESSIONS_PANE`, 훅 기록, 명시적인 `codex resume <UUID>` 인자로 세션을 연결한다. 폴더가 같다는 이유로 최근 대화를 연결하지 않는다.
+  확인된 연결은 Codex PID·시작 시각과 함께 `term/codex-bindings.json`에 저장한다. 연결 전에도 프로그램명 **codex**는 표시된다.
+- Codex의 `state_5.sqlite`·`thread_history_1.sqlite`와 기존 `sessions/**/*.jsonl`을 읽기 전용으로 읽어 이름·작업 상태를 표시한다.
+  `CODEX_HOME`을 지정한 CLI는 해당 폴더를 읽는다. 이름 변경은 앱 내부 이름만 바꾼다. Codex 대화·설정·DB는 수정하지 않는다.
+- 탭·분할 제목, 폴더·작업 트리 묶음, 작업 상태 점, 완료 확인·알림·Dock 배지에도 반영한다.
+  Codex 하위 에이전트는 부모 세션과 연결해 표시하고, 작업 폴더가 작업 트리와 일치하면 그 아래에 둔다.
+- **Codex 연결하기**는 `~/.codex/hooks.json`에 관찰용 훅을 추가한다(기존 설정 백업·다른 훅 보존).
+  Codex의 **`/hooks`에서 새 훅을 검토·신뢰해야** 권한 요청·질문 대기·완료 상태를 정확하게 받을 수 있다.
+  훅은 `ClaudeTermDaemon codex-hook`으로 기록만 남기며, 승인 결정·모델 문맥은 반환하지 않는다.
+  연결 전에 실행한 세션은 도구 실행 등에서 세션 ID가 확인된 뒤 이름·복원 정보가 연결될 수 있다.
+- 데몬 재시작·재부팅으로 사라진 Codex 화면은 저장된 정확한 ID로 `codex resume <UUID>`를 실행한다.
+  모델·프로필·권한 등의 원래 옵션과 `CODEX_HOME`을 이어받고, 첫 질문·`--last`·`--worktree`는 다시 실행하지 않는다.
+  예전 Claude 전용 배치 파일도 그대로 읽는다.
 
 ## 설치 (사내)
 

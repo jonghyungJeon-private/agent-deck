@@ -13,13 +13,21 @@ struct SidebarView: View {
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
     @State private var expandedAgent: String?
 
+    private static let versionLabel: String = {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        let label = [version.map { "v\($0)" }, build.map { "빌드 \($0)" }]
+            .compactMap { $0 }.joined(separator: " · ")
+        return label.isEmpty ? "개발 빌드" : label
+    }()
+
     var body: some View {
         VStack(spacing: 0) {
             header
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if model.groups.isEmpty {
-                        Text(model.connected ? "열린 세션이 없습니다.\n위 + claude 로 시작하세요." : "데몬에 연결 중…")
+                        Text(model.connected ? "열린 세션이 없습니다.\n위 + 버튼으로 시작하세요." : "데몬에 연결 중…")
                             .font(Font(TermAppearance.uiFont(11)))
                             .foregroundStyle(Color(TermAppearance.textDim))
                             .padding(14)
@@ -40,14 +48,14 @@ struct SidebarView: View {
                                 .onTapGesture { model.focus(pane: row.id) }
                                 .contextMenu {
                                     Button("이름 바꾸기…") { model.rename(pane: row.id) }
-                                    Button("화면 닫기(셸·claude 종료)") { model.close(pane: row.id) }
+                                    Button("화면 닫기(셸·에이전트 종료)") { model.close(pane: row.id) }
                                     Divider()
                                     openMenu(row.cwd)
                                 }
                         case .agent(let agent, let depth, let owner):
                             AgentRowView(agent: agent, depth: depth, owner: owner, expanded: expandedAgent == agent.id)
                                 .onTapGesture {
-                                    // 띄운 claude 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
+                                    // 띄운 에이전트 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
                                     model.focus(pane: agent.paneId)
                                     expandedAgent = expandedAgent == agent.id ? nil : agent.id
                                 }
@@ -59,6 +67,7 @@ struct SidebarView: View {
                 .padding(.vertical, 4)
             }
             hookBanner
+            codexHookBanner
             footer
         }
         .frame(minWidth: 220, maxHeight: .infinity)
@@ -72,11 +81,25 @@ struct SidebarView: View {
                 .font(Font(TermAppearance.uiFont(11)))
                 .foregroundStyle(Color(TermAppearance.textDim))
             Spacer()
-            ChromeButton(label: "+ claude", help: "폴더를 골라 새 탭에서 claude 실행") {
-                pickFolder { model.newPane(cwd: $0, command: "claude") }
-            }
-            ChromeButton(label: "+ 셸", help: "홈 폴더에서 새 셸 탭 (지금 화면 폴더는 ⌘T)") {
-                model.newPane(cwd: NSHomeDirectory())
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 4) {
+                    ChromeButton(label: "+ claude", help: "폴더를 골라 새 탭에서 claude 실행") {
+                        pickFolder { model.newPane(cwd: $0, command: "claude") }
+                    }
+                    ChromeButton(label: "+ codex", help: "폴더를 골라 새 탭에서 codex 실행") {
+                        pickFolder { model.newPane(cwd: $0, command: "codex") }
+                    }
+                    ChromeButton(label: "+ 셸", help: "홈 폴더에서 새 셸 탭 (지금 화면 폴더는 ⌘T)") {
+                        model.newPane(cwd: NSHomeDirectory())
+                    }
+                }
+                .fixedSize()
+                Menu("+ 새 세션") {
+                    Button("Claude Code…") { pickFolder { model.newPane(cwd: $0, command: "claude") } }
+                    Button("Codex…") { pickFolder { model.newPane(cwd: $0, command: "codex") } }
+                    Button("셸") { model.newPane(cwd: NSHomeDirectory()) }
+                }
+                .fixedSize()
             }
         }
         .padding(.leading, 14)
@@ -138,12 +161,33 @@ struct SidebarView: View {
         }
     }
 
+    @ViewBuilder
+    private var codexHookBanner: some View {
+        if model.codexHookState != .unknown && model.codexHookState != .ok {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요.")
+                    .fixedSize(horizontal: false, vertical: true)
+                if case .error(let detail) = model.codexHookState {
+                    Text(detail).foregroundStyle(Color(TermAppearance.red))
+                } else {
+                    Button(model.codexHookState == .update ? "Codex 연결 갱신" : "Codex 연결하기") { model.connectCodexHooks() }
+                }
+            }
+            .font(Font(TermAppearance.uiFont(10)))
+            .foregroundStyle(Color(TermAppearance.textDim))
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+        }
+    }
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 3) {
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
             Text("앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))")
+            Text(Self.versionLabel)
+                .textSelection(.enabled)
             Text(model.connected ? "앱을 꺼도 세션은 계속 돕니다" : "데몬 연결 끊김")
         }
         .font(Font(TermAppearance.uiFont(10)))
@@ -158,6 +202,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func openMenu(_ path: String) -> some View {
         Button("여기서 claude 열기(새 탭)") { model.newPane(cwd: path, command: "claude") }
+        Button("여기서 codex 열기(새 탭)") { model.newPane(cwd: path, command: "codex") }
         Button("여기서 셸 열기(새 탭)") { model.newPane(cwd: path) }
         Button("Finder 에서 보기") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path) }
     }
@@ -310,7 +355,7 @@ struct SessionRowView: View {
                     .font(Font(TermAppearance.uiFont(12, bold: selected)))
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                 if row.dormant {
-                    Text(row.isClaude ? "꺼짐 · 열면 claude 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
+                    Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program) 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
                         .font(Font(TermAppearance.uiFont(10)))
                         .foregroundStyle(Color(TermAppearance.textDim))
                 } else {
@@ -321,7 +366,7 @@ struct SessionRowView: View {
                             .fontWeight(row.status.needsAttention ? .bold : .regular)
                     }
                     Text(row.status.detail ?? row.program)
-                        .foregroundStyle(Color(row.isClaude ? TermAppearance.claudeColor : TermAppearance.textDim))
+                        .foregroundStyle(Color(row.agentColor))
                     // 제목이 이미 폴더 이름이면 같은 말을 되풀이하지 않고 터미널 장치로 구분한다
                     Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")
                         .foregroundStyle(Color(TermAppearance.textDim))
@@ -357,7 +402,7 @@ enum SidebarItem: Identifiable, Equatable {
     case group(FolderGroup)
     case worktree(WorktreeSection)
     case session(PaneRow, depth: Int)
-    /// 하위 에이전트(owner: 띄운 claude 화면 이름 — 다른 줄 아래에 있을 때만)
+    /// 하위 에이전트(owner: 띄운 에이전트 화면 이름 — 다른 줄 아래에 있을 때만)
     case agent(SubagentActivity, depth: Int, owner: String?)
     case gap(String)
 
@@ -395,7 +440,7 @@ enum SidebarItem: Identifiable, Equatable {
     }
 }
 
-/// 하위 에이전트 한 줄. 누르면 띄운 claude 화면으로 넘어가고 마지막 메시지를 펼친다.
+/// 하위 에이전트 한 줄. 누르면 띄운 에이전트 화면으로 넘어가고 마지막 메시지를 펼친다.
 struct AgentRowView: View {
     let agent: SubagentActivity
     let depth: Int
@@ -450,6 +495,6 @@ struct AgentRowView: View {
         .background(Color(hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help("누르면 이 에이전트를 띄운 claude 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
+        .help("누르면 이 에이전트를 띄운 에이전트 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
     }
 }

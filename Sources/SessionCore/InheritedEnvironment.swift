@@ -10,7 +10,7 @@ public enum InheritedEnvironment {
 
     @discardableResult
     public static func scrub(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> [String] {
-        let keys = environment.keys.filter(isClaudeSessionMarker).sorted()
+        let keys = environment.keys.filter { isClaudeSessionMarker($0) || $0 == "CODEX_THREAD_ID" }.sorted()
         keys.forEach { unsetenv($0) }
         return keys
     }

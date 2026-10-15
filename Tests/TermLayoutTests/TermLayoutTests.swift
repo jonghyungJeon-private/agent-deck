@@ -154,3 +154,16 @@ final class GitWorktreesTests: XCTestCase {
         XCTAssertNil(GitWorktrees.locate(root))
     }
 }
+
+final class CodexRecipeTests: XCTestCase {
+    func testOldLayoutStillDecodes() throws {
+        let recipe = try JSONDecoder().decode(PaneRecipe.self, from: Data(#"{"cwd":"/old","sessionId":"claude-id","claudeArgs":["--model","opus"]}"#.utf8))
+        XCTAssertEqual(recipe.resumeCommand, "claude --resume claude-id --model opus")
+        XCTAssertNil(recipe.codexSessionId)
+    }
+    func testCodexResumesExactSessionWithOriginalOptionsAndHome() throws {
+        let recipe = PaneRecipe(cwd: "/work", codexSessionId: "codex-id", codexArgs: ["--model", "model x"], codexHome: "/custom home")
+        XCTAssertEqual(recipe.resumeCommand, "CODEX_HOME='/custom home' codex resume codex-id --model 'model x'")
+        XCTAssertEqual(try JSONDecoder().decode(PaneRecipe.self, from: JSONEncoder().encode(recipe)), recipe)
+    }
+}

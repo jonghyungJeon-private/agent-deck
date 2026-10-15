@@ -58,6 +58,7 @@ enum TermAppearance {
     static let accent = NSColor(srgbHex: 0xc099ff)
     /// 포커스 없는 화면 테두리
     static let border = NSColor(srgbHex: 0x3e4451)
+    static let codexColor = NSColor(srgbHex: 0x56b6c2)
     static let claudeColor = NSColor(srgbHex: 0xd7875f)
     static let green = NSColor(srgbHex: 0x98c379)
     static let yellow = NSColor(srgbHex: 0xe5c07b)

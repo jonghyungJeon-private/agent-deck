@@ -18,6 +18,10 @@ if CommandLine.arguments.dropFirst().first == "hook" {
     exit(HookHandler.runFromCommandLine())
 }
 
+if CommandLine.arguments.dropFirst().first == "codex-hook" {
+    exit(CodexHook.run())
+}
+
 signal(SIGPIPE, SIG_IGN)
 signal(SIGHUP, SIG_IGN)
 InheritedEnvironment.scrub()

@@ -195,8 +195,15 @@ public struct PaneRecipe: Codable, Equatable {
     public var sessionId: String?
     /// claude 를 띄웠던 실행 인자(세션 지정 인자는 빼고, 예: --dangerously-skip-permissions)
     public var claudeArgs: [String]?
+    public var codexSessionId: String?
+    public var codexArgs: [String]?
+    public var codexHome: String?
 
-    public init(cwd: String, sessionId: String? = nil, claudeArgs: [String]? = nil) {
+    public init(cwd: String, sessionId: String? = nil, claudeArgs: [String]? = nil,
+                codexSessionId: String? = nil, codexArgs: [String]? = nil, codexHome: String? = nil) {
+        self.codexSessionId = codexSessionId
+        self.codexArgs = codexArgs
+        self.codexHome = codexHome
         self.cwd = cwd
         self.sessionId = sessionId
         self.claudeArgs = claudeArgs
@@ -259,6 +266,10 @@ extension PaneRecipe {
 
     /// 화면을 되살릴 때 셸에 넣을 명령. claude 세션이 없으면 nil(셸만 연다).
     public var resumeCommand: String? {
+        if let codexSessionId {
+            let command = (["codex", "resume", codexSessionId] + (codexArgs ?? [])).map(Self.shellQuote).joined(separator: " ")
+            return codexHome.map { "CODEX_HOME=" + Self.shellQuote($0) + " " + command } ?? command
+        }
         guard let sessionId else { return nil }
         return (["claude", "--resume", sessionId] + (claudeArgs ?? [])).map(Self.shellQuote).joined(separator: " ")
     }

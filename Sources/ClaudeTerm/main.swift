@@ -352,7 +352,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case "rows":
             for row in model.rows {
-                print("row \(row.id.prefix(4)) name=\(row.name) session=\(row.session?.sessionId.prefix(8) ?? "-") fg=\(row.pane.foreground ?? "-") cwd=\(row.folder) status=\(row.status.debugName) seq=\(row.statusSeq.map(String.init) ?? "-")")
+                print("row \(row.id.prefix(4)) name=\(row.name) program=\(row.program) session=\(row.codex?.id.prefix(8) ?? row.session?.sessionId.prefix(8) ?? "-") fg=\(row.pane.foreground ?? "-") cwd=\(row.folder) status=\(row.status.debugName) seq=\(row.statusSeq.map(String.init) ?? "-")")
             }
             fflush(stdout)
         case "snap-panes":

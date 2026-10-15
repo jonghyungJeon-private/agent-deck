@@ -16,6 +16,11 @@ struct PaneRow: Identifiable, Equatable {
     var git: GitLocation?
     /// claude 를 띄웠던 실행 인자(세션 지정 인자 뺀 것). 되살릴 때 같은 옵션으로 띄운다.
     var claudeArgs: [String]? = nil
+    var codex: CodexSession?
+    var codexArgs: [String]?
+    var codexHome: String?
+    var dormantCodex = false
+    var dormantCodexSessionId: String?
     /// 작업 상태와 그 상태가 된 시각(hook 기록)
     var status: WorkStatus = .none
     var statusAt: Date?
@@ -27,17 +32,21 @@ struct PaneRow: Identifiable, Equatable {
     var dormant = false
 
     var id: String { pane.id }
+    var isCodex: Bool { codex != nil || pane.foreground == "codex" || dormantCodex || codexArgs != nil }
+    var agentColor: NSColor { isCodex ? TermAppearance.codexColor : isClaude ? TermAppearance.claudeColor : TermAppearance.textDim }
+    var statusSessionId: String? { codex.map { "codex:" + $0.id } ?? session?.sessionId }
     var isClaude: Bool { session != nil || pane.foreground == "claude" || dormantClaude }
     /// 꺼진 화면에서 claude 가 돌고 있었는지
     var dormantClaude = false
     static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "tcsh", "ksh", "dash", "nu"]
     /// 앞에 셸만 떠 있는지("zsh (kiro-cli-term)" 처럼 감싼 셸도 셸로 본다). claude 가 짝지어졌으면 셸이 아니다.
     var isShell: Bool {
-        guard session == nil, let name = pane.foreground?.split(separator: " ").first else { return false }
+        guard session == nil, !isCodex, let name = pane.foreground?.split(separator: " ").first else { return false }
         return Self.shellNames.contains(String(name))
     }
     /// 목록에 보일 프로그램 이름
     var program: String {
+        if isCodex { return "codex" }
         if isClaude { return "claude" }
         return pane.foreground.flatMap { $0.split(separator: " ").first.map(String.init) } ?? "셸"
     }
@@ -46,7 +55,8 @@ struct PaneRow: Identifiable, Equatable {
 
     /// 이름을 바꿀 때 쓰는 열쇠: claude 세션이면 세션에, 아니면 화면에 붙인다
     var nameKey: String {
-        session.map { SessionNames.sessionKey($0.sessionId) } ?? SessionNames.paneKey(pane.id)
+        if let id = codex?.id ?? dormantCodexSessionId { return "codex:" + id }
+        return session.map { SessionNames.sessionKey($0.sessionId) } ?? SessionNames.paneKey(pane.id)
     }
 
     var folder: String { (cwd as NSString).lastPathComponent }
@@ -89,6 +99,7 @@ final class TermModel: ObservableObject {
     @Published var lastError: String?
     /// Claude Code hook 연결 상태(세션 짝짓기·이름·되살리기·상태 표시의 바탕)
     @Published var hookState: HookState = .unknown
+    @Published var codexHookState: HookState = .unknown
     @Published var notice: String?
 
     enum HookState: Equatable {
@@ -111,6 +122,7 @@ final class TermModel: ObservableObject {
     /// 세션별 첫 질문(찾으면 고정). 못 찾았으면 그때 파일 크기를 적어 두고 커질 때만 다시 본다.
     private var firstPrompts: [String: (prompt: String?, size: UInt64)] = [:]
     let names = SessionNames()
+    private let codexScanner = CodexScanner()
     /// 하위 에이전트 훑기(worker 전용). 10초에 한 번만.
     private let subagents = SubagentScanner()
     private var lastAgentScan = Date.distantPast
@@ -139,8 +151,23 @@ final class TermModel: ObservableObject {
         return HookInstaller(executablePath: path, marker: "ClaudeTermDaemon")
     }
 
+    private var codexHookInstaller: HookInstaller {
+        HookInstaller(settingsURL: CodexSessions.defaultHome.appendingPathComponent("hooks.json"),
+            executablePath: Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ClaudeTermDaemon").path,
+            marker: "ClaudeTermDaemon", events: CodexHook.events, subcommand: "codex-hook")
+    }
+
+    func connectCodexHooks() {
+        do {
+            _ = try codexHookInstaller.install()
+            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks 에서 ClaudeTermDaemon 훅을 검토·신뢰한 뒤 사용하세요."
+        } catch { notice = "Codex 연결 실패: \(error.localizedDescription)" }
+        checkHooks()
+    }
+
     func checkHooks() {
         let installer = hookInstaller
+        let codexInstaller = codexHookInstaller
         worker.async { [weak self] in
             let state: HookState
             do {
@@ -154,7 +181,15 @@ final class TermModel: ObservableObject {
             } catch {
                 state = .error(error.localizedDescription)
             }
-            DispatchQueue.main.async { self?.hookState = state }
+            let codexState: HookState
+            do {
+                switch try codexInstaller.status() {
+                case .installed: codexState = .ok
+                case .outdated: codexState = .update
+                case .notInstalled: codexState = .missing
+                }
+            } catch { codexState = .error(error.localizedDescription) }
+            DispatchQueue.main.async { self?.hookState = state; self?.codexHookState = codexState }
         }
     }
 
@@ -241,6 +276,7 @@ final class TermModel: ObservableObject {
         // hook 기록 중 실행 중인 세션을 화면에 짝짓는다. claude 에서 부모 프로세스를 따라 올라가 화면의 셸을 만나면 그 화면이다.
         // (Kiro CLI 처럼 셸을 자기 가상 터미널로 한 겹 감싸는 도구가 있으면 claude 의 tty 가 화면의 tty 와 다르다.)
         // 계보로 못 찾으면 tty 로 짝짓는다.
+        let codexMatches = codexScanner.scan(panes)
         let running = SessionStore().all().filter(\.isRunning)
         func device(_ tty: String?) -> String? { tty.map { ($0 as NSString).lastPathComponent } } // "/dev/ttys002" ↔ "ttys002"
         let shells = Dictionary(panes.map { ($0.pid, $0.id) }, uniquingKeysWith: { first, _ in first })
@@ -278,14 +314,35 @@ final class TermModel: ObservableObject {
             return current
         }
         return panes.map { pane -> PaneRow in
-            let session = sessionByPane[pane.id]
-                ?? device(pane.tty).flatMap { tty in running.first { device($0.tty) == tty } }
+            let codexMatch = codexMatches[pane.id]
+            let session = codexMatch == nil ? (sessionByPane[pane.id]
+                ?? device(pane.tty).flatMap { tty in running.first { device($0.tty) == tty } }) : nil
             let shell = wrapped ? innermostShell(pane.pid) : pane.pid
-            let cwd = session.flatMap { ProcessUtil.cwd($0.pid) ?? $0.cwd } ?? ProcessUtil.cwd(shell) ?? pane.cwd
+            let codexSessionCwd: String? = codexMatch?.session?.cwd
+            let codexProcessCwd: String? = codexMatch.flatMap { ProcessUtil.cwd($0.process.pid) }
+            let claudeCwd: String? = session.flatMap { ProcessUtil.cwd($0.pid) ?? $0.cwd }
+            let agentCwd: String? = codexSessionCwd.flatMap { $0.isEmpty ? nil : $0 } ?? codexProcessCwd ?? claudeCwd
+            let cwd: String = agentCwd ?? ProcessUtil.cwd(shell) ?? pane.cwd
             var row = PaneRow(pane: pane, session: session, name: name(pane: pane, session: session, cwd: cwd),
                               cwd: cwd, git: GitWorktrees.locate(cwd),
                               claudeArgs: session.flatMap { ProcessUtil.arguments($0.pid) }.map(PaneRecipe.keptArgs))
-            (row.status, row.statusAt, row.statusSeq) = workStatus(session, isClaude: row.isClaude, seen: seen)
+            if let match = codexMatch {
+                row.codex = match.session
+                row.codexArgs = CodexArguments.keptArgs(match.args)
+                row.codexHome = match.home.path
+                if let codex = match.session {
+                    row.name = names.userTitle("codex:" + codex.id) ?? names.userTitle(SessionNames.paneKey(pane.id))
+                        ?? (codex.title.isEmpty ? (cwd as NSString).lastPathComponent : SessionNaming.preview(of: codex.title))
+                    let state = WorkStateRules.effective(state: codex.state, at: codex.stateAt, seq: codex.stateSeq,
+                        transcriptModifiedAt: nil, seen: seen["codex:" + codex.id])
+                    row.status = WorkStatus(state: state, message: codex.message)
+                    if row.status == .unknown { row.status = .codexUnknown }
+                    row.statusAt = codex.stateAt
+                    row.statusSeq = codex.stateSeq
+                } else { row.status = .codexUnknown }
+            } else {
+                (row.status, row.statusAt, row.statusSeq) = workStatus(session, isClaude: row.isClaude, seen: seen)
+            }
             return row
         }
     }
@@ -302,6 +359,20 @@ final class TermModel: ObservableObject {
             return (row.id, session.sessionId, path, worktrees)
         }
         lastAgents = subagents.scan(sessions)
+        for row in rows where !row.dormant {
+            guard let codex = row.codex else { continue }
+            let home = URL(fileURLWithPath: row.codexHome ?? CodexSessions.defaultHome.path)
+            for (child, status) in codexScanner.reader(home).children(of: codex.id) {
+                let at = child.stateAt ?? .distantPast
+                guard Date().timeIntervalSince(at) < 15 * 60 else { continue }
+                let worktrees = row.git.map { GitWorktrees.list($0).filter { !$0.isMain }.map(\.path) } ?? []
+                let tree = worktrees.first { child.cwd == $0 || child.cwd.hasPrefix($0 + "/") }
+                lastAgents.append(SubagentActivity(id: child.id, sessionId: "codex:" + codex.id, paneId: row.id,
+                    description: child.title.isEmpty ? "Codex 하위 에이전트" : SessionNaming.preview(of: child.title),
+                    agentType: "codex", worktreePath: tree, lastActive: at, lastText: child.lastText,
+                    running: child.state == "working" && status != "closed"))
+            }
+        }
         return lastAgents
     }
 
@@ -374,14 +445,19 @@ final class TermModel: ObservableObject {
                                      daemonPid: daemonPid, daemonInstance: instance) || !failed.isEmpty
         // 되살리기 정보: 지금 폴더, claude 세션, 실행 옵션
         for row in newRows where !row.dormant && next.allPanes.contains(row.id) {
-            var recipe = PaneRecipe(cwd: row.cwd, sessionId: row.session?.sessionId, claudeArgs: row.claudeArgs)
+            var recipe = PaneRecipe(cwd: row.cwd, sessionId: row.session?.sessionId, claudeArgs: row.claudeArgs,
+                                    codexSessionId: row.codex?.id, codexArgs: row.codexArgs, codexHome: row.codexHome)
             // 되살린 직후 claude 가 아직 안 떴으면(세션 기록 전) 원래 세션을 지우지 않는다
-            if recipe.sessionId == nil, let old = next.recipes[row.id], old.sessionId != nil,
-               let revived = revivedAt[row.id], Date().timeIntervalSince(revived) < 60 {
+            if recipe.sessionId == nil, recipe.codexSessionId == nil, let old = next.recipes[row.id],
+               old.sessionId != nil || old.codexSessionId != nil,
+               (row.isCodex && old.codexSessionId != nil) || revivedAt[row.id].map({ Date().timeIntervalSince($0) < 60 }) == true {
                 recipe.sessionId = old.sessionId
                 recipe.claudeArgs = old.claudeArgs
+                recipe.codexSessionId = old.codexSessionId
+                recipe.codexArgs = old.codexArgs
+                recipe.codexHome = old.codexHome
             }
-            if row.session != nil { revivedAt[row.id] = nil }
+            if row.session != nil || row.codex != nil { revivedAt[row.id] = nil }
             if next.recipes[row.id] != recipe {
                 next.recipes[row.id] = recipe
                 changed = true
@@ -419,7 +495,7 @@ final class TermModel: ObservableObject {
     /// 지금 보고 있는 화면의 "완료"는 확인한 것으로 친다(앱이 앞에 있을 때만)
     func markSeen() {
         guard NSApp.isActive, let id = selectedId, let row = row(id), row.status == .done,
-              let sid = row.session?.sessionId, let at = row.statusAt,
+              let sid = row.statusSessionId, let at = row.statusAt,
               !WorkStateRules.isSeen(seenDone[sid], seq: row.statusSeq, at: at)
         else { return }
         seenDone[sid] = WorkStateRules.Seen(seq: row.statusSeq, at: at)
@@ -431,7 +507,7 @@ final class TermModel: ObservableObject {
     /// 앱을 켠 직후의 첫 목록은 지금 상태로 기억만 하고 알리지 않는다(켤 때마다 알림이 쏟아지지 않게).
     private func notifyAttention(_ rows: [PaneRow]) {
         for row in rows where !row.dormant {
-            guard let sid = row.session?.sessionId, let at = row.statusAt, row.status.needsAttention else { continue }
+            guard let sid = row.statusSessionId, let at = row.statusAt, row.status.needsAttention else { continue }
             // 시각만 보면(초 단위 저장) 같은 초에 입력 대기 → 완료가 이어질 때 완료 알림이 빠진다 → 상태 번호로
             let key = WorkStateRules.notificationKey(sessionId: sid, seq: row.statusSeq, state: row.status.debugName, at: at)
             guard notified[sid] != key else { continue }
@@ -457,7 +533,12 @@ final class TermModel: ObservableObject {
         let pane = PaneInfo(id: id, title: "", cwd: recipe.cwd, pid: 0, tty: nil, foreground: nil, cols: 0, rows: 0,
                             bufferedBytes: 0, createdAt: Date(timeIntervalSince1970: 0))
         var name = (recipe.cwd as NSString).lastPathComponent
-        if let sid = recipe.sessionId {
+        if let sid = recipe.codexSessionId {
+            let reader = codexScanner.reader(URL(fileURLWithPath: recipe.codexHome ?? CodexSessions.defaultHome.path))
+            name = names.userTitle("codex:" + sid) ?? reader.session(sid).map {
+                $0.title.isEmpty ? name : SessionNaming.preview(of: $0.title)
+            } ?? name
+        } else if let sid = recipe.sessionId {
             if let titled = names.userTitle(SessionNames.sessionKey(sid)) ?? names.savedAutoTitle(session: sid) {
                 name = titled
             } else {
@@ -476,7 +557,8 @@ final class TermModel: ObservableObject {
             name = user
         }
         return PaneRow(pane: pane, session: nil, name: name, cwd: recipe.cwd, git: GitWorktrees.locate(recipe.cwd),
-                       claudeArgs: recipe.claudeArgs, dormant: true, dormantClaude: recipe.sessionId != nil)
+                       claudeArgs: recipe.claudeArgs, codexArgs: recipe.codexArgs, codexHome: recipe.codexHome,
+                       dormantCodex: recipe.codexSessionId != nil, dormantCodexSessionId: recipe.codexSessionId, dormant: true, dormantClaude: recipe.sessionId != nil)
     }
 
     /// 꺼진 화면을 같은 자리(같은 ID)에 되살린다. 탭을 열어 화면이 보이게 될 때 부른다(한꺼번에 다 띄우지 않게).
@@ -494,7 +576,10 @@ final class TermModel: ObservableObject {
             // 대화를 한 번도 안 한 세션은 대화 파일이 없어 이어 열 수 없다 → 셸만
             // 시험용: CLAUDE_TERM_RESUME_PREFIX="echo" 면 실제 claude 대신 명령만 찍는다(대화 파일 확인도 건너뜀)
             let testPrefix = ProcessInfo.processInfo.environment["CLAUDE_TERM_RESUME_PREFIX"]
-            let resumable = testPrefix != nil || (recipe.sessionId.map { TranscriptReader.locate(sessionId: $0) != nil } ?? false)
+            let codexExists = recipe.codexSessionId.flatMap { sid in
+                CodexSessions(home: URL(fileURLWithPath: recipe.codexHome ?? CodexSessions.defaultHome.path)).session(sid)
+            } != nil
+            let resumable = testPrefix != nil || codexExists || (recipe.sessionId.map { TranscriptReader.locate(sessionId: $0) != nil } ?? false)
             let command = recipe.resumeCommand.map { (testPrefix.map { $0 + " " } ?? "") + $0 + "\n" }
             let cwd = FileManager.default.fileExists(atPath: recipe.cwd) ? recipe.cwd : NSHomeDirectory()
             awaiting[id] = Date()
