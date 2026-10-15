@@ -29,5 +29,7 @@ let package = Package(
         ]),
         .testTarget(name: "TermWireTests", dependencies: ["TermWire"]),
         .testTarget(name: "TermLayoutTests", dependencies: ["TermLayout"]),
+        // Vendor/SwiftTerm 에 고친 것(PATCHES.md) 중 화면 없이 시험할 수 있는 것
+        .testTarget(name: "SwiftTermPatchTests", dependencies: [.product(name: "SwiftTerm", package: "SwiftTerm")]),
     ]
 )

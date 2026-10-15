@@ -400,6 +400,11 @@ open class Terminal {
     public var isCurrentBufferAlternate: Bool {
         buffer === altBuffer
     }
+
+    /// ClaudeTerm patch: 대체 화면에 있는지 모르는 상태(앞부분이 잘린 지난 출력을 먹이는 중·뒤)를 앱이 표시한다.
+    /// 47/1047/1049 켜기·끄기가 오면 풀린다. 표시된 채 대체 화면이 아닐 때 끄기가 오면 켜기를 놓친 것으로 보고
+    /// 보이는 화면을 지우고 커서를 맨 위로 옮긴다. 표시하지 않으면 원래 동작과 같다.
+    public var altScreenStateUnknown: Bool = false
     
     // Whether the terminal is operating in application keypad mode
     var applicationKeypad : Bool = false
@@ -5314,9 +5319,18 @@ open class Terminal {
             case 47: // normal screen buffer
                 fallthrough
             case 1047: // normal screen buffer - clearing it first
+                // ClaudeTerm patch: 대체 화면 상태를 모르는 채(앞부분이 잘린 지난 출력)로 시작했는데 대체 화면이 아닐 때
+                // 끄기가 오면 "켜기를 놓친 것"으로 본다. 앱이 대체 화면에 그린 것이 보통 화면에 남아 있으므로
+                // 보이는 화면을 지우고(ED 2) 커서를 맨 위로 옮긴 뒤 이어 간다(저장된 커서는 놓친 켜기의 것이 아니라 되돌리지 않는다).
+                let missedEnter = altScreenStateUnknown && !isCurrentBufferAlternate
+                altScreenStateUnknown = false
+                if missedEnter {
+                    cmdEraseInDisplay ([2], [])
+                    setCursor (col: 0, row: 0)
+                }
                    // Ensure the selection manager has the correct buffer
                 activateNormalBuffer(clearAlt: par == 1047 || par == 1049)
-                if (par == 1049){
+                if (par == 1049 && !missedEnter){
                     cmdRestoreCursor ([], [])
                 }
                 refresh (startRow: 0, endRow: rows - 1)
@@ -5570,6 +5584,7 @@ open class Terminal {
             case 47: // alt screen buffer
                 fallthrough
             case 1047: // alt screen buffer
+                altScreenStateUnknown = false // ClaudeTerm patch: 이제 대체 화면 상태를 안다
                 activateAltBuffer (fillAttr: nil)
                 refresh (startRow: 0, endRow: rows - 1)
                 syncScrollArea ()

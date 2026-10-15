@@ -44,3 +44,15 @@
 측정(321×89칸, 한글·색·상자 선 섞인 출력): 한 번 그리기 15.7ms → 4.4ms.
 `TerminalView.drawTrace`(그리기 시간), `verifyLineCache()`(캐시와 새로 만든 결과 비교)는 진단용이다.
 `CLAUDE_TERM_NO_LINE_CACHE=1` 이면 캐시를 끈다(비교 측정용).
+
+## 대체 화면 상태를 모를 때의 끄기 (Terminal.swift `altScreenStateUnknown`, DECRST 47/1047/1049) — ClaudeTerm patch
+
+데몬은 화면당 약 2MB 의 지난 출력만 보관해서, 긴 claude 세션은 맨 앞의 `ESC[?1049h`(대체 화면 켜기)가 잘린다.
+그 출력을 먹이면 claude 화면이 보통 화면에 그려지고, `/exit` 의 `ESC[?1049l` 은 대체 화면이 아니라 아무 일도 하지 않아
+마지막 화면 위에 "Resume this session with:" 가 겹쳐 남았다.
+
+- `Terminal.altScreenStateUnknown`(공개, 기본 false): 앱이 "대체 화면 켜기·끄기가 하나도 없는 지난 출력"을 먹일 때 켠다.
+- 47/1047/1049 켜기·끄기가 오면 풀린다.
+- 켜진 채 대체 화면이 **아닐 때** 끄기가 오면 켜기를 놓친 것으로 본다: 보이는 화면을 지우고(ED 2) 커서를 맨 위로 옮긴 뒤
+  이어 간다(1049 의 저장된 커서는 놓친 켜기의 것이 아니므로 되돌리지 않는다).
+- 꺼져 있으면 원래 동작과 같다. 시험: `Tests/SwiftTermPatchTests`.

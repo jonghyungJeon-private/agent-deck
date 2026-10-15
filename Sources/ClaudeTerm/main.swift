@@ -47,9 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = TermAppearance.chrome
         window.setContentSize(NSSize(width: 1200, height: 760))
         window.setFrameAutosaveName("ClaudeTermMain")
-        window.makeKeyAndOrderFront(nil)
         self.window = window
-        NSApp.activate(ignoringOtherApps: true)
+        // 시험용: CLAUDE_TERM_NO_ACTIVATE=1 이면 앞으로 나오지 않는다(사용 중인 다른 앱의 포커스를 뺏지 않게 창을 뒤에 둔다)
+        if ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_ACTIVATE"] == "1" {
+            window.orderBack(nil)
+        } else {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
 
         model.start()
         startShortcuts()
@@ -179,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// CLAUDE_TERM_SNAPSHOT=<폴더> 면 1초마다 창 그림을 <폴더>/window.png 로 남긴다(화면 기록 권한 없이 확인용. 메모리를 더 쓴다).
     /// 둘 중 하나라도 있으면 분산 알림 "dev.claude-sessions.term.debug" 로 받은 명령을 실행한다.
-    ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | close-window
+    ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
         let snapshotDir = env["CLAUDE_TERM_SNAPSHOT"].flatMap { $0.isEmpty ? nil : $0 }
@@ -359,6 +364,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             model.host?.snapshotPanes(in: URL(fileURLWithPath: argument))
         case "cursor":
             model.host?.debugCursor()
+        case "screen":
+            // 지금 화면 터미널의 보이는 줄을 글로(끝 공백 뺌) + 대체 화면 여부
+            guard let pane = model.host?.focusedTerminal else {
+                print("screen: 화면 없음")
+                fflush(stdout)
+                return
+            }
+            let terminal = pane.view.getTerminal()
+            print("screen \(pane.id) \(terminal.cols)x\(terminal.rows) alt=\(terminal.isCurrentBufferAlternate) "
+                + "altUnknown=\(terminal.altScreenStateUnknown)")
+            for row in 0..<terminal.rows {
+                let text = terminal.getLine(row: row)?.translateToString(trimRight: true, skipNullCellsFollowingWide: true) ?? ""
+                print(String(format: "%3d|", row) + text)
+            }
+            print("screen end")
+            fflush(stdout)
         case "close-window":
             window?.performClose(nil)
         default:

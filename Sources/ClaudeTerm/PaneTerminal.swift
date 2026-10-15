@@ -46,6 +46,7 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
             return
         }
         replaying = true
+        prepareAltScreen(for: bytes)
         view.feed(byteArray: bytes)
         replaying = false
         restoring = false
@@ -62,6 +63,28 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
             } else {
                 client.resize(id, cols: cols, rows: rows)
             }
+        }
+    }
+
+    /// 지난 출력이 대체 화면 안에서 시작하는지 맞춰 둔다. 데몬은 화면당 약 2MB 만 보관해서, 긴 claude 세션은
+    /// 맨 앞의 `ESC[?1049h`(대체 화면 켜기)가 잘려 나간다. 그대로 먹이면 claude 화면이 보통 화면에 그려지고
+    /// 끝날 때 `ESC[?1049l` 이 아무 일도 하지 않아 마지막 화면 위에 "Resume this session with:" 가 겹쳐 남는다.
+    /// 새 데몬은 잘린 모드를 앞에 붙여 주지만, 예전 데몬(재시작 전 세션)에도 통하도록 여기서 한 번 더 본다.
+    /// - 처음 만나는 대체 화면 켜기·끄기가 끄기면: 대체 화면 안에서 시작한 것이니 먼저 켠다.
+    /// - 켜기·끄기가 전혀 없으면: 상태를 모른다고 표시한다(대체 화면이 아닌데 끄기가 오면 엔진이 화면을 지우고 시작한다).
+    /// 시험용: 1 이면 이 대비책을 끈다(고치기 전 동작 재현용)
+    private static let altFallbackDisabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_ALT_FALLBACK"] == "1"
+
+    private func prepareAltScreen(for bytes: ArraySlice<UInt8>) {
+        guard !Self.altFallbackDisabled else { return }
+        let terminal = view.getTerminal()
+        switch TerminalModeTracker.firstAltScreenToggle(in: bytes) {
+        case false?:
+            view.feed(byteArray: Array("\u{1b}[?1049h".utf8)[...])
+        case nil:
+            if !terminal.isCurrentBufferAlternate { terminal.altScreenStateUnknown = true }
+        case true?:
+            break
         }
     }
 

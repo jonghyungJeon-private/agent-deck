@@ -70,6 +70,14 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 ClaudeSessions hook 은 같이 뺀다. 세션 기록 위치는 그대로.
 - 되살릴 때 이어받는 claude 옵션은 허용 목록(권한·모델·effort·add-dir·MCP·허용 도구 등)만. 처음 질문·`--worktree`·세션 지정은 뺀다.
 - 지난 출력을 다시 그리는 동안 터미널이 내는 응답·클립보드 쓰기는 버린다(예전 질의의 답이 지금 claude 입력으로 새지 않게).
+- 지난 출력은 앞에서부터 잘리므로 긴 claude 세션은 맨 앞의 대체 화면 켜기(`ESC[?1049h`)가 사라진다. 그대로 다시 그리면
+  claude 화면이 보통 화면에 남고 `/exit` 뒤 "Resume this session with:" 가 그 위에 겹쳐 보였다.
+  - 데몬: 버리는 바이트만 모드 추적기(`TermWire/TerminalModeTracker`)에 먹여, 남은 출력이 시작하는 시점의 모드
+    (대체 화면, 커서 숨김, DECCKM, bracketed paste, 마우스·포커스, kitty 키보드 스택)를 기억하고, 붙을 때 기본값과 다른 것만
+    앞에 붙여 보낸다(동기 출력 2026 은 빼고). 데몬이 새로 떠야 적용된다(지금 돌고 있는 데몬의 세션은 그대로).
+  - 앱(예전 데몬에도 통하는 대비책): 지난 출력에서 처음 만나는 대체 화면 켜기·끄기가 끄기면 먼저 켜고 그린다.
+    하나도 없으면 "대체 화면 상태 모름"으로 표시해, 대체 화면이 아닌데 끄기가 오면 화면을 지우고 맨 위에서 이어 간다(PATCHES.md).
+  - 시험용 스위치: 데몬 `CLAUDE_TERM_NO_MODE_PREFIX=1`(앞 모드 안 붙임 = 예전 데몬 흉내), 앱 `CLAUDE_TERM_NO_ALT_FALLBACK=1`(대비책 끔).
 - 데몬이 바뀌었는지는 데몬 실행마다 새로 정하는 ID 로 본다(PID 재사용 오판 방지). 만들기·되살리기가 15초 안에 안 되면
   되살리던 화면은 "꺼짐"으로 돌아가고(30초 뒤 다시 시도), 새로 만들던 화면은 빠진다.
 - 하위 에이전트(Agent 도구): claude 와 하위 에이전트는 메인 폴더에서 돌고 작업 트리는 경로로만 쓰므로, 하위 에이전트 기록
@@ -102,7 +110,9 @@ VERSION=0.2.0 scripts/build-term-proto.sh
 - 진단: `dist/ClaudeTerm.app/Contents/MacOS/ClaudeTermDaemon ctl list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>`
 - 시험용: `CLAUDE_TERM_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
   `CLAUDE_TERM_DEBUG=1` 이면 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
-  틈 끌기(`drag`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
+  틈 끌기(`drag`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
+  한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
+  `CLAUDE_TERM_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
 ## 작업 상태 표시와 알림

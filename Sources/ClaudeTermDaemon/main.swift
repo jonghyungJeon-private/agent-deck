@@ -44,14 +44,27 @@ enum Log {
 }
 
 /// 지난 출력. 상한을 넘으면 앞에서부터 버린다(줄 경계에서 자르려고 노력한다).
+/// 버린 부분은 모드 추적기에 먹여, 남은 출력이 시작하는 시점의 터미널 모드(대체 화면 등)를 기억한다.
+/// 그래야 긴 claude 세션에서 맨 앞의 `ESC[?1049h` 가 잘려 나가도 다시 붙을 때 대체 화면으로 되살린다.
 struct OutputBuffer {
     static let defaultCapacity = 2 << 20
+    /// 시험용: 1 이면 앞 모드를 붙이지 않는다(예전 데몬 흉내 — 앱 쪽 대비책 확인용)
+    static let modePrefixDisabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_MODE_PREFIX"] == "1"
 
     let capacity: Int
     private(set) var bytes: [UInt8] = []
+    /// 남은 출력(`bytes`) 맨 앞 시점의 모드
+    private(set) var baseline = TerminalModeTracker()
 
     init(capacity: Int = defaultCapacity) {
         self.capacity = capacity
+    }
+
+    /// 앱이 붙을 때 보낼 지난 출력: 기본값과 다른 모드를 되살리는 앞부분 + 남은 출력
+    var replay: [UInt8] {
+        guard !Self.modePrefixDisabled else { return bytes }
+        let prefix = baseline.prefix()
+        return prefix.isEmpty ? bytes : prefix + bytes
     }
 
     mutating func append(_ chunk: ArraySlice<UInt8>) {
@@ -61,6 +74,7 @@ struct OutputBuffer {
         var cut = bytes.count - capacity
         let window = bytes[cut..<min(cut + 4096, bytes.count)]
         if let newline = window.firstIndex(of: 0x0a) { cut = newline + 1 }
+        baseline.feed(bytes[0..<cut])
         bytes.removeFirst(cut)
     }
 }
@@ -229,7 +243,7 @@ final class Daemon {
                 return
             }
             pane.viewers[ObjectIdentifier(client)] = client
-            client.send(Frame(.replay, pane: pane.id, bytes: pane.output.bytes))
+            client.send(Frame(.replay, pane: pane.id, bytes: pane.output.replay))
         case .detach:
             panes[frame.text]?.viewers.removeValue(forKey: ObjectIdentifier(client))
         case .input:
