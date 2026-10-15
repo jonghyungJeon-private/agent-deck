@@ -1,0 +1,389 @@
+import AppKit
+import SessionCore
+import SwiftTerm
+import SwiftUI
+import TermLayout
+import TermWire
+
+// 내장 터미널 시제품: 왼쪽 세션 목록 + 오른쪽 터미널. 셸·claude 는 데몬(ClaudeTermDaemon)이 붙잡고 있다.
+
+// Claude 세션 안에서 띄워도 그 세션 표시 변수가 데몬·셸로 넘어가지 않게(대화 저장이 꺼지는 문제)
+InheritedEnvironment.reexecIfNeeded(executablePath: Bundle.main.executablePath)
+signal(SIGPIPE, SIG_IGN)
+
+TermAppearance.registerBundledFonts()
+
+let app = NSApplication.shared
+let delegate = AppDelegate()
+app.delegate = delegate
+app.setActivationPolicy(.regular)
+app.run()
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let model = TermModel()
+    var window: NSWindow?
+    var snapshotTimer: Timer?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        buildMenu()
+        let host = TerminalHostController(model: model)
+        model.host = host
+
+        let split = NSSplitViewController()
+        // 사이드바는 반투명 재질 없이 앱 색으로(herdr 처럼 터미널과 한 덩어리로 보이게)
+        let sidebar = NSSplitViewItem(viewController: NSHostingController(rootView: SidebarView(model: model)))
+        sidebar.canCollapse = true
+        sidebar.minimumThickness = 220
+        sidebar.maximumThickness = 420
+        split.addSplitViewItem(sidebar)
+        let content = NSSplitViewItem(viewController: host)
+        content.minimumThickness = 400
+        split.addSplitViewItem(content)
+
+        let window = NSWindow(contentViewController: split)
+        window.title = "Claude Term (시제품)"
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.titlebarAppearsTransparent = true
+        window.backgroundColor = TermAppearance.chrome
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        window.setFrameAutosaveName("ClaudeTermMain")
+        window.makeKeyAndOrderFront(nil)
+        self.window = window
+        NSApp.activate(ignoringOtherApps: true)
+
+        model.start()
+        startShortcuts()
+        startDebugHooks()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+
+    private func buildMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Claude Term 종료(세션은 유지)", action: #selector(NSApplication.terminate(_:)),
+                        keyEquivalent: "q")
+        appItem.submenu = appMenu
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let edit = NSMenu(title: "편집")
+        edit.addItem(withTitle: "복사", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "붙여넣기", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "모두 선택", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = edit
+
+        // 단축키는 Ghostty 기본값과 같게
+        let arrows: [(Direction, String, String)] = [
+            (.left, String(UnicodeScalar(NSLeftArrowFunctionKey)!), "왼쪽"),
+            (.right, String(UnicodeScalar(NSRightArrowFunctionKey)!), "오른쪽"),
+            (.up, String(UnicodeScalar(NSUpArrowFunctionKey)!), "위"),
+            (.down, String(UnicodeScalar(NSDownArrowFunctionKey)!), "아래"),
+        ]
+        let shell = NSMenu(title: "셸")
+        addAction(shell, "새 탭", "new-tab", "t")
+        addAction(shell, "오른쪽으로 나누기", "split-right", "d")
+        addAction(shell, "아래로 나누기", "split-down", "d", [.command, .shift])
+        shell.addItem(.separator())
+        addAction(shell, "화면 닫기", "close", "w")
+        addAction(shell, "탭 닫기", "close-tab", "w", [.command, .option])
+        shell.addItem(.separator())
+        addAction(shell, "이름 바꾸기…", "rename", "")
+        addSubmenu(main, shell)
+
+        let view = NSMenu(title: "보기")
+        addAction(view, "이전 화면", "previous-split", "[")
+        addAction(view, "다음 화면", "next-split", "]")
+        for (direction, key, name) in arrows {
+            addAction(view, "\(name) 화면으로", "focus:\(direction.rawValue)", key, [.command, .option])
+        }
+        view.addItem(.separator())
+        addAction(view, "화면 크게 보기/되돌리기", "zoom", "\r", [.command, .shift])
+        addAction(view, "분할 크기 같게", "equalize", "=", [.command, .control])
+        for (direction, key, name) in arrows {
+            addAction(view, "나눈 선을 \(name)로", "resize:\(direction.rawValue)", key, [.command, .control])
+        }
+        view.addItem(.separator())
+        addAction(view, "이전 탭", "previous-tab", "[", [.command, .shift])
+        addAction(view, "다음 탭", "next-tab", "]", [.command, .shift])
+        for number in 1...9 {
+            addAction(view, number == 9 ? "마지막 탭" : "탭 \(number)", "tab:\(number)", "\(number)")
+        }
+        addSubmenu(main, view)
+        NSApp.mainMenu = main
+    }
+
+    /// Ghostty 기본 단축키. 메뉴에도 같은 키를 적어 두지만, ⌘⇧ 조합은 메뉴가 놓치는 경우가 있고
+    /// 한글 입력 중에도 똑같이 되도록 키 위치(키 코드)로 직접 받는다.
+    private var shortcutMonitor: Any?
+
+    private static let shortcuts: [ShortcutKey: String] = {
+        var map: [ShortcutKey: String] = [
+            ShortcutKey(17, .command): "new-tab",
+            ShortcutKey(2, .command): "split-right",
+            ShortcutKey(2, [.command, .shift]): "split-down",
+            ShortcutKey(13, .command): "close",
+            ShortcutKey(13, [.command, .option]): "close-tab",
+            ShortcutKey(33, .command): "previous-split",
+            ShortcutKey(30, .command): "next-split",
+            ShortcutKey(33, [.command, .shift]): "previous-tab",
+            ShortcutKey(30, [.command, .shift]): "next-tab",
+            ShortcutKey(36, [.command, .shift]): "zoom",
+            ShortcutKey(76, [.command, .shift]): "zoom",
+            ShortcutKey(24, [.command, .control]): "equalize",
+            ShortcutKey(48, .control): "next-tab",
+            ShortcutKey(48, [.control, .shift]): "previous-tab",
+        ]
+        for (code, direction) in [(123, "left"), (124, "right"), (125, "down"), (126, "up")] as [(UInt16, String)] {
+            map[ShortcutKey(code, [.command, .option])] = "focus:\(direction)"
+            map[ShortcutKey(code, [.command, .control])] = "resize:\(direction)"
+        }
+        for (number, code) in zip(1...9, [18, 19, 20, 21, 23, 22, 26, 28, 25] as [UInt16]) {
+            map[ShortcutKey(code, .command)] = "tab:\(number)"
+        }
+        return map
+    }()
+
+    private func startShortcuts() {
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.window,
+                  let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)]
+            else { return event }
+            self.model.perform(action)
+            return nil
+        }
+    }
+
+    private func addSubmenu(_ main: NSMenu, _ menu: NSMenu) {
+        let item = NSMenuItem()
+        item.submenu = menu
+        main.addItem(item)
+    }
+
+    private func addAction(_ menu: NSMenu, _ title: String, _ action: String, _ key: String,
+                           _ modifiers: NSEvent.ModifierFlags = .command) {
+        let item = NSMenuItem(title: title, action: #selector(menuAction(_:)), keyEquivalent: key)
+        item.keyEquivalentModifierMask = modifiers
+        item.representedObject = action
+        item.target = self
+        menu.addItem(item)
+    }
+
+    @objc private func menuAction(_ sender: NSMenuItem) {
+        if let action = sender.representedObject as? String { model.perform(action) }
+    }
+
+    // MARK: - 시험용(CLAUDE_TERM_SNAPSHOT 또는 CLAUDE_TERM_DEBUG 가 있을 때만)
+
+    /// CLAUDE_TERM_SNAPSHOT=<폴더> 면 1초마다 창 그림을 <폴더>/window.png 로 남긴다(화면 기록 권한 없이 확인용. 메모리를 더 쓴다).
+    /// 둘 중 하나라도 있으면 분산 알림 "dev.claude-sessions.term.debug" 로 받은 명령을 실행한다.
+    ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | close-window
+    private func startDebugHooks() {
+        let env = ProcessInfo.processInfo.environment
+        let snapshotDir = env["CLAUDE_TERM_SNAPSHOT"].flatMap { $0.isEmpty ? nil : $0 }
+        guard snapshotDir != nil || env["CLAUDE_TERM_DEBUG"] == "1" else { return }
+        if let snapshotDir {
+            let url = URL(fileURLWithPath: snapshotDir).appendingPathComponent("window.png")
+            let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.snapshot(to: url) }
+            RunLoop.main.add(timer, forMode: .common)
+            snapshotTimer = timer
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("dev.claude-sessions.term.debug"), object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let command = note.object as? String else { return }
+            self.debug(command)
+        }
+    }
+
+    private func debug(_ command: String) {
+        let parts = command.split(separator: " ", maxSplits: 1).map(String.init)
+        let argument = parts.count > 1 ? parts[1] : ""
+        switch parts.first {
+        case "select":
+            model.focus(pane: argument)
+        case "action":
+            model.perform(argument)
+        case "type":
+            model.host?.typeText(argument.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\r", with: "\r"))
+        case "ime":
+            var pieces = argument.split(separator: "|").map(String.init)
+            guard let commit = pieces.popLast() else { return }
+            model.host?.simulateIME(composing: pieces, commit: commit)
+        case "mark":
+            model.host?.debugMark(argument)
+        case "shift-enter":
+            // 실제 키 입력과 같은 경로(로컬 키 감시)로 Shift+Enter 를 넣는다
+            if let window, let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: .shift, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
+                isARepeat: false, keyCode: 36) {
+                NSApp.sendEvent(event)
+            }
+        case "keys":
+            // 실제 키 입력과 같은 경로(창 → keyDown → 입력기)로 글자를 하나씩 넣는다
+            guard let window else { return }
+            for ch in argument {
+                let s = String(ch)
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    if let event = NSEvent.keyEvent(
+                        with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: window.windowNumber, context: nil, characters: s, charactersIgnoringModifiers: s,
+                        isARepeat: false, keyCode: 0) {
+                        NSApp.sendEvent(event)
+                    }
+                }
+            }
+        case "chord":
+            // 단축키 시험: chord cmd+shift+[ (실제 키 입력처럼 앱에 보낸다)
+            guard let window else { return }
+            var flags: NSEvent.ModifierFlags = []
+            var parts = argument.split(separator: "+", omittingEmptySubsequences: false).map(String.init)
+            var key = parts.popLast() ?? ""
+            if key.isEmpty, parts.last == "" { key = "+"; parts.removeLast() }
+            for part in parts {
+                switch part {
+                case "cmd": flags.insert(.command)
+                case "shift": flags.insert(.shift)
+                case "opt": flags.insert(.option)
+                case "ctrl": flags.insert(.control)
+                default: break
+                }
+            }
+            let names = ["left": NSLeftArrowFunctionKey, "right": NSRightArrowFunctionKey,
+                         "up": NSUpArrowFunctionKey, "down": NSDownArrowFunctionKey]
+            if let code = names[key] { key = String(UnicodeScalar(code)!); flags.insert([.function, .numericPad]) }
+            if key == "enter" { key = "\r" }
+            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+"]
+            let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
+            // 실제 키보드(US 배열)의 키 코드
+            let codes: [String: UInt16] = ["d": 2, "t": 17, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
+                                           "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
+                                           String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,
+                                           String(UnicodeScalar(NSRightArrowFunctionKey)!): 124,
+                                           String(UnicodeScalar(NSDownArrowFunctionKey)!): 125,
+                                           String(UnicodeScalar(NSUpArrowFunctionKey)!): 126]
+            if let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                isARepeat: false, keyCode: codes[key] ?? 0) {
+                NSApp.sendEvent(event)
+            }
+        case "views":
+            // 창 맨 위 뷰 구조(무엇이 탭 줄을 덮는지)
+            func dump(_ view: NSView, _ depth: Int) {
+                guard depth < 7 else { return }
+                let frame = view.convert(view.bounds, to: nil)
+                print(String(repeating: "  ", count: depth) + "\(type(of: view)) \(frame) hidden=\(view.isHidden) alpha=\(view.alphaValue)")
+                view.subviews.forEach { dump($0, depth + 1) }
+            }
+            if let frameView = window?.contentView?.superview { dump(frameView, 0) }
+            fflush(stdout)
+        case "drag":
+            // 분할 틈 끌기 시험: drag <x1> <y1> <x2> <y2> (창 좌표, 아래가 0)
+            guard let window else { return }
+            let v = argument.split(separator: " ").compactMap { Double($0) }
+            guard v.count == 4 else { return }
+            func make(_ kind: NSEvent.EventType, _ x: Double, _ y: Double) -> NSEvent? {
+                NSEvent.mouseEvent(with: kind, location: NSPoint(x: x, y: y), modifierFlags: [],
+                                   timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                   context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            }
+            // 끄는 동안의 이벤트를 먼저 줄 세워 두고 누름을 보낸다(끌기는 누름 안에서 다음 이벤트를 기다린다)
+            for event in [make(.leftMouseDragged, (v[0] + v[2]) / 2, (v[1] + v[3]) / 2), make(.leftMouseDragged, v[2], v[3]),
+                          make(.leftMouseUp, v[2], v[3])].compactMap({ $0 }) {
+                NSApp.postEvent(event, atStart: false)
+            }
+            if let down = make(.leftMouseDown, v[0], v[1]) { window.sendEvent(down) }
+            fflush(stdout)
+        case "scroll":
+            // 스크롤 시험: scroll <한 번에 픽셀> <횟수> (트랙패드처럼 정밀 값, 약 60Hz)
+            let v = argument.split(separator: " ").compactMap { Int($0) }
+            guard v.count == 2, let view = model.host?.focusedTerminal?.view else { return }
+            var stats: [Double] = []
+            var fullDraws = 0
+            TerminalView.lineCacheHits = 0
+            TerminalView.lineCacheMisses = 0
+            TerminalView.drawTrace = { ms, rect in
+                stats.append(ms)
+                if rect.height >= view.bounds.height - 1 { fullDraws += 1 }
+            }
+            let started = Date()
+            for i in 0..<v[1] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) / 60) {
+                    guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(v[0]), wheel2: 0, wheel3: 0),
+                          let event = NSEvent(cgEvent: cg) else { return }
+                    view.scrollWheel(with: event)
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Double(v[1]) / 60 + 0.5) {
+                TerminalView.drawTrace = nil
+                let sorted = stats.sorted()
+                func pct(_ p: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] }
+                print(String(format: "scroll draws=%d(full %d) avg=%.2fms p50=%.2f p90=%.2f max=%.2f total=%.2fs cache hit=%d miss=%d",
+                             stats.count, fullDraws,
+                             stats.reduce(0, +) / Double(max(stats.count, 1)), pct(0.5), pct(0.9), sorted.last ?? 0,
+                             Date().timeIntervalSince(started), TerminalView.lineCacheHits, TerminalView.lineCacheMisses))
+                fflush(stdout)
+            }
+        case "drawstats":
+            // drawstats <초>: 그 시간 동안 그리기 시간 통계(출력만으로 그려지는 경우 측정)
+            let seconds = Double(argument) ?? 3
+            var stats: [Double] = []
+            TerminalView.lineCacheHits = 0
+            TerminalView.lineCacheMisses = 0
+            TerminalView.drawTrace = { ms, _ in stats.append(ms) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+                TerminalView.drawTrace = nil
+                let sorted = stats.sorted()
+                func pct(_ p: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] }
+                print(String(format: "drawstats draws=%d avg=%.2fms p50=%.2f p90=%.2f max=%.2f cache hit=%d miss=%d", stats.count,
+                             stats.reduce(0, +) / Double(max(stats.count, 1)), pct(0.5), pct(0.9), sorted.last ?? 0,
+                             TerminalView.lineCacheHits, TerminalView.lineCacheMisses))
+                fflush(stdout)
+            }
+        case "verify-cache":
+            if let view = model.host?.focusedTerminal?.view {
+                let r = view.verifyLineCache()
+                print("verify-cache same=\(r.same) different=\(r.different) cached=\(r.cached)")
+                fflush(stdout)
+            }
+        case "rows":
+            for row in model.rows {
+                print("row \(row.id.prefix(4)) name=\(row.name) session=\(row.session?.sessionId.prefix(8) ?? "-") fg=\(row.pane.foreground ?? "-") cwd=\(row.folder)")
+            }
+            fflush(stdout)
+        case "snap-panes":
+            model.host?.snapshotPanes(in: URL(fileURLWithPath: argument))
+        case "cursor":
+            model.host?.debugCursor()
+        case "close-window":
+            window?.performClose(nil)
+        default:
+            break
+        }
+    }
+
+    private func snapshot(to url: URL) {
+        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url, options: .atomic)
+        // 창 그림에는 터미널 배경이 빠지므로 터미널만 따로 실제 색으로 남긴다
+        model.host?.snapshotTerminal(to: url.deletingLastPathComponent().appendingPathComponent("terminal.png"))
+        model.host?.snapshotTabBar(to: url.deletingLastPathComponent().appendingPathComponent("tabbar.png"))
+    }
+
+
+}
+
+struct ShortcutKey: Hashable {
+    let keyCode: UInt16
+    let modifiers: UInt
+
+    init(_ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers.intersection([.command, .shift, .option, .control]).rawValue
+    }
+}
