@@ -145,6 +145,15 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
 
     static func megabytes(_ bytes: Int) -> String { String(format: "%.1fMB", Double(bytes) / 1_048_576) }
 
+    /// 앱 글꼴 크기가 바뀌면 글자 모양(글꼴·탭 칸)을 다시 입힌다. 글자·되돌리기 기록은 그대로(글자 색은 임시 속성이라 그대로).
+    func applyFontSize() {
+        guard let storage, storage.length > 0 else { return }
+        storage.beginEditing()
+        storage.addAttributes([.font: EditorStyle.font, .paragraphStyle: EditorStyle.paragraph],
+                              range: NSRange(location: 0, length: storage.length))
+        storage.endEditing()
+    }
+
     private func install(_ decoded: DecodedText) {
         let storage = NSTextStorage(string: decoded.text, attributes: EditorStyle.textAttributes)
         let layout = NSLayoutManager()
@@ -499,6 +508,11 @@ final class EditorManager {
     var pendingAnswers: [CloseAnswer] = []
 
     init() {
+        // 숨은 문서도 새 글꼴 크기로(보이는 문서의 화면은 EditorPaneView 가 따로 다시 배치한다)
+        NotificationCenter.default.addObserver(forName: TermAppearance.fontSizeChanged, object: nil, queue: .main) {
+            [weak self] _ in
+            self?.documents.values.forEach { $0.applyFontSize() }
+        }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) {
             [weak self] _ in
             // 다른 앱(터미널의 claude 등)에서 고쳤을 수 있다 — 보이는 문서만 확인
@@ -580,15 +594,30 @@ final class EditorManager {
 /// 편집기 모양: 터미널과 같은 글꼴·바탕, IntelliJ Darcula 계열 글자 색을 #282c34 바탕에 맞춤
 enum EditorStyle {
     /// 터미널과 같은 글꼴(같은 크기)에서 합자·문맥 대체만 끈다(-> 가 → 로 보이지 않게, IntelliJ 기본값처럼)
-    static let font: NSFont = {
-        let base = TermAppearance.font
+    static var font: NSFont {
+        let size = TermAppearance.fontSize
+        if let cached = fontCache[size] { return cached }
+        let made = makeFont(size: size)
+        fontCache[size] = made
+        return made
+    }
+
+    private static var fontCache: [CGFloat: NSFont] = [:]
+    private static var paragraphCache: [CGFloat: NSParagraphStyle] = [:]
+
+    /// 줄 번호 글자 크기(내용보다 2pt 작게)
+    static var gutterFontSize: CGFloat { max(TermAppearance.fontSize - 2, 6) }
+
+    private static func makeFont(size: CGFloat) -> NSFont {
+        let base = TermAppearance.font(size: size)
         let off: [[NSFontDescriptor.FeatureKey: Int]] = [
             [.typeIdentifier: kContextualAlternatesType, .selectorIdentifier: kContextualAlternatesOffSelector],
             [.typeIdentifier: kLigaturesType, .selectorIdentifier: kCommonLigaturesOffSelector],
         ]
         let descriptor = base.fontDescriptor.addingAttributes([.featureSettings: off])
         return NSFont(descriptor: descriptor, size: base.pointSize) ?? base
-    }()
+    }
+
     static let text = NSColor(srgbHex: 0xc9ccd3)
     static let background = TermAppearance.background
     static let gutter = NSColor(srgbHex: 0x262a31)
@@ -617,13 +646,16 @@ enum EditorStyle {
     }
 
     /// 탭 4칸
-    static let paragraph: NSParagraphStyle = {
+    static var paragraph: NSParagraphStyle {
+        let size = TermAppearance.fontSize
+        if let cached = paragraphCache[size] { return cached }
         let style = NSMutableParagraphStyle()
         let width = (" " as NSString).size(withAttributes: [.font: font]).width * 4
         style.tabStops = []
         style.defaultTabInterval = width
+        paragraphCache[size] = style
         return style
-    }()
+    }
 
     static var textAttributes: [NSAttributedString.Key: Any] {
         [.font: font, .foregroundColor: text, .paragraphStyle: paragraph, .ligature: 0]

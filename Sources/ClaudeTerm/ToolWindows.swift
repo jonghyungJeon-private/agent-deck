@@ -55,6 +55,8 @@ final class ToolWindowsController: NSObject {
         split.addSplitViewItem(right)
         items = [.left: left, .right: right]
         apply()
+        NotificationCenter.default.addObserver(self, selector: #selector(fontSizeChanged),
+                                               name: TermAppearance.fontSizeChanged, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(splitResized),
                                                name: NSSplitView.didResizeSubviewsNotification, object: split.splitView)
     }
@@ -128,6 +130,13 @@ final class ToolWindowsController: NSObject {
             }
         }
         if changed { save() }
+    }
+
+    /// 글꼴 크기는 같은 `ui.json` 에 저장한다(기본 크기면 비운다)
+    @objc private func fontSizeChanged() {
+        let size = TermAppearance.fontSize
+        layout.fontSize = size == TermAppearance.defaultFontSize ? nil : Double(size)
+        save()
     }
 
     private func save() {

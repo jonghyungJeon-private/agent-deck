@@ -33,6 +33,12 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
         TermAppearance.apply(to: view)
     }
 
+    /// 앱 글꼴 크기를 적용한다. 칸 크기가 바뀌면 엔진이 sizeChanged 로 알려 데몬에도 전해진다.
+    func applyFont() {
+        guard view.font.pointSize != TermAppearance.fontSize else { return }
+        view.font = TermAppearance.font
+    }
+
     func attach() { client.attach(id) }
 
     func detach() {

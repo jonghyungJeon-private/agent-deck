@@ -21,6 +21,8 @@ final class TerminalHostController: NSViewController {
     init(model: TermModel) {
         self.model = model
         super.init(nibName: nil, bundle: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(fontSizeChanged),
+                                               name: TermAppearance.fontSizeChanged, object: nil)
         // Shift+Enter = 줄바꿈. claude 는 이 터미널에서 확장 키 입력(kitty)을 켜지 않으므로
         // ⌥+Enter 와 같은 ESC CR 을 보낸다(claude 는 이를 줄바꿈으로 받는다).
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -197,6 +199,11 @@ final class TerminalHostController: NSViewController {
 
     func receive(id: String, bytes: ArraySlice<UInt8>, replay: Bool) {
         terminals[id]?.receive(bytes, replay: replay)
+    }
+
+    /// 글꼴 크기가 바뀌면 지금 있는 터미널에 적용한다(나중에 만들 화면은 만들 때 지금 크기를 쓴다)
+    @objc private func fontSizeChanged() {
+        for terminal in terminals.values { terminal.applyFont() }
     }
 
     func paneExited(_ id: String) {

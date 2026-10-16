@@ -304,3 +304,22 @@ final class ExpansionMemoryTests: XCTestCase {
         XCTAssertEqual(memory.paths(for: "/r"), [])
     }
 }
+
+final class ToolLayoutFontSizeTests: XCTestCase {
+    /// 글꼴 크기가 없는 예전 ui.json 도 읽힌다(nil = 기본)
+    func testOldFileWithoutFontSizeDecodes() throws {
+        let old = #"{"version":1,"tools":{"spaces":"left","files":"right"},"widths":{"left":300}}"#
+        let layout = try JSONDecoder().decode(ToolLayout.self, from: Data(old.utf8))
+        XCTAssertNil(layout.fontSize)
+        XCTAssertEqual(layout.side(of: .files), .right)
+    }
+
+    func testFontSizeRoundTripsAndRejectsGarbage() throws {
+        var layout = ToolLayout()
+        layout.fontSize = 17
+        let data = try XCTUnwrap(layout.data())
+        XCTAssertEqual(try JSONDecoder().decode(ToolLayout.self, from: data).fontSize, 17)
+        let bad = #"{"version":1,"fontSize":-5}"#
+        XCTAssertNil(try JSONDecoder().decode(ToolLayout.self, from: Data(bad.utf8)).fontSize)
+    }
+}

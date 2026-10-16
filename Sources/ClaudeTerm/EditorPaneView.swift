@@ -50,6 +50,8 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
             status.heightAnchor.constraint(equalToConstant: Self.statusHeight),
         ])
 
+        NotificationCenter.default.addObserver(self, selector: #selector(fontSizeChanged),
+                                               name: TermAppearance.fontSizeChanged, object: nil)
         document.loadIfNeeded()
         document.onViewUpdate = { [weak self] update in self?.documentUpdated(update) }
         document.onTextEdited = { [weak self] range, delta in self?.highlighter?.edited(range, delta: delta) }
@@ -82,6 +84,18 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         case .unloaded:
             break
         }
+    }
+
+    /// 앱 글꼴 크기 변경: 글·줄 번호 여백 글꼴을 바꾸고 여백 폭을 다시 정한다
+    @objc private func fontSizeChanged() {
+        guard let textView else { return }
+        document.applyFontSize()
+        textView.font = EditorStyle.font
+        textView.defaultParagraphStyle = EditorStyle.paragraph
+        textView.typingAttributes = EditorStyle.textAttributes
+        gutter?.fontChanged()
+        textView.needsDisplay = true
+        colorVisible()
     }
 
     private func embed(_ view: NSView) {
@@ -377,7 +391,13 @@ final class EditorGutterView: NSView {
     override var isFlipped: Bool { true }
 
     private var numberAttributes: [NSAttributedString.Key: Any] {
-        [.font: TermAppearance.uiFont(11), .foregroundColor: EditorStyle.lineNumber]
+        [.font: TermAppearance.uiFont(EditorStyle.gutterFontSize), .foregroundColor: EditorStyle.lineNumber]
+    }
+
+    /// 글꼴 크기가 바뀌면 자릿수 폭을 다시 잰다
+    func fontChanged() {
+        lastDigits = 0
+        refresh()
     }
 
     /// 줄 수 자릿수에 맞춰 폭을 정한다

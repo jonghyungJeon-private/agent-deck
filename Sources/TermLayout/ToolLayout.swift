@@ -19,6 +19,8 @@ public struct ToolLayout: Equatable, Sendable {
     public var selected: [DockSide: ToolID]
     /// 쪽마다 폭(pt)
     public var widths: [DockSide: Double]
+    /// 터미널·편집기 글꼴 크기(pt). nil = 기본(13)
+    public var fontSize: Double?
 
     public static let defaultWidths: [DockSide: Double] = [.left: 260, .right: 280]
 
@@ -98,6 +100,7 @@ extension ToolLayout: Codable {
         var lastSides: [String: String]?
         var selected: [String: String]?
         var widths: [String: Double]?
+        var fontSize: Double?
     }
 
     public init(from decoder: Decoder) throws {
@@ -117,6 +120,7 @@ extension ToolLayout: Codable {
         for (key, value) in file.widths ?? [:] {
             if let side = DockSide(rawValue: key), side != .hidden, value.isFinite, value >= 120, value <= 2000 { widths[side] = value }
         }
+        if let size = file.fontSize, size.isFinite, size >= 4, size <= 100 { fontSize = size }
         // 숨긴 도구의 마지막 쪽이 없으면 기본 쪽
         for tool in ToolID.allCases where side(of: tool) != .hidden { lastSides[tool] = side(of: tool) }
         normalize()
@@ -128,7 +132,8 @@ extension ToolLayout: Codable {
             Dictionary(uniqueKeysWithValues: map.map { ($0.key.rawValue, $0.value.rawValue) })
         }
         try File(version: 1, tools: strings(sides), lastSides: strings(lastSides), selected: strings(selected),
-                 widths: Dictionary(uniqueKeysWithValues: widths.map { ($0.key.rawValue, $0.value.rounded()) }))
+                 widths: Dictionary(uniqueKeysWithValues: widths.map { ($0.key.rawValue, $0.value.rounded()) }),
+                 fontSize: fontSize)
             .encode(to: encoder)
     }
 

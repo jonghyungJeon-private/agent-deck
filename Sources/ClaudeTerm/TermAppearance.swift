@@ -1,12 +1,44 @@
 import AppKit
 import CoreText
 import SwiftTerm
+import TermLayout
+import TermWire
 
 /// 터미널 모양. Ghostty 기본값과 맞춘다(사용자가 Ghostty 와 나란히 쓰므로 같은 느낌이 나게).
 /// - 글꼴: JetBrains Mono 13pt(Ghostty 내장 글꼴) + Nerd Font 아이콘. 앱에 넣어 두고 이 앱 안에서만 등록한다.
 /// - 색: 배경 #282c34, 글자 #ffffff, 16색은 Tomorrow Night(Ghostty 기본 팔레트).
 enum TermAppearance {
-    static let fontSize: CGFloat = 13
+    static let defaultFontSize: CGFloat = 13
+    static let fontSizeRange: ClosedRange<CGFloat> = 8...32
+    /// 글꼴 크기가 바뀌었다(터미널·편집기 화면이 받아 글꼴을 바꾼다). `ui.json` 저장도 이 알림을 받아 한다.
+    static let fontSizeChanged = Notification.Name("ClaudeTerm.fontSizeChanged")
+
+    /// 앱 전체 글꼴 크기(터미널·편집기 내용만, 사이드바·탭 줄은 그대로). 처음 읽을 때 `ui.json` 에서 가져온다.
+    private(set) static var fontSize: CGFloat = {
+        let saved = ToolLayout.load(from: TermPaths.home.appendingPathComponent("ui.json")).fontSize
+        return saved.map { clampedFontSize(CGFloat($0)) } ?? defaultFontSize
+    }()
+
+    static func clampedFontSize(_ size: CGFloat) -> CGFloat {
+        min(max(size.rounded(), fontSizeRange.lowerBound), fontSizeRange.upperBound)
+    }
+
+    /// 크기를 바꾸고 알린다(같으면 아무것도 안 한다)
+    static func setFontSize(_ size: CGFloat) {
+        let next = clampedFontSize(size)
+        guard next != fontSize else { return }
+        fontSize = next
+        NotificationCenter.default.post(name: fontSizeChanged, object: nil)
+    }
+
+    /// ⌘+ ⌘− ⌘0: 한 단계 키우기·줄이기·기본
+    static func adjustFontSize(_ action: String) {
+        switch action {
+        case "bigger": setFontSize(fontSize + 1)
+        case "smaller": setFontSize(fontSize - 1)
+        default: setFontSize(defaultFontSize)
+        }
+    }
 
     static let background = NSColor(srgbHex: 0x282c34)
     static let foreground = NSColor(srgbHex: 0xffffff)
@@ -32,19 +64,31 @@ enum TermAppearance {
     /// 하나도 없으면 시스템이 고르는 Apple SD Gothic Neo 로 그려진다.
     static let hangulFonts = ["D2Coding", "NanumGothicCoding"]
 
-    /// 터미널 글꼴. 아이콘(Nerd Font)·한글 글자는 이어서 찾을 글꼴로 붙인다. 없으면 시스템 고정폭 글꼴.
-    static let font: NSFont = {
-        guard let base = NSFont(name: "JetBrainsMono-Regular", size: fontSize) else {
-            return NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+    /// 지금 크기의 터미널 글꼴
+    static var font: NSFont { font(size: fontSize) }
+
+    private static var fontCache: [CGFloat: NSFont] = [:]
+
+    /// 터미널 글꼴(크기별로 한 번만 만든다). 아이콘(Nerd Font)·한글 글자는 이어서 찾을 글꼴로 붙인다. 없으면 시스템 고정폭 글꼴.
+    static func font(size: CGFloat) -> NSFont {
+        if let cached = fontCache[size] { return cached }
+        let made = makeFont(size: size)
+        fontCache[size] = made
+        return made
+    }
+
+    private static func makeFont(size: CGFloat) -> NSFont {
+        guard let base = NSFont(name: "JetBrainsMono-Regular", size: size) else {
+            return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         }
         var cascade: [NSFontDescriptor] = []
-        for name in ["SymbolsNFM"] + hangulFonts where NSFont(name: name, size: fontSize) != nil {
+        for name in ["SymbolsNFM"] + hangulFonts where NSFont(name: name, size: size) != nil {
             cascade.append(NSFontDescriptor(fontAttributes: [.name: name]))
         }
         guard !cascade.isEmpty else { return base }
         let descriptor = base.fontDescriptor.addingAttributes([.cascadeList: cascade])
-        return NSFont(descriptor: descriptor, size: fontSize) ?? base
-    }()
+        return NSFont(descriptor: descriptor, size: size) ?? base
+    }
 
     // MARK: - 앱 테두리(사이드바·탭 줄·분할 테두리). herdr 처럼 어둡고 차분하게, 상태·포커스만 색으로 드러낸다.
 

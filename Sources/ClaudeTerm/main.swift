@@ -145,6 +145,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             addAction(view, "\(name) 화면으로", "focus:\(direction.rawValue)", key, [.command, .option])
         }
         view.addItem(.separator())
+        addAction(view, "글자 크게", "font:bigger", "+")
+        addAction(view, "글자 작게", "font:smaller", "-")
+        addAction(view, "기본 크기", "font:reset", "0")
+        view.addItem(.separator())
         addAction(view, "화면 크게 보기/되돌리기", "zoom", "\r", [.command, .shift])
         addAction(view, "분할 크기 같게", "equalize", "=", [.command, .control])
         for (direction, key, name) in arrows {
@@ -195,6 +199,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ShortcutKey(48, [.control, .shift]): "previous-tab",
             // 도구 창(⌘⇧E files, ⌘⇧S spaces)
             ShortcutKey(14, [.command, .shift]): "tool-toggle:files",
+            // 글자 크기(⌘+ ⌘= ⌘− ⌘0, 터미널·편집기 전체)
+            ShortcutKey(24, .command): "font:bigger",
+            ShortcutKey(24, [.command, .shift]): "font:bigger",
+            ShortcutKey(69, .command): "font:bigger",
+            ShortcutKey(27, .command): "font:smaller",
+            ShortcutKey(78, .command): "font:smaller",
+            ShortcutKey(29, .command): "font:reset",
+            ShortcutKey(82, .command): "font:reset",
             ShortcutKey(1, [.command, .shift]): "tool-toggle:spaces",
         ]
         for (code, direction) in [(123, "left"), (124, "right"), (125, "down"), (126, "up")] as [(UInt16, String)] {
@@ -223,7 +235,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// 메뉴·단축키·시험 명령: 도구 창 동작(tool-…)은 도구 창 관리자가, 나머지는 모델이 맡는다
     private func perform(_ action: String) {
-        if action.hasPrefix("tool-") {
+        if action.hasPrefix("font:") {
+            TermAppearance.adjustFontSize(String(action.dropFirst(5)))
+        } else if action.hasPrefix("tool-") {
             toolWindows?.perform(action)
         } else {
             model.perform(action)
