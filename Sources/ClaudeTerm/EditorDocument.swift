@@ -39,6 +39,8 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
 
     /// 이보다 크면 글자 색을 칠하지 않는다(UTF-16 길이)
     static let highlightLimit = 500_000
+    /// 저장했다(선언 색인이 그 파일을 바로 다시 읽는다). object = 문서
+    static let didSave = Notification.Name("ClaudeTerm.editorDidSave")
 
     let id: String
     let path: String
@@ -342,6 +344,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
         diskConflict = nil
         markSaved()
         startWatching() // 이름을 바꿔 끼웠으니 새 파일을 지켜본다
+        NotificationCenter.default.post(name: Self.didSave, object: self)
         return true
     }
 

@@ -22,6 +22,12 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     private var previewRefreshQueued = false
     /// 미리보기에서 로컬 파일 링크를 눌렀을 때(경로)
     var onOpenFile: ((String) -> Void)?
+    /// ⌘클릭(글 위치) — 선언으로 이동
+    var onNavigate: ((Int) -> Void)?
+    /// 잠깐 뜨는 안내("색인 중…", "선언을 찾지 못했습니다")
+    private let hintLabel = EditorHintView()
+    private var hintWork: DispatchWorkItem?
+    private var hintToken = 0
 
     static let statusHeight: CGFloat = 20
 
@@ -38,10 +44,11 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         banner.onReload = { [weak self] in self?.document.reloadFromDisk() }
         banner.onOverwrite = { [weak self] in self?.document.overwriteDisk() }
         modeSwitch.onSelect = { [weak self] preview in self?.setPreview(preview) }
-        for view in [banner, body, modeSwitch, status] as [NSView] {
+        for view in [banner, body, modeSwitch, status, hintLabel] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        hintLabel.isHidden = true
         bannerHeight = banner.heightAnchor.constraint(equalToConstant: 0)
         modeSwitchWidth = modeSwitch.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -61,6 +68,9 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
             status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             status.bottomAnchor.constraint(equalTo: bottomAnchor),
             status.heightAnchor.constraint(equalToConstant: Self.statusHeight),
+            hintLabel.topAnchor.constraint(equalTo: body.topAnchor, constant: 10),
+            hintLabel.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -18),
+            hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: body.leadingAnchor, constant: 18),
         ])
 
         NotificationCenter.default.addObserver(self, selector: #selector(fontSizeChanged),
@@ -156,6 +166,11 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         textView.textContainerInset = NSSize(width: 4, height: 4)
         textView.configure()
         textView.delegate = self
+        if let language = document.language, SymbolLanguages.supported.contains(language) {
+            textView.linkLanguage = language
+            textView.linkKeywords = language.spec.keywords
+            textView.onCommandClick = { [weak self] index in self?.onNavigate?(index) }
+        }
         scroll.documentView = textView
 
         // 줄 번호 여백은 글 옆에 따로 둔 뷰(스크롤에 맞춰 다시 그린다)
@@ -324,6 +339,124 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         preview.show(markdown: storage.string)
     }
 
+    // MARK: - 이동(⌘B·뒤로 등)
+
+    /// 줄로 가서 가운데에 보인다. 열을 모르면 그 줄에서 이름을 찾고, 줄이 어긋났으면(파일이 바뀜) 가까운 줄에서 찾는다.
+    /// 실제로 간 줄을 돌려준다.
+    @discardableResult
+    func reveal(line: Int, column: Int?, name: String?) -> Int {
+        guard let textView, let storage = document.storage, document.content == .text else { return line }
+        let text = storage.string as NSString
+        let lines = document.lines
+        var target = min(max(line, 0), lines.lineCount - 1)
+        var col = column
+        if col == nil, let name {
+            if let found = Identifier.firstWholeWord(name, in: CodeNavigator.line(text, lines, target), language: document.language) {
+                col = found
+            } else {
+                // 가까운 줄부터(위아래로 200줄까지)
+                for distance in 1...200 {
+                    for candidate in [target - distance, target + distance] where candidate >= 0 && candidate < lines.lineCount {
+                        if let found = Identifier.firstWholeWord(name, in: CodeNavigator.line(text, lines, candidate), language: document.language) {
+                            target = candidate
+                            col = found
+                            break
+                        }
+                    }
+                    if col != nil { break }
+                }
+            }
+        }
+        if col == nil {
+            // 줄 첫 글자(들여쓰기 뒤)
+            let lineText = CodeNavigator.line(text, lines, target) as NSString
+            var first = 0
+            while first < lineText.length, lineText.character(at: first) == 32 || lineText.character(at: first) == 9 { first += 1 }
+            col = first
+        }
+        let location = min(lines.starts[target] + (col ?? 0), text.length)
+        textView.setSelectedRange(NSRange(location: location, length: 0))
+        center(location, flash: name.map { ($0 as NSString).length } ?? 0)
+        return target
+    }
+
+    /// 글 위치로(뒤로·앞으로)
+    func reveal(offset: Int) {
+        guard let textView, let storage = document.storage else {
+            document.cursor = offset
+            return
+        }
+        let location = min(max(offset, 0), storage.length)
+        textView.setSelectedRange(NSRange(location: location, length: 0))
+        center(location, flash: 0)
+    }
+
+    /// 화면 배치가 끝난 뒤 그 줄을 세로 가운데로(IntelliJ 처럼). flash = 잠깐 밝힐 글자 수(이름)
+    private func center(_ location: Int, flash: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let textView = self.textView, let scrollView = self.scrollView,
+                  let layoutManager = textView.layoutManager, let storage = textView.textStorage else { return }
+            self.layoutSubtreeIfNeeded()
+            let length = storage.length
+            let at = min(location, length)
+            layoutManager.ensureLayout(forCharacterRange: NSRange(location: at, length: 0))
+            var rect: NSRect
+            if length == 0 || at >= length {
+                rect = layoutManager.extraLineFragmentRect
+                if rect.isEmpty, length > 0 {
+                    rect = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: length - 1), effectiveRange: nil)
+                }
+            } else {
+                rect = layoutManager.lineFragmentRect(forGlyphAt: layoutManager.glyphIndexForCharacter(at: at), effectiveRange: nil)
+            }
+            rect.origin.y += textView.textContainerOrigin.y
+            let clip = scrollView.contentView
+            let visibleHeight = clip.bounds.height
+            let maxY = max(textView.frame.height - visibleHeight, 0)
+            clip.scroll(to: NSPoint(x: 0, y: min(max(rect.midY - visibleHeight / 2, 0), maxY)))
+            scrollView.reflectScrolledClipView(clip)
+            textView.scrollRangeToVisible(NSRange(location: at, length: 0)) // 가로
+            self.colorVisible()
+            self.gutter?.needsDisplay = true
+            if flash > 0, at + flash <= length { textView.flash(NSRange(location: at, length: flash)) }
+        }
+    }
+
+    /// 커서 자리(view 좌표) — 목록 창을 그 아래에 띄운다
+    func caretRect(in view: NSView) -> NSRect? {
+        guard let textView, let window = textView.window else { return nil }
+        let screen = textView.firstRect(forCharacterRange: NSRange(location: textView.selectedRange().location, length: 0), actualRange: nil)
+        guard screen != .zero else { return nil }
+        let inWindow = window.convertFromScreen(screen)
+        var rect = view.convert(inWindow, from: nil)
+        rect.size.width = max(rect.width, 1)
+        return rect
+    }
+
+    /// 오른쪽 위에 잠깐 안내(sticky 면 hideHint 까지)
+    @discardableResult
+    func showHint(_ text: String, sticky: Bool = false) -> Int {
+        hintWork?.cancel()
+        hintToken += 1
+        hintLabel.text = text
+        hintLabel.isHidden = false
+        guard !sticky else { return hintToken }
+        let work = DispatchWorkItem { [weak self] in self?.hintLabel.isHidden = true }
+        hintWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5, execute: work)
+        return hintToken
+    }
+
+    /// token 이 있으면 그 안내가 아직 떠 있을 때만 내린다(뒤에 띄운 다른 요청의 안내는 두고)
+    func hideHint(_ token: Int? = nil) {
+        if let token, token != hintToken { return }
+        hintWork?.cancel()
+        hintLabel.isHidden = true
+    }
+
+    /// 시험용: 안내 글(안 보이면 nil)
+    var debugHint: String? { hintLabel.isHidden ? nil : hintLabel.text }
+
     /// 시험용: 뷰 크기
     var debugGeometry: String {
         guard let textView, let scrollView else { return "geometry=-" }
@@ -451,6 +584,154 @@ final class EditorTextView: NSTextView {
         item.tag = action.rawValue
         performTextFinderAction(item)
     }
+
+    // MARK: ⌘클릭(선언으로) — ⌘ 를 누른 채 이름 위에 있으면 밑줄·손가락 커서
+
+    /// 선언 찾기를 지원하는 언어일 때만 켠다
+    var linkLanguage: SyntaxLanguage?
+    var linkKeywords: Set<String> = []
+    var onCommandClick: ((Int) -> Void)?
+    private var linkRange: NSRange?
+    private var linkTracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let linkTracking { removeTrackingArea(linkTracking) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        linkTracking = area
+    }
+
+    /// 창 좌표 아래의 이름(글자 위에 있을 때만, 키워드 빼고)
+    func identifierRange(atWindowPoint windowPoint: NSPoint) -> NSRange? {
+        guard linkLanguage != nil, let layoutManager, let container = textContainer, let storage = textStorage,
+              storage.length > 0 else { return nil }
+        let point = convert(windowPoint, from: nil)
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layoutManager.glyphIndex(for: inContainer, in: container, fractionOfDistanceThroughGlyph: nil)
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container)
+        guard glyphRect.insetBy(dx: -0.5, dy: 0).contains(inContainer) else { return nil }
+        let index = layoutManager.characterIndexForGlyph(at: glyph)
+        let text = storage.string as NSString
+        guard let range = Identifier.range(in: text, at: index, language: linkLanguage), NSLocationInRange(index, range),
+              !linkKeywords.contains(text.substring(with: range)) else { return nil }
+        return range
+    }
+
+    private func updateLink(_ windowPoint: NSPoint, _ flags: NSEvent.ModifierFlags) {
+        let commandOnly = flags.intersection([.command, .shift, .option, .control]) == .command
+        // 마우스 이동은 키 창에서만 오고(추적 영역), ⌘ 변화는 첫 응답자에게만 온다
+        let range = commandOnly ? identifierRange(atWindowPoint: windowPoint) : nil
+        guard range != linkRange else { return }
+        clearLink()
+        guard let range, let layoutManager else {
+            NSCursor.iBeam.set()
+            return
+        }
+        linkRange = range
+        layoutManager.addTemporaryAttributes([.underlineStyle: NSUnderlineStyle.single.rawValue, .underlineColor: TermAppearance.accent],
+                                             forCharacterRange: range)
+        NSCursor.pointingHand.set()
+    }
+
+    private func clearLink() {
+        guard let range = linkRange else { return }
+        linkRange = nil
+        guard let layoutManager, let storage = textStorage, NSMaxRange(range) <= storage.length else { return }
+        layoutManager.removeTemporaryAttribute(.underlineStyle, forCharacterRange: range)
+        layoutManager.removeTemporaryAttribute(.underlineColor, forCharacterRange: range)
+    }
+
+    /// 시험용: 밑줄 중인 이름
+    var debugLink: String? {
+        guard let linkRange, let storage = textStorage, NSMaxRange(linkRange) <= storage.length else { return nil }
+        return (storage.string as NSString).substring(with: linkRange)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command, event.clickCount == 1,
+           let onCommandClick, let range = identifierRange(atWindowPoint: event.locationInWindow) {
+            clearLink()
+            window?.makeFirstResponder(self)
+            let point = convert(event.locationInWindow, from: nil)
+            let index = characterIndexForInsertion(at: point)
+            onCommandClick(NSLocationInRange(index, range) || index == NSMaxRange(range) ? index : range.location)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        if linkLanguage != nil { updateLink(event.locationInWindow, event.modifierFlags) }
+    }
+
+    override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        guard linkLanguage != nil, let window else { return }
+        let point = window.mouseLocationOutsideOfEventStream
+        if visibleRect.contains(convert(point, from: nil)) { updateLink(point, event.modifierFlags) } else { clearLink() }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        clearLink()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if linkRange != nil { NSCursor.pointingHand.set() } else { super.cursorUpdate(with: event) }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        clearLink()
+        super.keyDown(with: event)
+    }
+
+    /// 건너뛴 곳의 이름을 잠깐 밝힌다
+    func flash(_ range: NSRange) {
+        guard let layoutManager, let storage = textStorage, NSMaxRange(range) <= storage.length, range.length > 0 else { return }
+        layoutManager.addTemporaryAttribute(.backgroundColor, value: TermAppearance.accent.withAlphaComponent(0.35), forCharacterRange: range)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in
+            guard let self, let layoutManager = self.layoutManager, let storage = self.textStorage,
+                  NSMaxRange(range) <= storage.length else { return }
+            layoutManager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: range)
+        }
+    }
+}
+
+/// 편집기 오른쪽 위에 잠깐 뜨는 안내(둥근 바탕)
+final class EditorHintView: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    var text: String {
+        get { label.stringValue }
+        set { label.stringValue = newValue }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = TermAppearance.chromeRaised.cgColor
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 1
+        layer?.borderColor = TermAppearance.border.cgColor
+        label.font = TermAppearance.uiFont(12)
+        label.textColor = TermAppearance.textPrimary
+        label.lineBreakMode = .byTruncatingTail
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 // MARK: - 줄 번호·git 변경 표시

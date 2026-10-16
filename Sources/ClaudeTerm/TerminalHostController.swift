@@ -18,6 +18,8 @@ final class TerminalHostController: NSViewController {
     private let tabBar = TabBarView()
     private var tabBarHeight: NSLayoutConstraint!
     private var monitors: [Any] = []
+    /// 편집기 이동(⌘B·⌥F7·⌘O·뒤로·앞으로)
+    private(set) lazy var navigator = CodeNavigator(host: self)
 
     init(model: TermModel) {
         self.model = model
@@ -126,6 +128,7 @@ final class TerminalHostController: NSViewController {
                 guard editorViews[id] == nil, let recipe = model.workspace.editors[id] else { continue }
                 let editor = EditorPaneView(document: model.editors.document(id: id, recipe: recipe), frame: container.bounds)
                 editor.onOpenFile = { [weak self] path in self?.openLinkedFile(path) }
+                editor.onNavigate = { [weak self] index in self?.navigator.gotoDeclaration(at: index) }
                 editorViews[id] = editor
             } else if terminals[id] == nil {
                 let terminal = PaneTerminal(id: id, client: model.client, frame: container.bounds)
@@ -177,6 +180,8 @@ final class TerminalHostController: NSViewController {
     }
 
     private func focusTerminal() {
+        // 이동 목록 창이 키보드를 쥐고 있으면 그대로
+        if navigator.popupHasFocus { return }
         if let editor = focusedEditor {
             // 편집기 안(찾기 막대 등)에 이미 포커스가 있으면 그대로
             if let responder = editor.window?.firstResponder as? NSView, responder.isDescendant(of: editor) { return }

@@ -913,6 +913,11 @@ final class TermModel: ObservableObject {
         case "rename": renameFocused()
         case "save": saveFocused()
         case "markdown-preview": host?.focusedEditor?.togglePreview()
+        case "goto-declaration": host?.navigator.gotoDeclaration()
+        case "find-usages": host?.navigator.findUsages()
+        case "goto-symbol": host?.navigator.gotoSymbol()
+        case "nav-back": host?.navigator.back()
+        case "nav-forward": host?.navigator.forward()
         case "focus": if let direction = parts.dropFirst().first.flatMap({ Direction(rawValue: $0) }) { moveFocus(direction) }
         case "next-split": cycleFocus(1)
         case "previous-split": cycleFocus(-1)

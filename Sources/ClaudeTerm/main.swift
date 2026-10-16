@@ -88,6 +88,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let editor = model.host?.focusedEditor
             menuItem.state = editor?.preview != nil ? .on : .off
             return editor?.canPreview ?? false
+        case "goto-declaration", "find-usages":
+            return model.host?.focusedEditor.map { $0.preview == nil && $0.textView != nil } ?? false
+        case "nav-back":
+            return model.host?.navigator.canGoBack ?? false
+        case "nav-forward":
+            return model.host?.navigator.canGoForward ?? false
         default:
             return true
         }
@@ -145,6 +151,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         shell.addItem(.separator())
         addAction(shell, "이름 바꾸기…", "rename", "")
         addSubmenu(main, shell)
+
+        // 이동(IntelliJ 식). ⌘[ ⌘] 는 편집기 화면에서만 뒤로·앞으로(터미널에선 이전·다음 화면)
+        let navigate = NSMenu(title: "이동")
+        addAction(navigate, "선언으로 이동", "goto-declaration", "b")
+        addAction(navigate, "사용 위치 찾기", "find-usages", String(UnicodeScalar(NSF7FunctionKey)!), [.option])
+        addAction(navigate, "심볼로 이동…", "goto-symbol", "o")
+        navigate.addItem(.separator())
+        addAction(navigate, "뒤로", "nav-back", "[")
+        addAction(navigate, "앞으로", "nav-forward", "]")
+        addSubmenu(main, navigate)
 
         let view = NSMenu(title: "보기")
         // Markdown 파일: 편집 ↔ 미리보기(Markdown 편집기 화면일 때만 켜진다)
@@ -238,6 +254,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self.model.saveFocused()
                 return nil
             }
+            // 이동: ⌘B·⌥F7(⌥⌘F7)·⌘O. 편집기 화면이면 ⌘[ ⌘] 는 뒤로·앞으로(기록이 없으면 아무것도 안 함 — 화면 이동으로 넘기지 않는다)
+            if let action = self.navigationAction(for: event) {
+                if action != "none" { self.perform(action) }
+                return nil
+            }
             // ⇧⌘V = Markdown 편집 ↔ 미리보기. Markdown 편집기가 아니면 그대로 보낸다.
             if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(9, [.command, .shift]),
                self.model.host?.focusedEditor?.canPreview == true {
@@ -246,6 +267,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             guard let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)] else { return event }
             self.perform(action)
+            return nil
+        }
+    }
+
+    /// 이동 단축키(키 위치로 — 한글 입력 중에도). 받지 않으면 nil, 받았지만 할 일이 없으면 "none".
+    private func navigationAction(for event: NSEvent) -> String? {
+        let key = ShortcutKey(event.keyCode, event.modifierFlags)
+        let editor = model.host?.focusedEditor
+        let textEditor = editor.map { $0.preview == nil && $0.textView != nil } ?? false
+        switch key {
+        case ShortcutKey(11, .command): // ⌘B
+            return textEditor ? "goto-declaration" : nil
+        case ShortcutKey(98, .option), ShortcutKey(98, [.option, .command]): // ⌥F7 (⌥⌘F7 도)
+            return textEditor ? "find-usages" : nil
+        case ShortcutKey(31, .command): // ⌘O
+            return "goto-symbol"
+        case ShortcutKey(33, .command): // ⌘[
+            guard editor != nil else { return nil }
+            return model.host?.navigator.canGoBack == true ? "nav-back" : "none"
+        case ShortcutKey(30, .command): // ⌘]
+            guard editor != nil else { return nil }
+            return model.host?.navigator.canGoForward == true ? "nav-forward" : "none"
+        default:
             return nil
         }
     }
@@ -450,9 +494,109 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "editor-check-disk":
             editor?.document.checkDisk()
         default:
+            return debugNavigation(command: command, argument: argument)
+        }
+        return true
+    }
+
+    /// 이동 시험 명령. 다루면 true.
+    ///   goto [<줄>:<열>] | usages [<줄>:<열>] | symbol <찾을 글> | popup | popup-key <up|down|enter|esc>
+    ///   cmd-click <줄>:<열> | cmd-hover <줄>:<열>(⌘ 누른 채 마우스 올림, 밑줄 확인) | nav-back | nav-forward | nav-state
+    ///   index-state | index-build <루트>(색인 시간·메모리)
+    private func debugNavigation(command: String, argument: String) -> Bool {
+        guard let host = model.host else { return false }
+        let navigator = host.navigator
+        func select(_ spec: String) {
+            guard !spec.isEmpty else { return }
+            debugEditor(command: "editor-select", argument: spec)
+        }
+        func say(_ text: String) {
+            print(text)
+            fflush(stdout)
+        }
+        func point(_ spec: String) -> NSPoint? {
+            guard let editor = host.focusedEditor, let textView = editor.textView, let window else { return nil }
+            let v = spec.split(separator: ":").compactMap { Int($0) }
+            let lines = editor.document.lines
+            let line = min(max((v.first ?? 1) - 1, 0), lines.lineCount - 1)
+            let location = lines.starts[line] + max((v.count > 1 ? v[1] : 1) - 1, 0)
+            textView.scrollRangeToVisible(NSRange(location: location, length: 0))
+            let screen = textView.firstRect(forCharacterRange: NSRange(location: location, length: 1), actualRange: nil)
+            let inWindow = window.convertFromScreen(screen)
+            return NSPoint(x: inWindow.midX, y: inWindow.midY)
+        }
+        switch command {
+        case "goto":
+            select(argument)
+            navigator.gotoDeclaration()
+        case "usages":
+            select(argument)
+            navigator.findUsages()
+        case "symbol":
+            navigator.gotoSymbol()
+            if let popup = navigator.popup, !argument.isEmpty {
+                popup.field.stringValue = argument
+                popup.onQuery?(argument)
+            }
+        case "popup":
+            say(navigator.popup?.debugSummary ?? "popup none")
+        case "popup-key":
+            guard let window else { return true }
+            let codes: [String: (UInt16, Int)] = ["down": (125, NSDownArrowFunctionKey), "up": (126, NSUpArrowFunctionKey),
+                                                  "enter": (36, 13), "esc": (53, 27)]
+            guard let (code, scalar) = codes[argument], let ch = UnicodeScalar(scalar).map(String.init) else { return true }
+            let flags: NSEvent.ModifierFlags = code >= 125 ? [.function, .numericPad] : []
+            if let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags,
+                                            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                            context: nil, characters: ch, charactersIgnoringModifiers: ch, isARepeat: false, keyCode: code) {
+                NSApp.sendEvent(event)
+            }
+        case "cmd-click", "cmd-hover":
+            guard let window, let at = point(argument) else { return true }
+            let kinds: [NSEvent.EventType] = command == "cmd-click" ? [.leftMouseDown, .leftMouseUp] : [.mouseMoved]
+            for kind in kinds {
+                if let event = NSEvent.mouseEvent(with: kind, location: at, modifierFlags: .command,
+                                                  timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                  context: nil, eventNumber: 0, clickCount: 1, pressure: kind == .leftMouseUp ? 0 : 1) {
+                    if kind == .mouseMoved { host.focusedEditor?.textView?.mouseMoved(with: event) } else { NSApp.sendEvent(event) }
+                }
+            }
+            if command == "cmd-hover" { say("cmd-hover link=\(host.focusedEditor?.textView?.debugLink ?? "-")") }
+        case "nav-back":
+            if let action = navigationKey(33) { perform(action) }
+        case "nav-forward":
+            if let action = navigationKey(30) { perform(action) }
+        case "nav-state":
+            let editor = host.focusedEditor
+            let caret = editor?.textView?.selectedRange().location ?? -1
+            var lineCol = "-"
+            if let editor, caret >= 0 {
+                let line = editor.document.lines.line(containing: caret)
+                lineCol = "\(line + 1):\(caret - editor.document.lines.starts[line] + 1)"
+            }
+            say("nav-state file=\(editor.map { ($0.document.path as NSString).lastPathComponent } ?? "-") at=\(lineCol) "
+                + "hint=\(editor?.debugHint ?? "-") lastHint=\(navigator.lastHint ?? "-") " + navigator.debugHistory
+                + " resolution=\(navigator.lastResolution ?? "-")")
+        case "index-state":
+            say(navigator.debugIndexes.isEmpty ? "index none" : navigator.debugIndexes)
+        case "index-build":
+            navigator.debugBuild(root: argument) { say($0) }
+        case "index-forget":
+            navigator.store.forget(root: argument)
+        default:
             return false
         }
         return true
+    }
+
+    /// 시험용: ⌘[ ⌘] 를 실제 단축키 규칙대로
+    private func navigationKey(_ code: UInt16) -> String? {
+        guard let window, let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                                                        timestamp: 0, windowNumber: window.windowNumber, context: nil,
+                                                        characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: code)
+        else { return nil }
+        let action = navigationAction(for: event)
+        return action == "none" ? nil : action
     }
 
     private func debugTerminal(_ command: String, _ argument: String) {
@@ -512,10 +656,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                          "up": NSUpArrowFunctionKey, "down": NSDownArrowFunctionKey]
             if let code = names[key] { key = String(UnicodeScalar(code)!); flags.insert([.function, .numericPad]) }
             if key == "enter" { key = "\r" }
-            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+", "e": "E", "s": "S", "v": "V"]
+            if key == "f7" { key = String(UnicodeScalar(NSF7FunctionKey)!); flags.insert(.function) }
+            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+", "e": "E", "s": "S", "v": "V", "b": "B", "o": "O"]
             let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
             // 실제 키보드(US 배열)의 키 코드
             let codes: [String: UInt16] = ["d": 2, "t": 17, "e": 14, "s": 1, "v": 9, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
+                                           "b": 11, "o": 31, String(UnicodeScalar(NSF7FunctionKey)!): 98,
                                            "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
                                            String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,
                                            String(UnicodeScalar(NSRightArrowFunctionKey)!): 124,

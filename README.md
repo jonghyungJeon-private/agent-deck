@@ -6,7 +6,7 @@ Claude Code·Codex CLI 세션을 위한 가벼운 터미널 앱(macOS, 사내 �
 데몬까지 꺼져도(강제 종료·재부팅) 탭을 열면 `claude --resume` 으로 같은 자리에 되살린다.
 
 목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지", 최대한 가볍게. 파일 트리는 IntelliJ 식 도구 창(files)으로 보일 때만 일한다.
-가벼운 편집기(IDE 아님 — 자동 완성·리팩터링·LSP 없음)가 터미널과 같은 탭·분할에 열린다. diff 보기·브라우저는 아직 없다.
+가벼운 편집기(IDE 아님 — 자동 완성·리팩터링·LSP 없음, 이름 단위 코드 이동 ⌘B·⌥F7·⌘O 만)가 터미널과 같은 탭·분할에 열린다. diff 보기·브라우저는 아직 없다.
 (예전 메뉴바 앱 ClaudeSessions 는 이 앱으로 대체되어 코드에서 뺐다. 세션 기록 위치 `~/Library/Application Support/ClaudeSessions/` 는 그대로 쓴다.)
 
 ## Codex CLI
@@ -47,7 +47,7 @@ VERSION=0.2.0 scripts/build-term-proto.sh
 
 - 시험은 실제 기록·데몬과 분리해서: `CLAUDE_TERM_HOME=<폴더> CLAUDE_SESSIONS_HOME=<폴더>`.
 - 구조: `Sources/ClaudeTerm`(앱), `Sources/ClaudeTermDaemon`(PTY 를 붙잡는 데몬, `hook`·`ctl` 명령), `Sources/TermWire`(앱↔데몬 메시지),
-  `Sources/TermLayout`(탭·분할·되살리기 정보, 작업 트리 읽기), `Sources/EditorCore`(편집기의 화면 없는 부분: 줄 diff·줄 끝·바이너리 판별·안전한 저장·글자 색 훑기), `Sources/SessionCore`(hook 처리·세션 기록·대화 파일 읽기·프로세스 정보),
+  `Sources/TermLayout`(탭·분할·되살리기 정보, 작업 트리 읽기), `Sources/EditorCore`(편집기의 화면 없는 부분: 줄 diff·줄 끝·바이너리 판별·안전한 저장·글자 색 훑기·선언 찾기·이름 맞추기·이동 기록), `Sources/SessionCore`(hook 처리·세션 기록·대화 파일 읽기·프로세스 정보),
   `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
 
 ## 자세한 동작
@@ -92,7 +92,7 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   어느 탭에도 없는 화면(예: `ctl new` 로 만든 것)은 새 탭으로 붙는다. 사이에 틈을 끌어 크기를 바꾼다.
   단축키(Ghostty 기본값, 한글 입력 중에도 키 위치로 동작):
   ⌘T 새 탭 · ⌘D 오른쪽으로 나누기 · ⌘⇧D 아래로 나누기 · ⌘W 화면 닫기(셸이 아닌 프로그램이 돌면 묻는다) · ⌘⌥W 탭 닫기 ·
-  ⌘[ ⌘] 이전/다음 화면 · ⌘⌥방향키 그쪽 화면으로 · ⌘⇧↩ 화면 크게 보기/되돌리기 · ⌘⌃= 크기 같게 · ⌘⌃방향키 나눈 선 옮기기 ·
+  ⌘[ ⌘] 이전/다음 화면(편집기 화면에선 뒤로/앞으로 — 아래 "코드 이동") · ⌘⌥방향키 그쪽 화면으로 · ⌘⇧↩ 화면 크게 보기/되돌리기 · ⌘⌃= 크기 같게 · ⌘⌃방향키 나눈 선 옮기기 ·
   ⌘⇧[ ⌘⇧] 또는 ⌃Tab ⌃⇧Tab 이전/다음 탭 · ⌘1~8 탭, ⌘9 마지막 탭. 새 탭·분할은 지금 화면의 폴더에서 열린다.
 - 이름은 한 규칙으로 정해 탭·왼쪽 목록·분할 테두리에 똑같이 쓴다(앞의 것이 있으면 그것):
   ① 이 앱에서 직접 바꾼 이름(탭 두 번 클릭, 탭·목록 오른쪽 클릭, 셸 메뉴 > 이름 바꾸기 — 비우면 자동 이름으로)
@@ -119,7 +119,29 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   - 탭·분할 테두리 제목 = 파일 이름, 저장 안 했으면 뒤에 ●. 아래 상태 줄에 줄:열·UTF-8·줄 끝(LF/CRLF)·언어.
   - 단축키: ⌘S 저장(파일 메뉴, 키 위치로 받아 한글 입력 중에도 — ⌘⇧S 는 그대로 spaces), ⌘F 찾기 막대·⌥⌘F 바꾸기·⌘G/⌘⇧G 다음/이전,
     ⌘Z/⌘⇧Z 되돌리기(문서마다 따로, 탭을 옮겨도 이어짐), ⌘X 잘라내기. 찾기·되돌리기·잘라내기는 편집기에서만 켜져 터미널의 키는 그대로 터미널로 간다.
-    ⌘W·⌘D·⌘[ ⌘]·크게 보기 등 화면 단축키는 편집기에도 그대로(⌘W 는 편집기만 닫음). Enter 는 윗줄 들여쓰기를 잇는다. 줄바꿈 없음(가로 스크롤).
+    ⌘W·⌘D·크게 보기 등 화면 단축키는 편집기에도 그대로(⌘W 는 편집기만 닫음, ⌘[ ⌘] 는 뒤로/앞으로). Enter 는 윗줄 들여쓰기를 잇는다. 줄바꿈 없음(가로 스크롤).
+  - 코드 이동(IntelliJ 식, LSP 없이 이름 단위 — 가볍게). 메뉴 **이동**에도 있다. 단축키는 키 위치로 받아 한글 입력 중에도 된다.
+    - **⌘B / ⌘+클릭** 선언으로: 커서(누른 곳) 아래 이름의 선언으로 간다. 후보가 여럿이면 작은 목록(종류·코드 줄·상대 경로:줄, ↑↓ ↩ esc·클릭).
+      순서: 같은 파일 → import 한 것 → 같은 패키지(별표 import) → 같은 폴더 → 가까운 모듈 → 나머지(시험 코드는 같은 칸에서 뒤로).
+      `obj.name` 이면 obj 의 타입을 같은 파일에서 어림하고(`userService: UserService`, Java `UserService userService`, `this.userService`),
+      그 타입의 패키지(명시 import → 그 패키지, 없으면 같은 패키지·별표 import)를 후보 파일의 `package` 줄과 맞춰 그 클래스의 멤버(companion 포함)와
+      그 클래스 파일의 최상위 선언만 남긴다(맞는 것이 없을 때만 이름 전체 후보로). 같은 이름 클래스가 다른 패키지에 있어도 import 한 쪽으로 간다.
+      바로 가는 경우: 후보 하나, `obj.` 없는 참조인데 같은 파일에 하나(위쪽 지역 변수가 먼저), import 로 하나로 정해짐. 선언 위에서 누르면 사용 위치.
+      ⌘ 를 누른 채 이름 위에 올리면 밑줄·손가락 커서. 간 곳은 가운데로 보이고 이름이 잠깐 밝아진다.
+    - **⌥F7**(⌥⌘F7 도, F 키가 미디어 키면 fn 과 함께 · 메뉴 > 이동 > 사용 위치 찾기 · 선언 위 ⌘B) 사용 위치: 프로젝트의 소스 파일에서 이름이 통째로
+      나오는 곳(주석·문자열 밖). 가까운 폴더부터 백그라운드에서 찾고 500곳까지. 지금 파일은 저장 안 한 편집 내용으로. 선언 줄은 "선언" 표시.
+    - **⌘O** 심볼로(터미널 화면에서도 — 그 화면 폴더의 프로젝트): 클래스·함수·속성 이름을 낙타 혹으로(`UsrSvc` → UserService, `fBI` → findById).
+      찾기 칸은 영문 입력으로 바뀐다(한글 자판인 채로 눌러도 바로). 같은 점수면 타입이 먼저.
+    - **⌘[ / ⌘]** 뒤로/앞으로(편집기 화면일 때): 위 이동들로 건너뛰기 직전 자리를 파일을 넘어 기억한다(50개). 기록이 없으면 아무것도 안 한다
+      (화면 이동으로 넘기지 않음). 터미널 화면에선 그대로 이전/다음 화면, 화면 이동은 ⌘⌥방향키로도.
+    - 색인: 처음 이동할 때 그 프로젝트(git 작업 트리 맨 위, 아니면 파일 폴더 — files 도구와 같은 규칙)만 낮은 우선순위로 만든다.
+      git 저장소면 `git ls-files -co --exclude-standard`(.gitignore 따름), 아니면 폴더를 걷는다. build·out·target·node_modules·.gradle·.idea·dist·vendor 등은 빼고,
+      1MB 넘는 파일·5만 개 넘는 파일은 뺀다. 홈 폴더·/ 같은 넓은 곳은 색인하지 않는다. 이름은 한 번만 들고 선언은 16바이트 줄로(최근 프로젝트 3개만).
+      편집기에서 저장한 파일은 바로 다시 읽고, 다른 디스크 변경은 다음 이동 때(10초에 한 번까지) 파일 목록·수정 시각으로 바뀐 것만. 타이머·감시 없음.
+      만드는 동안 ⌘B 는 같은 파일 선언으로 바로 가고(안내 "색인 중…"), 다른 파일이면 다 만든 뒤 간다.
+    - 선언 찾기: Kotlin·Java(주력) — class·interface·object·enum(항목)·record·annotation class·data class 주 생성자 속성·companion object·
+      확장 함수 `fun String.foo()`·제네릭 `fun <T>`·생성자·필드·상수·typealias. TS/JS·Swift·Python·Go·Rust 는 기본 선언.
+      정규식·ctags 없이 손으로 쓴 낱말 훑기(주석·문자열 건너뜀, 중괄호로 타입 몸통 추적). 이름 단위라 같은 이름 메서드(오버로드·다른 클래스)는 목록으로 고른다.
   - 닫기(⌘W·탭 닫기·창 닫기·종료)할 때 저장 안 한 내용이 있으면 저장 / 저장 안 함 / 취소를 묻는다. 묻지 않고 저장하는 일은 없다.
   - 모양: 터미널과 같은 JetBrains Mono·크기·바탕(합자는 끔), 줄 번호 여백, 지금 줄 바탕, Darcula 계열 글자 색.
   - 글자 색(Swift·Kotlin/Java·TS/JS·Python·Go·Rust·JSON·YAML·TOML·Markdown·셸·SQL): 정규식 없이 한 번 훑는 스캐너로
@@ -168,6 +190,8 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
+  이동 시험 명령: `goto [<줄>:<열>]`·`usages [<줄>:<열>]`·`symbol <글>`·`popup`(목록 내용)·`popup-key <up|down|enter|esc>`·
+  `cmd-click <줄>:<열>`·`cmd-hover <줄>:<열>`(밑줄 확인)·`nav-back`·`nav-forward`·`nav-state`·`index-state`·`index-build <루트>`(색인 시간·메모리).
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   `CLAUDE_TERM_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
