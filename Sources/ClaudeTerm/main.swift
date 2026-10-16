@@ -22,6 +22,7 @@ app.run()
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = TermModel()
     var window: NSWindow?
+    var toolWindows: ToolWindowsController?
     var snapshotTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -29,24 +30,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let host = TerminalHostController(model: model)
         model.host = host
 
-        let split = NSSplitViewController()
-        // 사이드바는 반투명 재질 없이 앱 색으로(herdr 처럼 터미널과 한 덩어리로 보이게)
-        let sidebar = NSSplitViewItem(viewController: NSHostingController(rootView: SidebarView(model: model)))
-        sidebar.canCollapse = true
-        sidebar.minimumThickness = 220
-        sidebar.maximumThickness = 420
-        split.addSplitViewItem(sidebar)
-        let content = NSSplitViewItem(viewController: host)
-        content.minimumThickness = 400
-        split.addSplitViewItem(content)
+        // [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구(spaces·files)는 IntelliJ 처럼 양옆에 붙이거나 숨긴다(ToolWindows.swift).
+        // 도크는 반투명 재질 없이 앱 색으로(herdr 처럼 터미널과 한 덩어리로 보이게)
+        let tools = ToolWindowsController(model: model, host: host)
+        toolWindows = tools
 
-        let window = NSWindow(contentViewController: split)
+        let window = NSWindow(contentViewController: tools.split)
         window.title = "Claude Term (시제품)"
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
         window.backgroundColor = TermAppearance.chrome
         window.setContentSize(NSSize(width: 1200, height: 760))
         window.setFrameAutosaveName("ClaudeTermMain")
+        tools.restoreWidths()
         self.window = window
         // 시험용: CLAUDE_TERM_NO_ACTIVATE=1 이면 앞으로 나오지 않는다(사용 중인 다른 앱의 포커스를 뺏지 않게 창을 뒤에 둔다)
         if ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_ACTIVATE"] == "1" {
@@ -116,6 +112,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for number in 1...9 {
             addAction(view, number == 9 ? "마지막 탭" : "탭 \(number)", "tab:\(number)", "\(number)")
         }
+        // IntelliJ 식 도구 창: 숨김이면 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김
+        view.addItem(.separator())
+        addAction(view, "files 도구 보이기/숨기기", "tool-toggle:files", "e", [.command, .shift])
+        addAction(view, "spaces 도구 보이기/숨기기", "tool-toggle:spaces", "s", [.command, .shift])
+        for (tool, label) in [("files", "files"), ("spaces", "spaces")] {
+            let place = NSMenu(title: "\(label) 위치")
+            addAction(place, "왼쪽", "tool-move:\(tool):left", "")
+            addAction(place, "오른쪽", "tool-move:\(tool):right", "")
+            addAction(place, "숨김", "tool-move:\(tool):hidden", "")
+            let item = NSMenuItem(title: "\(label) 위치", action: nil, keyEquivalent: "")
+            item.submenu = place
+            view.addItem(item)
+        }
         addSubmenu(main, view)
         NSApp.mainMenu = main
     }
@@ -140,6 +149,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ShortcutKey(24, [.command, .control]): "equalize",
             ShortcutKey(48, .control): "next-tab",
             ShortcutKey(48, [.control, .shift]): "previous-tab",
+            // 도구 창(⌘⇧E files, ⌘⇧S spaces)
+            ShortcutKey(14, [.command, .shift]): "tool-toggle:files",
+            ShortcutKey(1, [.command, .shift]): "tool-toggle:spaces",
         ]
         for (code, direction) in [(123, "left"), (124, "right"), (125, "down"), (126, "up")] as [(UInt16, String)] {
             map[ShortcutKey(code, [.command, .option])] = "focus:\(direction)"
@@ -156,8 +168,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, event.window === self.window,
                   let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)]
             else { return event }
-            self.model.perform(action)
+            self.perform(action)
             return nil
+        }
+    }
+
+    /// 메뉴·단축키·시험 명령: 도구 창 동작(tool-…)은 도구 창 관리자가, 나머지는 모델이 맡는다
+    private func perform(_ action: String) {
+        if action.hasPrefix("tool-") {
+            toolWindows?.perform(action)
+        } else {
+            model.perform(action)
         }
     }
 
@@ -177,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func menuAction(_ sender: NSMenuItem) {
-        if let action = sender.representedObject as? String { model.perform(action) }
+        if let action = sender.representedObject as? String { perform(action) }
     }
 
     // MARK: - 시험용(CLAUDE_TERM_SNAPSHOT 또는 CLAUDE_TERM_DEBUG 가 있을 때만)
@@ -185,6 +206,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// CLAUDE_TERM_SNAPSHOT=<폴더> 면 1초마다 창 그림을 <폴더>/window.png 로 남긴다(화면 기록 권한 없이 확인용. 메모리를 더 쓴다).
     /// 둘 중 하나라도 있으면 분산 알림 "dev.claude-sessions.term.debug" 로 받은 명령을 실행한다.
     ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
+    ///   도구 창: tool <files|spaces>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
+    ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
         let snapshotDir = env["CLAUDE_TERM_SNAPSHOT"].flatMap { $0.isEmpty ? nil : $0 }
@@ -210,7 +233,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "select":
             model.focus(pane: argument)
         case "action":
-            model.perform(argument)
+            perform(argument)
+        case "tool":
+            // tool <files|spaces> = ⌘⇧E·⌘⇧S 와 같은 토글
+            toolWindows?.perform("tool-toggle:\(argument)")
+        case "dock":
+            // dock <도구> <left|right|hidden>
+            let v = argument.split(separator: " ").map(String.init)
+            if v.count == 2 { toolWindows?.perform("tool-move:\(v[0]):\(v[1])") }
+        case "tool-select":
+            toolWindows?.perform("tool-select:\(argument)")
+        case "uilayout":
+            if let data = toolWindows?.layout.data() { print("uilayout " + (String(data: data, encoding: .utf8) ?? "")) }
+            fflush(stdout)
+        case "filesroot":
+            print(toolWindows?.files.debugSummary ?? "filesroot -")
+            fflush(stdout)
+        case "expand":
+            toolWindows?.files.debugExpand(argument)
+        case "filesmenu":
+            toolWindows?.files.debugMenu(argument)
+        case "toolmenu":
+            // toolmenu <도구>: 도구 버튼·머리 줄 오른쪽 클릭 메뉴 항목
+            if let tool = ToolID(rawValue: argument), let menu = toolWindows?.menu(for: tool) {
+                print("toolmenu \(argument): " + menu.items.map { $0.isSeparatorItem ? "—" : $0.title + ($0.state == .on ? "(✓)" : "") }.joined(separator: " / "))
+                fflush(stdout)
+            }
+        case "open-file":
+            toolWindows?.files.debugOpen(argument)
+        case "collapse-all":
+            toolWindows?.files.collapseAll()
+        case "footprint":
+            print("footprint app=\(Memory.format(Memory.footprint())) bytes=\(Memory.footprint())")
+            fflush(stdout)
         case "type":
             model.host?.typeText(argument.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\r", with: "\r"))
         case "ime":
@@ -261,10 +316,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                          "up": NSUpArrowFunctionKey, "down": NSDownArrowFunctionKey]
             if let code = names[key] { key = String(UnicodeScalar(code)!); flags.insert([.function, .numericPad]) }
             if key == "enter" { key = "\r" }
-            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+"]
+            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+", "e": "E", "s": "S"]
             let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
             // 실제 키보드(US 배열)의 키 코드
-            let codes: [String: UInt16] = ["d": 2, "t": 17, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
+            let codes: [String: UInt16] = ["d": 2, "t": 17, "e": 14, "s": 1, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
                                            "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
                                            String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,
                                            String(UnicodeScalar(NSRightArrowFunctionKey)!): 124,

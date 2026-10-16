@@ -70,6 +70,19 @@ public enum GitWorktrees {
         return result + others
     }
 
+    /// 작업 트리 맨 위 폴더의 git 폴더(메인은 "<폴더>/.git", 작업 트리는 ".git" 파일이 가리키는 곳)
+    public static func gitDir(worktreeRoot root: String) -> String? {
+        let dotGit = (root as NSString).appendingPathComponent(".git")
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: dotGit, isDirectory: &isDir) else { return nil }
+        return isDir.boolValue ? dotGit : gitDirFromFile(dotGit, base: root)
+    }
+
+    /// 작업 트리의 지금 브랜치(detached 면 커밋 앞 7자리)
+    public static func branch(worktreeRoot root: String) -> String? {
+        gitDir(worktreeRoot: root).flatMap { branch(head: ($0 as NSString).appendingPathComponent("HEAD")) }
+    }
+
     static func repoRoot(commonDir: String) -> String {
         (commonDir as NSString).lastPathComponent == ".git" ? (commonDir as NSString).deletingLastPathComponent : commonDir
     }

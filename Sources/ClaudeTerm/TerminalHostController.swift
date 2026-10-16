@@ -274,6 +274,7 @@ final class BackgroundView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         color.setFill()
-        dirtyRect.fill()
+        // macOS 14 부터 뷰가 경계 밖을 자르지 않아 dirtyRect 가 바깥까지 올 수 있다(옆 뷰를 덮지 않게 경계 안만)
+        dirtyRect.intersection(bounds).fill()
     }
 }

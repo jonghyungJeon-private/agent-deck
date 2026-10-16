@@ -5,7 +5,7 @@ Claude Code·Codex CLI 세션을 위한 가벼운 터미널 앱(macOS, 사내 �
 셸과 claude 는 앱이 아니라 백그라운드 데몬이 붙잡고 있어서 앱을 끄거나 업데이트해도 세션이 계속 돌고,
 데몬까지 꺼져도(강제 종료·재부팅) 탭을 열면 `claude --resume` 으로 같은 자리에 되살린다.
 
-목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지"만, 최대한 가볍게. 편집기·파일 트리·diff·브라우저는 넣지 않는다.
+목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지", 최대한 가볍게. 파일 트리는 IntelliJ 식 도구 창(files)으로 보일 때만 일한다. 편집기·diff·브라우저는 아직 없다.
 (예전 메뉴바 앱 ClaudeSessions 는 이 앱으로 대체되어 코드에서 뺐다. 세션 기록 위치 `~/Library/Application Support/ClaudeSessions/` 는 그대로 쓴다.)
 
 ## Codex CLI
@@ -100,6 +100,26 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   ④ 는 세션마다 한 번 `claude -p --model sonnet`(설정·hook·MCP·도구·대화 저장 없이, 약 3초)으로 짓고 `term/names.json` 에 둔다.
   짓는 동안은 첫 질문 앞부분을 보여 준다. `CLAUDE_TERM_AUTO_TITLE=0` 이면 부르지 않는다. 실패 이유는 `term/title-errors.log`.
   claude 세션 자체의 이름(`claude --resume` 목록)은 바꾸지 않는다.
+- 도구 창(IntelliJ 식): 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구는 **spaces**(세션 목록)와 **files**(파일 트리) 둘이고,
+  각각 왼쪽·오른쪽·숨김 중 한 곳에 붙는다. 한 도크에 둘이 붙으면 위에 도구 버튼 줄(고른 것은 강조색)이 생기고, 보이는 도구가 없는 도크는 접힌다.
+  도구 버튼·머리 줄 오른쪽 클릭 = 왼쪽으로/오른쪽으로 옮기기·숨기기. 보기 메뉴에도 있다.
+  ⌘⇧E files, ⌘⇧S spaces: 숨김이면 마지막 쪽에 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김(한글 입력 중에도 키 위치로).
+  ⌘⇧E 로 열면 트리에 포커스가 가고, Esc 는 터미널로 돌아간다.
+  기본값은 spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 의 Project 창 자리, 터미널 폭은 그대로). 배치·고른 도구·도크 폭은 `term/ui.json`
+  (없거나 예전·망가진 파일이면 기본값).
+- files: 포커스 화면의 작업 트리 맨 위(작업 트리가 아니면 화면 폴더)를 보인다. 머리 줄에 폴더 이름·브랜치·바뀐 파일 수, 오른쪽에 모두 접기.
+  다른 프로젝트 화면으로 포커스가 옮겨 가면 루트가 바뀌고, 펼친 폴더는 루트별로 메모리에만 기억한다(루트 12개·루트당 400개까지).
+  NSOutlineView 로 그리고, 폴더는 펼칠 때 백그라운드에서 읽는다(`.git`·`.DS_Store` 뺌, 폴더 먼저 → 대소문자 무시 이름순, 점 파일은 흐리게).
+  두 번 클릭·Enter 는 파일 열기 자리(2단계 편집기용 `onOpenFile`, 지금은 "편집기는 다음 단계" 안내만). 오른쪽 클릭: Finder 에서 보기·경로 복사·상대 경로 복사·여기서 셸 열기(새 탭).
+- files 의 git 색(IntelliJ Darcula 계열): 바뀜·이름 바꿈 파랑, 새로 추가(스테이징) 초록, 추적 안 함 적갈색, 무시됨 흐린 올리브, 충돌 빨강,
+  색만으로 구분하지 않게 오른쪽에 M·A·R·U·! 글자. 안에 바뀐 것이 있는 폴더는 옅은 파랑(접혀 있어도 보이게).
+  `git status --porcelain=v1 -z --untracked-files=normal --ignored=matching` 를 백그라운드에서 한 번 돌린다(`GIT_OPTIONAL_LOCKS=0` — 색인을 고쳐 쓰지 않음).
+  다시 돌리는 때: 보이기 시작·루트 바뀜·FSEvents(루트와 작업 트리 git 폴더, 1초 모음, 무시된 폴더 안 변화와 `.git/objects` 는 거름), 최소 1초 간격.
+  git 이 없거나(`/usr/bin/git` 설치 창을 띄우지 않게 실제 git 이 있을 때만) 저장소가 아니면 색 없이 트리만.
+- 가볍게: 타이머 없음. files 가 숨겨지면 FSEvents 를 멈추고 트리를 놓는다(펼침만 기억). 창이 가려지거나 최소화되면 감시만 멈췄다가 다시 보일 때 새로 읽는다.
+  실측(6K 전체 화면 창, release): 창 그림 버퍼(IOSurface 약 100~107MB)는 상태와 무관. 그 밖에 malloc 은 spaces 만 28~30MB,
+  같은 도크에서 files 로 바꾸면 23~25MB(SwiftUI 목록이 화면에서 빠짐), spaces+files 둘 다 보이면 32MB, 이 저장소 폴더 9개를 펼친 뒤(95줄) 37~38MB.
+  files 를 보이는 채 쉬는 동안 CPU 는 files 없는 때와 차이가 보이지 않았다(git 은 처음 한 번, 이 저장소에서 약 0.1~0.5초).
 - 화면 모양은 herdr 를 참고했다: 어두운 사이드바·탭 줄에 고정폭 글꼴, 나눈 화면마다 테두리와 제목, 포커스 화면은 보라색 테두리.
 - 왼쪽 목록은 폴더(git 저장소)별로 묶고, 저장소의 작업 트리(worktree)를 아래에 펼친다(claude 가 만든 `.claude/worktrees/` 는 주황 아이콘).
   화면의 폴더는 claude 가 돌면 claude 프로세스의, 아니면 셸의 지금 폴더를 따른다(작업 트리로 옮겨 가면 그 아래로 옮겨진다).
@@ -112,7 +132,10 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   `CLAUDE_TERM_DEBUG=1` 이면 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
   틈 끌기(`drag`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
+  도구 창·files 시험 명령: `tool files`(⌘⇧E 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
+  `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.
   `CLAUDE_TERM_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
+  이때와 `CLAUDE_TERM_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
 ## 작업 상태 표시와 알림

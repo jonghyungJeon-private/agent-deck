@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TermLayout
 import TermWire
 
 private extension Color {
@@ -10,6 +11,11 @@ private extension Color {
 /// 어두운 바탕에 고정폭 글꼴, 색은 상태와 포커스에만 쓴다.
 struct SidebarView: View {
     @ObservedObject var model: TermModel
+    /// 도크에 도구가 하나뿐이면 머리 줄에 "spaces" 를 보인다(둘이면 위 도구 버튼 줄이 보인다)
+    var showsTitle = true
+    /// 머리 줄 오른쪽 클릭: 왼쪽·오른쪽으로 옮기기, 숨기기
+    var onDock: ((DockSide) -> Void)?
+    var currentSide: DockSide = .left
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
     @State private var expandedAgent: String?
 
@@ -77,9 +83,11 @@ struct SidebarView: View {
 
     private var header: some View {
         HStack(spacing: 4) {
-            Text("spaces")
-                .font(Font(TermAppearance.uiFont(11)))
-                .foregroundStyle(Color(TermAppearance.textDim))
+            if showsTitle {
+                Text("spaces")
+                    .font(Font(TermAppearance.uiFont(11)))
+                    .foregroundStyle(Color(TermAppearance.textDim))
+            }
             Spacer()
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 4) {
@@ -105,6 +113,15 @@ struct SidebarView: View {
         .padding(.leading, 14)
         .padding(.trailing, 8)
         .frame(height: TerminalHostController.tabBarHeight)
+        .contentShape(Rectangle())
+        .contextMenu {
+            if let onDock {
+                Button((currentSide == .left ? "✓ " : "") + "왼쪽으로 옮기기") { onDock(.left) }
+                Button((currentSide == .right ? "✓ " : "") + "오른쪽으로 옮기기") { onDock(.right) }
+                Divider()
+                Button("숨기기 (⌘⇧S)") { onDock(.hidden) }
+            }
+        }
     }
 
     /// hook 이 없거나 예전 앱 것이면 눈에 띄게 알린다(이름·되살리기·상태 표시가 여기에 달려 있다)
