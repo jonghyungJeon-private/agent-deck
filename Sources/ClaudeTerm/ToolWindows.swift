@@ -26,7 +26,7 @@ final class ToolWindowsController: NSObject {
         layout = ToolLayout.load(from: Self.url)
         files = FilesToolController(model: model)
         sidebar = NSHostingController(rootView: SidebarView(model: model))
-        docks = [.left: DockViewController(side: .left), .right: DockViewController(side: .right)]
+        docks = [.left: DockViewController(side: .left, model: model), .right: DockViewController(side: .right, model: model)]
         super.init()
 
         files.dockMenu = { [weak self] in self?.menu(for: .files) ?? NSMenu() }
@@ -72,10 +72,13 @@ final class ToolWindowsController: NSObject {
         applying = true
         defer { applying = false }
         var opened: [DockSide] = []
+        // 상태 줄은 도크 하나에만: 왼쪽이 보이면 왼쪽, 아니면 오른쪽
+        let footerSide: DockSide = layout.visibleTool(in: .left) != nil ? .left : .right
         for side in [DockSide.left, .right] {
             guard let dock = docks[side], let item = items[side] else { continue }
             let visible = layout.visibleTool(in: side)
             dock.show(tools: layout.tools(in: side), selected: visible, content: visible.map(controller))
+            dock.showsFooter = side == footerSide && visible != nil
             let collapse = visible == nil
             if item.isCollapsed != collapse {
                 item.isCollapsed = collapse
@@ -214,9 +217,17 @@ final class ToolWindowsController: NSObject {
     }
 }
 
-/// 도크 하나: (도구가 둘 이상이면) 위에 도구 버튼 줄 + 고른 도구
+/// 도크 하나: (도구가 둘 이상이면) 위에 도구 버튼 줄 + 고른 도구 + (붙었으면) 아래 상태 줄
 final class DockViewController: NSViewController {
     let side: DockSide
+    private let model: TermModel
+    private lazy var footer: NSHostingView<StatusFooterView> = {
+        let host = NSHostingView(rootView: StatusFooterView(model: model))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        host.setContentHuggingPriority(.required, for: .vertical)
+        return host
+    }()
+    private var containerBottom: NSLayoutConstraint!
     var onSelect: ((ToolID) -> Void)?
     var menuFor: ((ToolID) -> NSMenu)?
 
@@ -225,8 +236,9 @@ final class DockViewController: NSViewController {
     private var stripHeight: NSLayoutConstraint!
     private(set) var current: NSViewController?
 
-    init(side: DockSide) {
+    init(side: DockSide, model: TermModel) {
         self.side = side
+        self.model = model
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -242,6 +254,7 @@ final class DockViewController: NSViewController {
             root.addSubview(view)
         }
         stripHeight = strip.heightAnchor.constraint(equalToConstant: 0)
+        containerBottom = container.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         NSLayoutConstraint.activate([
             strip.topAnchor.constraint(equalTo: root.topAnchor),
             strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
@@ -250,9 +263,30 @@ final class DockViewController: NSViewController {
             container.topAnchor.constraint(equalTo: strip.bottomAnchor),
             container.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            container.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            containerBottom,
         ])
         view = root
+    }
+
+    /// 이 도크 맨 아래에 상태 줄을 붙이거나 뗀다
+    var showsFooter = false {
+        didSet {
+            guard showsFooter != oldValue else { return }
+            _ = view
+            if showsFooter {
+                view.addSubview(footer)
+                containerBottom.isActive = false
+                NSLayoutConstraint.activate([
+                    footer.topAnchor.constraint(equalTo: container.bottomAnchor),
+                    footer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                    footer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                    footer.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                ])
+            } else {
+                footer.removeFromSuperview() // 붙어 있던 제약도 함께 사라진다
+                containerBottom.isActive = true
+            }
+        }
     }
 
     func show(tools: [ToolID], selected: ToolID?, content: NSViewController?) {

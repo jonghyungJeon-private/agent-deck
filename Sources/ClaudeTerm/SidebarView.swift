@@ -19,14 +19,6 @@ struct SidebarView: View {
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
     @State private var expandedAgent: String?
 
-    private static let versionLabel: String = {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        let label = [version.map { "v\($0)" }, build.map { "빌드 \($0)" }]
-            .compactMap { $0 }.joined(separator: " · ")
-        return label.isEmpty ? "개발 빌드" : label
-    }()
-
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -74,7 +66,6 @@ struct SidebarView: View {
             }
             hookBanner
             codexHookBanner
-            footer
         }
         .frame(minWidth: 220, maxHeight: .infinity)
         .background(Color(TermAppearance.chrome))
@@ -195,24 +186,6 @@ struct SidebarView: View {
             .padding(.horizontal, 14)
             .padding(.bottom, 8)
         }
-    }
-
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if let error = model.lastError {
-                Text(error).foregroundStyle(Color(TermAppearance.red))
-            }
-            Text("앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))")
-            Text(Self.versionLabel)
-                .textSelection(.enabled)
-            Text(model.connected ? "앱을 꺼도 세션은 계속 돕니다" : "데몬 연결 끊김")
-        }
-        .font(Font(TermAppearance.uiFont(10)))
-        .foregroundStyle(Color(TermAppearance.textDim))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
     }
 
     /// 폴더·작업 트리에서 새로 열기
@@ -513,5 +486,38 @@ struct AgentRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help("누르면 이 에이전트를 띄운 에이전트 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
+    }
+}
+
+/// 도크 맨 아래 상태 줄: 오류·메모리·버전·데몬 연결. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
+struct StatusFooterView: View {
+    @ObservedObject var model: TermModel
+
+    private static let versionLabel: String = {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        let label = [version.map { "v\($0)" }, build.map { "빌드 \($0)" }]
+            .compactMap { $0 }.joined(separator: " · ")
+        return label.isEmpty ? "개발 빌드" : label
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if let error = model.lastError {
+                Text(error).foregroundStyle(Color(TermAppearance.red))
+            }
+            Text("앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))")
+            Text(Self.versionLabel)
+                .textSelection(.enabled)
+            Text(model.connected ? "앱을 꺼도 세션은 계속 돕니다" : "데몬 연결 끊김")
+        }
+        .font(Font(TermAppearance.uiFont(10)))
+        .foregroundStyle(Color(TermAppearance.textDim))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(TermAppearance.chrome))
+        .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
+        .environment(\.colorScheme, .dark)
     }
 }
