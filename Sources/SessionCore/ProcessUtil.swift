@@ -33,17 +33,19 @@ public enum ProcessUtil {
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
         guard sysctl(&mib, u_int(mib.count), &kp, &size, nil, 0) == 0, size > 0 else { return nil }
+        return procInfo(kp, tty: ttyName)
+    }
+
+    /// kinfo_proc 한 칸 → ProcInfo. tty 이름은 바깥에서 고른다(스냅샷은 장치별로 한 번만 찾는다).
+    static func procInfo(_ kp: kinfo_proc, tty ttyOf: (dev_t) -> String?) -> ProcInfo {
         let tv = kp.kp_proc.p_starttime
         let hasTTY = (kp.kp_proc.p_flag & P_CONTROLT) != 0
-        var tty: String?
-        if hasTTY, kp.kp_eproc.e_tdev != -1, let name = devname(kp.kp_eproc.e_tdev, S_IFCHR) {
-            tty = "/dev/" + String(cString: name)
-        }
+        let tty: String? = hasTTY && kp.kp_eproc.e_tdev != -1 ? ttyOf(kp.kp_eproc.e_tdev) : nil
         let command = withUnsafeBytes(of: kp.kp_proc.p_comm) { raw in
             String(decoding: raw.prefix(while: { $0 != 0 }), as: UTF8.self)
         }
         return ProcInfo(
-            pid: pid,
+            pid: kp.kp_proc.p_pid,
             ppid: kp.kp_eproc.e_ppid,
             startTime: Double(tv.tv_sec) + Double(tv.tv_usec) / 1_000_000,
             hasTTY: hasTTY,
@@ -51,6 +53,36 @@ public enum ProcessUtil {
             command: command,
             isZombie: kp.kp_proc.p_stat == SZOMB
         )
+    }
+
+    /// devname 은 /dev 를 뒤져 한 번에 0.5ms 가량 든다. 장치 번호 ↔ 이름은 바뀌지 않으므로 찾은 것은 기억한다.
+    static func ttyName(_ dev: dev_t) -> String? {
+        ttyLock.lock(); defer { ttyLock.unlock() }
+        if let known = ttyNames[dev] { return known }
+        guard let name = devname(dev, S_IFCHR).map({ "/dev/" + String(cString: $0) }) else { return nil }
+        ttyNames[dev] = name
+        return name
+    }
+    private static let ttyLock = NSLock()
+    nonisolated(unsafe) private static var ttyNames: [dev_t: String] = [:]
+
+    /// 모든 프로세스를 sysctl(KERN_PROC_ALL) 한 번으로 읽는다(pid·ppid·이름·tty·시작 시각·좀비).
+    /// 프로세스마다 info 를 부르는 것보다 훨씬 싸다. 실패하면 빈 스냅샷.
+    public static func snapshot() -> ProcessSnapshot {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+        let stride = MemoryLayout<kinfo_proc>.stride
+        for _ in 0..<4 {
+            var size = 0
+            guard sysctl(&mib, u_int(mib.count), nil, &size, nil, 0) == 0, size > 0 else { break }
+            // 읽는 사이 프로세스가 늘 수 있어 여유를 둔다
+            size += size / 8 + 32 * stride
+            var buf = [kinfo_proc](repeating: kinfo_proc(), count: size / stride)
+            var got = buf.count * stride
+            let rc = buf.withUnsafeMutableBytes { sysctl(&mib, u_int(mib.count), $0.baseAddress, &got, nil, 0) }
+            if rc != 0 { if errno == ENOMEM { continue }; break }
+            return ProcessSnapshot(buf.prefix(got / stride).map { procInfo($0, tty: ttyName) })
+        }
+        return ProcessSnapshot([])
     }
 
     /// argv. 같은 사용자의 프로세스만 읽을 수 있다.
@@ -63,7 +95,8 @@ public enum ProcessUtil {
         argumentsAndEnvironment(pid)?.1
     }
 
-    private static func argumentsAndEnvironment(_ pid: pid_t) -> ([String], [String: String])? {
+    /// argv 와 환경변수를 한 번에(KERN_PROCARGS2 한 번). 둘 다 필요하면 이것을 쓴다.
+    public static func argumentsAndEnvironment(_ pid: pid_t) -> ([String], [String: String])? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return nil }

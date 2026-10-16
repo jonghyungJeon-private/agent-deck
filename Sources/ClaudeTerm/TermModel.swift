@@ -276,7 +276,9 @@ final class TermModel: ObservableObject {
         // hook 기록 중 실행 중인 세션을 화면에 짝짓는다. claude 에서 부모 프로세스를 따라 올라가 화면의 셸을 만나면 그 화면이다.
         // (Kiro CLI 처럼 셸을 자기 가상 터미널로 한 겹 감싸는 도구가 있으면 claude 의 tty 가 화면의 tty 와 다르다.)
         // 계보로 못 찾으면 tty 로 짝짓는다.
-        let codexMatches = codexScanner.scan(panes)
+        // 프로세스 목록은 sysctl 한 번으로 찍어 아래 계보 찾기들이 같이 쓴다
+        let snapshot = ProcessUtil.snapshot()
+        let codexMatches = codexScanner.scan(panes, snapshot: snapshot)
         let running = SessionStore().all().filter(\.isRunning)
         func device(_ tty: String?) -> String? { tty.map { ($0 as NSString).lastPathComponent } } // "/dev/ttys002" ↔ "ttys002"
         let shells = Dictionary(panes.map { ($0.pid, $0.id) }, uniquingKeysWith: { first, _ in first })
@@ -287,32 +289,13 @@ final class TermModel: ObservableObject {
             if let pane = record.pane, paneIds.contains(pane) { sessionByPane[pane] = record }
         }
         for record in running where !sessionByPane.values.contains(where: { $0.sessionId == record.sessionId }) {
-            var pid = record.pid
-            for _ in 0..<32 {
-                guard pid > 1, let info = ProcessUtil.info(pid) else { break }
-                if let pane = shells[pid] {
-                    if sessionByPane[pane] == nil { sessionByPane[pane] = record }
-                    break
-                }
-                pid = info.ppid
+            if let pane = snapshot.pane(of: record.pid, shells: shells, maxHops: 32), sessionByPane[pane] == nil {
+                sessionByPane[pane] = record
             }
         }
-        // 감싼 셸이 있는 화면은 안쪽 셸의 폴더를 읽어야 cd 를 따라간다(자식 목록은 그런 화면이 있을 때만 만든다)
+        // 감싼 셸이 있는 화면은 안쪽 셸의 폴더를 읽어야 cd 를 따라간다
         let wrapped = panes.contains { ($0.foreground ?? "").contains(" (") }
-        var children: [pid_t: [ProcInfo]] = [:]
-        if wrapped {
-            for pid in ProcessUtil.allPids() {
-                if let info = ProcessUtil.info(pid) { children[info.ppid, default: []].append(info) }
-            }
-        }
-        func innermostShell(_ pid: pid_t) -> pid_t {
-            var current = pid
-            for _ in 0..<8 {
-                guard let next = children[current]?.first(where: { PaneRow.shellNames.contains($0.command) }) else { break }
-                current = next.pid
-            }
-            return current
-        }
+        func innermostShell(_ pid: pid_t) -> pid_t { snapshot.innermostShell(from: pid, names: PaneRow.shellNames) }
         return panes.map { pane -> PaneRow in
             let codexMatch = codexMatches[pane.id]
             let session = codexMatch == nil ? (sessionByPane[pane.id]
