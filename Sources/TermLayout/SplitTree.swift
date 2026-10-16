@@ -281,6 +281,29 @@ extension PaneRecipe {
     }
 }
 
+/// 편집기 화면(데몬 화면이 아님). 분할 나무의 잎에 "editor:<UUID>" 로 들어간다.
+/// 데몬 목록에 없어도 지우지 않고(reconcile), 셸로 되살리지도 않는다.
+public enum EditorPane {
+    public static let prefix = "editor:"
+
+    public static func isEditor(_ id: String) -> Bool { id.hasPrefix(prefix) }
+
+    public static func newId() -> String { prefix + UUID().uuidString }
+}
+
+/// 편집기 화면을 다시 열 때 필요한 것
+public struct EditorRecipe: Codable, Equatable {
+    /// 연 파일(절대 경로)
+    public var path: String
+    /// 마지막 커서 위치(UTF-16, 없어도 됨)
+    public var cursor: Int?
+
+    public init(path: String, cursor: Int? = nil) {
+        self.path = path
+        self.cursor = cursor
+    }
+}
+
 /// 창 하나의 탭 묶음. 앱을 껐다 켜도 이어지도록 파일로 저장한다.
 public struct Workspace: Codable, Equatable {
     public var tabs: [TabState] = []
@@ -293,13 +316,15 @@ public struct Workspace: Codable, Equatable {
     public var daemonInstance: String?
     /// 꺼진 화면(탭을 열면 같은 자리에 되살린다)
     public var dormant: Set<String> = []
+    /// 편집기 화면별 파일
+    public var editors: [String: EditorRecipe] = [:]
 
     public init(tabs: [TabState] = [], selected: String? = nil) {
         self.tabs = tabs
         self.selected = selected
     }
 
-    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant }
+    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors }
 
     // 예전 배치 파일(되살리기 정보 없음)도 읽는다
     public init(from decoder: Decoder) throws {
@@ -310,6 +335,10 @@ public struct Workspace: Codable, Equatable {
         daemonPid = try c.decodeIfPresent(Int32.self, forKey: .daemonPid)
         daemonInstance = try c.decodeIfPresent(String.self, forKey: .daemonInstance)
         dormant = try c.decodeIfPresent(Set<String>.self, forKey: .dormant) ?? []
+        editors = try c.decodeIfPresent([String: EditorRecipe].self, forKey: .editors) ?? [:]
+        // 파일 정보가 없는 편집기 잎은 열 수 없으니 뺀다(망가진 파일)
+        for pane in allPanes where EditorPane.isEditor(pane) && editors[pane] == nil { remove(pane: pane) }
+        if !tabs.contains(where: { $0.id == selected }) { selected = tabs.first?.id }
     }
 
     public var allPanes: [String] { tabs.flatMap { $0.root.panes } }
@@ -351,12 +380,22 @@ public struct Workspace: Codable, Equatable {
         remove(pane: pane)
         recipes[pane] = nil
         dormant.remove(pane)
+        editors[pane] = nil
+    }
+
+    /// 편집기 화면(나무 순서)
+    public var editorPanes: [String] { allPanes.filter(EditorPane.isEditor) }
+
+    /// 그 파일을 연 편집기 화면
+    public func editorPane(path: String) -> String? {
+        editorPanes.first { editors[$0]?.path == path }
     }
 
     /// 데몬 화면 목록에 맞춘다. 바뀐 게 있으면 true.
     /// - 같은 데몬에서 사라진 화면(셸·claude 가 끝남)은 뺀다. keep 은 아직 만드는 중이라 둔다.
     /// - 데몬이 바뀌었으면(daemonPid 가 다름) 사라진 화면 중 되살리기 정보가 있는 것은 꺼진 화면으로 남긴다.
     /// - 어느 탭에도 없는 화면은 새 탭으로 붙인다.
+    /// - 편집기 화면(EditorPane)은 데몬과 상관없으니 그대로 둔다.
     @discardableResult
     public mutating func reconcile(live: [String], keep: Set<String> = [], ignore: Set<String> = [],
                                    daemonPid: Int32? = nil, daemonInstance: String? = nil) -> Bool {
@@ -370,7 +409,7 @@ public struct Workspace: Codable, Equatable {
         }
         if let daemonPid { self.daemonPid = daemonPid }
         if let daemonInstance { self.daemonInstance = daemonInstance }
-        for pane in allPanes where !liveSet.contains(pane) && !keep.contains(pane) {
+        for pane in allPanes where !liveSet.contains(pane) && !keep.contains(pane) && !EditorPane.isEditor(pane) {
             if dormant.contains(pane) { continue }
             if restarted, recipes[pane] != nil {
                 dormant.insert(pane)
@@ -380,10 +419,11 @@ public struct Workspace: Codable, Equatable {
         }
         dormant.subtract(liveSet) // 되살아난 화면
         let placed = Set(allPanes)
-        for pane in live where !placed.contains(pane) && !ignore.contains(pane) {
+        for pane in live where !placed.contains(pane) && !ignore.contains(pane) && !EditorPane.isEditor(pane) {
             tabs.append(TabState(root: .pane(pane), focused: pane))
         }
         recipes = recipes.filter { placed.contains($0.key) || liveSet.contains($0.key) }
+        editors = editors.filter { placed.contains($0.key) }
         if selectedIndex == nil || !tabs.contains(where: { $0.id == selected }) {
             selected = tabs.first?.id
         }

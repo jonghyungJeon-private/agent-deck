@@ -24,11 +24,14 @@ let package = Package(
         .executableTarget(name: "ClaudeTermDaemon", dependencies: ["TermWire", "CPTY", "SessionCore"]),
         // 탭·분할 배치, git 작업 트리 읽기(화면과 떨어진 순수 로직이라 따로 시험한다)
         .target(name: "TermLayout"),
+        // 가벼운 편집기의 화면 없는 부분: 줄 diff(git 변경 표시), 줄 끝·바이너리 판별·안전한 저장, 글자 색 훑기
+        .target(name: "EditorCore"),
         .executableTarget(name: "ClaudeTerm", dependencies: [
-            "TermWire", "SessionCore", "TermLayout", .product(name: "SwiftTerm", package: "SwiftTerm"),
+            "TermWire", "SessionCore", "TermLayout", "EditorCore", .product(name: "SwiftTerm", package: "SwiftTerm"),
         ]),
         .testTarget(name: "TermWireTests", dependencies: ["TermWire"]),
         .testTarget(name: "TermLayoutTests", dependencies: ["TermLayout"]),
+        .testTarget(name: "EditorCoreTests", dependencies: ["EditorCore"]),
         // Vendor/SwiftTerm 에 고친 것(PATCHES.md) 중 화면 없이 시험할 수 있는 것
         .testTarget(name: "SwiftTermPatchTests", dependencies: [.product(name: "SwiftTerm", package: "SwiftTerm")]),
     ]

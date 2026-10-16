@@ -88,6 +88,8 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     let model: TermModel
     /// 2단계(편집기) 연결점: 파일을 두 번 누르거나 Enter. 없으면 안내만 띄운다.
     var onOpenFile: ((String) -> Void)?
+    /// 오른쪽 클릭 "오른쪽에 나눠 열기"(horizontal)·"아래에 나눠 열기"(vertical)
+    var onOpenFileSplit: ((String, SplitAxis) -> Void)?
     /// 머리 줄 오른쪽 클릭 메뉴(옮기기·숨기기, 도구 창 관리자가 채운다)
     var dockMenu: (() -> NSMenu)?
 
@@ -268,9 +270,22 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
 
     private func updateRoot(force: Bool = false) {
         guard toolVisible, isViewLoaded else { return }
-        // 막 만든 화면은 목록(2초마다)에 오기 전까지 줄이 없다 — 그동안은 지금 루트를 그대로 둔다
-        if !force, root != nil, model.selectedId != nil, model.focusedRow == nil { return }
-        let target = Self.root(for: model.focusedRow)
+        let target: (path: String, isGit: Bool)?
+        if let id = model.selectedId, let path = model.workspace.editors[id]?.path {
+            // 편집기 화면: 그 파일의 작업 트리 맨 위. 저장소가 아니면 지금 루트 안의 파일이면 그대로 둔다.
+            let directory = (path as NSString).deletingLastPathComponent
+            if let location = GitWorktrees.locate(directory) {
+                target = (location.worktreeRoot, true)
+            } else if let root, path.hasPrefix(root + "/") {
+                target = (root, isGit)
+            } else {
+                target = (directory, false)
+            }
+        } else {
+            // 막 만든 화면은 목록(2초마다)에 오기 전까지 줄이 없다 — 그동안은 지금 루트를 그대로 둔다
+            if !force, root != nil, model.selectedId != nil, model.focusedRow == nil { return }
+            target = Self.root(for: model.focusedRow)
+        }
         guard force || target?.path != root || target?.isGit != isGit else { return }
         load(root: target)
     }
@@ -489,7 +504,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     }
 
     private func focusTerminal() {
-        if let terminal = model.host?.focusedTerminal?.view { view.window?.makeFirstResponder(terminal) }
+        if let target = model.host?.focusedPaneView { view.window?.makeFirstResponder(target) }
     }
 
     func focusTree() {
@@ -514,6 +529,11 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
         guard let node = outline.item(atRow: row) as? FileNode else { return }
         let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
+        if !node.isDirectory, let split = onOpenFileSplit {
+            add(menu, "오른쪽에 나눠 열기") { split(node.path, .horizontal) }
+            add(menu, "아래에 나눠 열기") { split(node.path, .vertical) }
+            menu.addItem(.separator())
+        }
         add(menu, "Finder 에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)]) }
         add(menu, "경로 복사") {
             NSPasteboard.general.clearContents()

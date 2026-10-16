@@ -115,6 +115,8 @@ final class TermModel: ObservableObject {
     }
 
     let client = DaemonClient()
+    /// 편집기 문서(편집기 화면은 데몬과 상관없이 앱 안에만 있다)
+    let editors = EditorManager()
     /// 오른쪽 터미널이 붙을 곳(TerminalHostController)
     weak var host: TerminalHostController?
     private var timer: Timer?
@@ -212,6 +214,7 @@ final class TermModel: ObservableObject {
 
     func start() {
         checkHooks()
+        editors.onTitleChange = { [weak self] in self?.host?.refreshTitles() }
         notifier.onOpen = { [weak self] pane in self?.focus(pane: pane) }
         notifier.start()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
@@ -617,17 +620,21 @@ final class TermModel: ObservableObject {
     func row(_ id: String) -> PaneRow? { rows.first { $0.id == id } }
 
     func tabTitle(_ tab: TabState) -> String {
-        row(tab.focused)?.title ?? "…"
+        paneLabel(tab.focused)
     }
 
-    /// 분할 테두리 제목(탭·목록과 같은 이름)
+    /// 분할 테두리 제목(탭·목록과 같은 이름). 편집기는 파일 이름, 저장 안 했으면 뒤에 ●.
     func paneLabel(_ id: String) -> String {
-        row(id)?.title ?? "…"
+        if EditorPane.isEditor(id) {
+            let name = workspace.editors[id].map { ($0.path as NSString).lastPathComponent } ?? "…"
+            return editors.isDirty(id) ? name + " ●" : name
+        }
+        return row(id)?.title ?? "…"
     }
 
     /// 이름 바꾸기(빈 칸이면 자동 이름으로 돌아간다)
     func rename(pane id: String) {
-        guard let row = row(id) else { return }
+        guard !EditorPane.isEditor(id), let row = row(id) else { return }
         let alert = NSAlert()
         alert.messageText = "이름 바꾸기"
         alert.informativeText = "탭·목록·분할 테두리에 함께 보입니다. 비우면 자동 이름(첫 질문으로 지은 제목)으로 돌아갑니다."
@@ -664,6 +671,13 @@ final class TermModel: ObservableObject {
         markSeen() // 탭·화면을 옮겨 "완료"를 보게 됐으면 확인 처리
     }
 
+    /// 앱을 끌 때: 미뤄 둔 배치 저장을 바로 쓴다
+    func saveLayoutNow() {
+        saveWork?.cancel()
+        saveWork = nil
+        if let data = try? JSONEncoder().encode(workspace) { try? data.write(to: Self.layoutURL, options: .atomic) }
+    }
+
     /// 끌어서 비율을 바꾸는 동안 매번 쓰지 않게 잠시 모았다 쓴다
     private func saveLayout() {
         saveWork?.cancel()
@@ -698,7 +712,7 @@ final class TermModel: ObservableObject {
     func newPane(cwd: String? = nil, command: String? = nil, split axis: SplitAxis? = nil) {
         guard client.isConnected || client.connect() else { return }
         connected = true
-        let cwd = cwd ?? focusedRow?.cwd ?? NSHomeDirectory()
+        let cwd = cwd ?? focusedCwd ?? NSHomeDirectory()
         let size = host?.estimatedSize(splitting: axis) ?? (cols: 120, rows: 36)
         let id = UUID().uuidString
         awaiting[id] = Date()
@@ -723,8 +737,79 @@ final class TermModel: ObservableObject {
 
     var focusedRow: PaneRow? { selectedId.flatMap(row) }
 
+    /// 지금 화면의 폴더(편집기면 그 파일이 있는 폴더) — 새 탭·분할이 여기서 열린다
+    var focusedCwd: String? {
+        if let id = selectedId, let path = workspace.editors[id]?.path { return (path as NSString).deletingLastPathComponent }
+        return focusedRow?.cwd
+    }
+
+    // MARK: - 편집기
+
+    /// 파일 열기(files 도구 두 번 클릭·Enter·메뉴). 이미 열려 있으면 그 화면으로 간다.
+    /// 아니면 지금 탭 바로 뒤 새 탭에(split 이 있으면 지금 화면을 나눠) 연다.
+    func openFile(_ path: String, split axis: SplitAxis? = nil) {
+        let path = (path as NSString).standardizingPath
+        if let existing = workspace.editorPane(path: path) {
+            focus(pane: existing)
+            host?.focusPane()
+            return
+        }
+        let id = EditorPane.newId()
+        var next = workspace
+        next.editors[id] = EditorRecipe(path: path)
+        if let axis, let index = next.selectedIndex {
+            var tab = next.tabs[index]
+            tab.root = tab.root.splitting(tab.focused, with: id, axis: axis)
+            tab.focused = id
+            tab.zoomed = false
+            next.tabs[index] = tab
+        } else {
+            let tab = TabState(root: .pane(id), focused: id)
+            let at = next.selectedIndex.map { $0 + 1 } ?? next.tabs.count
+            next.tabs.insert(tab, at: at)
+            next.selected = tab.id
+        }
+        setWorkspace(next, render: true)
+    }
+
+    /// ⌘S: 지금 화면이 편집기면 저장
+    @discardableResult
+    func saveFocused() -> Bool {
+        guard let id = selectedId, EditorPane.isEditor(id), let document = editors.documents[id] else { return false }
+        return document.save()
+    }
+
+    var focusedIsEditor: Bool { selectedId.map(EditorPane.isEditor) ?? false }
+
+    /// 편집기 커서를 배치 파일에 기억한다(다시 켜도 그 자리로). 그리기 중에 불릴 수 있어 다음 차례에.
+    func rememberEditorCursor(_ id: String, _ cursor: Int) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.workspace.editors[id] != nil, self.workspace.editors[id]?.cursor != cursor else { return }
+            self.workspace.editors[id]?.cursor = cursor
+            self.saveLayout()
+        }
+    }
+
+    /// 편집기 화면 닫기: 저장 안 한 내용이 있으면 저장 / 저장 안 함 / 취소를 묻는다
+    private func closeEditor(_ id: String, confirm: Bool) {
+        if confirm, let document = editors.documents[id], !editors.confirmClose([document]) { return }
+        var next = workspace
+        next.forget(pane: id)
+        setWorkspace(next, render: true) // 뷰를 먼저 떼고
+        editors.remove(id)               // 문서를 닫는다
+    }
+
+    /// 앱을 끄기 전: 저장 안 한 편집기가 있으면 묻는다. 꺼도 되면 true.
+    func confirmQuit() -> Bool {
+        editors.confirmClose(editors.dirtyDocuments)
+    }
+
     /// 화면 닫기(셸·claude 종료). 셸이 아닌 프로그램이 돌고 있으면 묻는다(Ghostty 처럼).
     func close(pane id: String, confirm: Bool = true) {
+        if EditorPane.isEditor(id) {
+            closeEditor(id, confirm: confirm)
+            return
+        }
         let row = row(id)
         if confirm, let row, !row.isShell, !row.dormant {
             let alert = NSAlert()
@@ -749,6 +834,9 @@ final class TermModel: ObservableObject {
 
     func closeTab() {
         guard let tab = workspace.selectedTab else { return }
+        // 저장 안 한 편집기를 먼저 묻는다(취소하면 아무것도 닫지 않는다)
+        let documents = tab.root.panes.filter(EditorPane.isEditor).compactMap { editors.documents[$0] }
+        guard editors.confirmClose(documents) else { return }
         let rows = tab.root.panes.compactMap(row)
         let busy = rows.filter { !$0.isShell }
         if !busy.isEmpty {
@@ -823,6 +911,7 @@ final class TermModel: ObservableObject {
         case "close": closeFocused()
         case "close-tab": closeTab()
         case "rename": renameFocused()
+        case "save": saveFocused()
         case "focus": if let direction = parts.dropFirst().first.flatMap({ Direction(rawValue: $0) }) { moveFocus(direction) }
         case "next-split": cycleFocus(1)
         case "previous-split": cycleFocus(-1)

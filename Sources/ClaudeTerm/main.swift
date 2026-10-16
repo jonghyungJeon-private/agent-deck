@@ -19,7 +19,7 @@ app.delegate = delegate
 app.setActivationPolicy(.regular)
 app.run()
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let model = TermModel()
     var window: NSWindow?
     var toolWindows: ToolWindowsController?
@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.backgroundColor = TermAppearance.chrome
         window.setContentSize(NSSize(width: 1200, height: 760))
         window.setFrameAutosaveName("ClaudeTermMain")
+        window.delegate = self
         tools.restoreWidths()
         self.window = window
         // 시험용: CLAUDE_TERM_NO_ACTIVATE=1 이면 앞으로 나오지 않는다(사용 중인 다른 앱의 포커스를 뺏지 않게 창을 뒤에 둔다)
@@ -59,6 +60,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
+    /// 저장 안 한 편집기를 이미 물었는지(창 닫기 → 종료로 이어질 때 두 번 묻지 않게)
+    private var quitConfirmed = false
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard model.confirmQuit() else { return false }
+        quitConfirmed = true
+        return true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if quitConfirmed || model.confirmQuit() { return .terminateNow }
+        return .terminateCancel
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        model.host?.rememberEditorCursors()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.01)) // 커서 기억(다음 차례로 미룬 것)을 마친다
+        model.saveLayoutNow()
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if (menuItem.representedObject as? String) == "save" { return model.focusedIsEditor }
+        return true
+    }
+
     private func buildMenu() {
         let main = NSMenu()
         let appItem = NSMenuItem()
@@ -68,12 +94,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         keyEquivalent: "q")
         appItem.submenu = appMenu
 
+        // 파일(편집기): 저장 ⌘S — 편집기 화면일 때만 켜진다
+        let file = NSMenu(title: "파일")
+        addAction(file, "저장", "save", "s")
+        addSubmenu(main, file)
+
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: "편집")
+        // 되돌리기·잘라내기·찾기는 편집기에서만 응답한다(터미널에선 꺼져 키가 그대로 터미널로 간다)
+        edit.addItem(withTitle: "실행 취소", action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = edit.addItem(withTitle: "실행 복귀", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "잘라내기", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "복사", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "붙여넣기", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "모두 선택", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "찾기…", action: #selector(EditorTextView.editorFind(_:)), keyEquivalent: "f")
+        let replace = edit.addItem(withTitle: "바꾸기…", action: #selector(EditorTextView.editorReplace(_:)), keyEquivalent: "f")
+        replace.keyEquivalentModifierMask = [.command, .option]
+        edit.addItem(withTitle: "다음 찾기", action: #selector(EditorTextView.editorFindNext(_:)), keyEquivalent: "g")
+        let previous = edit.addItem(withTitle: "이전 찾기", action: #selector(EditorTextView.editorFindPrevious(_:)), keyEquivalent: "g")
+        previous.keyEquivalentModifierMask = [.command, .shift]
         editItem.submenu = edit
 
         // 단축키는 Ghostty 기본값과 같게
@@ -165,9 +209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startShortcuts() {
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === self.window,
-                  let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)]
-            else { return event }
+            guard let self, event.window === self.window else { return event }
+            // ⌘S = 편집기 저장(키 위치로 — 한글 입력 중에도). 편집기 화면이 아니면 그대로 보낸다(⌘⇧S 는 spaces).
+            if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(1, .command), self.model.focusedIsEditor {
+                self.model.saveFocused()
+                return nil
+            }
+            guard let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)] else { return event }
             self.perform(action)
             return nil
         }
@@ -261,6 +309,94 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         case "open-file":
             toolWindows?.files.debugOpen(argument)
+        default:
+            if !debugEditor(command: parts.first ?? "", argument: argument) { debugTerminal(parts.first ?? "", argument) }
+        }
+    }
+
+    /// 편집기 시험 명령. 다루면 true.
+    ///   open-path <절대 경로>[|tab|right|down] | editor-type <글>(\n=줄바꿈) | editor-save | editor-undo | editor-state
+    ///   editor-select <줄>[:<열>] | editor-answer <save|discard|cancel> (다음 확인 창 대신) | editor-banner <reload|overwrite>
+    ///   editor-find | editor-check-disk | editors(모든 문서)
+    private func debugEditor(command: String, argument: String) -> Bool {
+        let editor = model.host?.focusedEditor
+        switch command {
+        case "open-path":
+            let v = argument.split(separator: "|").map(String.init)
+            guard let path = v.first else { return true }
+            switch v.count > 1 ? v[1] : "tab" {
+            case "right": model.openFile(path, split: .horizontal)
+            case "down": model.openFile(path, split: .vertical)
+            default: model.openFile(path)
+            }
+        case "editor-type":
+            let text = argument.replacingOccurrences(of: "\\n", with: "\n").replacingOccurrences(of: "\\t", with: "\t")
+            guard let textView = editor?.textView else { print("editor-type: 편집기 없음"); fflush(stdout); return true }
+            for piece in text.components(separatedBy: "\n").enumerated() {
+                if piece.offset > 0 { textView.insertNewline(nil) }
+                if !piece.element.isEmpty { textView.insertText(piece.element, replacementRange: textView.selectedRange()) }
+            }
+        case "editor-save":
+            print("editor-save ok=\(model.saveFocused())")
+            fflush(stdout)
+        case "editor-undo":
+            let manager = editor?.document.undoManager
+            if manager?.canUndo == true { manager?.undo() }
+            print("editor-undo canUndo=\(manager?.canUndo ?? false)")
+            fflush(stdout)
+        case "editor-select":
+            guard let editor, let textView = editor.textView else { return true }
+            let v = argument.split(separator: ":").compactMap { Int($0) }
+            let lines = editor.document.lines
+            let line = min(max((v.first ?? 1) - 1, 0), lines.lineCount - 1)
+            let location = min(lines.starts[line] + max((v.count > 1 ? v[1] : 1) - 1, 0), (textView.string as NSString).length)
+            textView.setSelectedRange(NSRange(location: location, length: 0))
+            textView.scrollRangeToVisible(textView.selectedRange())
+        case "editor-state":
+            if let editor {
+                let responder = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
+                print(editor.document.debugSummary + " cursor=\(editor.textView?.selectedRange().location ?? -1)"
+                    + " firstResponder=\(responder) " + editor.debugGeometry)
+            } else {
+                print("editor-state: 지금 화면은 편집기가 아님 (\(model.selectedId ?? "-"))")
+            }
+            fflush(stdout)
+        case "editors":
+            let docs = model.editors.documents.values.sorted { $0.name < $1.name }
+            for doc in docs { print(doc.debugSummary) }
+            print("editors count=\(docs.count) loaded=\(docs.filter(\.isLoaded).count) visible=\(docs.filter(\.isVisible).count) "
+                + "dirty=\(docs.filter(\.isDirty).count) layoutEditors=\(model.workspace.editors.count) "
+                + "footprint=\(Memory.format(Memory.footprint()))")
+            fflush(stdout)
+        case "editor-answer":
+            for word in argument.split(separator: " ") {
+                if let answer = EditorManager.CloseAnswer(rawValue: String(word)) { model.editors.pendingAnswers.append(answer) }
+            }
+        case "editor-banner":
+            editor?.debugBanner(argument)
+        case "editor-snap":
+            // editor-snap <png>: 편집기 화면만 그림으로(글 뷰·여백 따로 그려 합친다)
+            guard let editor else { return true }
+            if let rep = editor.bitmapImageRepForCachingDisplay(in: editor.bounds) {
+                editor.cacheDisplay(in: editor.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument))
+            }
+            if let text = editor.textView, let rep = text.bitmapImageRepForCachingDisplay(in: text.visibleRect) {
+                text.cacheDisplay(in: text.visibleRect, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument + ".text.png"))
+            }
+        case "editor-find":
+            editor?.textView?.finderAction(.showFindInterface)
+        case "editor-check-disk":
+            editor?.document.checkDisk()
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func debugTerminal(_ command: String, _ argument: String) {
+        switch command {
         case "collapse-all":
             toolWindows?.files.collapseAll()
         case "footprint":

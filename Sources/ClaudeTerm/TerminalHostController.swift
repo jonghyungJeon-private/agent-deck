@@ -10,6 +10,8 @@ final class TerminalHostController: NSViewController {
 
     let model: TermModel
     private(set) var terminals: [String: PaneTerminal] = [:]
+    /// 보이는 편집기 화면(터미널처럼 보일 때만 만든다)
+    private(set) var editorViews: [String: EditorPaneView] = [:]
     private let container = SplitContainerView()
     private let placeholder = NSTextField(labelWithString: "")
     private let tabBar = TabBarView()
@@ -90,6 +92,10 @@ final class TerminalHostController: NSViewController {
         model.workspace.selectedTab.flatMap { terminals[$0.focused] }
     }
 
+    var focusedEditor: EditorPaneView? {
+        model.workspace.selectedTab.flatMap { editorViews[$0.focused] }
+    }
+
     /// 탭·분할 배치가 바뀌면 부른다. 보일 화면의 뷰만 남기고 나머지는 버린다.
     func render() {
         guard isViewLoaded else { return }
@@ -106,13 +112,25 @@ final class TerminalHostController: NSViewController {
             terminal.detach()
             terminals[id] = nil
         }
-        var created: [PaneTerminal] = []
-        for id in visible?.panes ?? [] where terminals[id] == nil {
-            let terminal = PaneTerminal(id: id, client: model.client, frame: container.bounds)
-            terminals[id] = terminal
-            created.append(terminal)
+        for (id, editor) in editorViews where !ids.contains(id) {
+            model.rememberEditorCursor(id, editor.document.cursor)
+            editor.detach()
+            editorViews[id] = nil
         }
-        container.update(tree: visible, views: terminals.mapValues { $0.view }, focused: tab?.focused, titles: paneTitles)
+        var created: [PaneTerminal] = []
+        for id in visible?.panes ?? [] {
+            if EditorPane.isEditor(id) {
+                guard editorViews[id] == nil, let recipe = model.workspace.editors[id] else { continue }
+                editorViews[id] = EditorPaneView(document: model.editors.document(id: id, recipe: recipe), frame: container.bounds)
+            } else if terminals[id] == nil {
+                let terminal = PaneTerminal(id: id, client: model.client, frame: container.bounds)
+                terminals[id] = terminal
+                created.append(terminal)
+            }
+        }
+        var views: [String: NSView] = terminals.mapValues { $0.view }
+        for (id, editor) in editorViews { views[id] = editor }
+        container.update(tree: visible, views: views, focused: tab?.focused, titles: paneTitles)
         // 크기가 정해진 뒤 붙어야 지난 출력이 맞는 크기로 그려진다
         created.forEach { $0.attach() }
 
@@ -148,14 +166,33 @@ final class TerminalHostController: NSViewController {
 
     /// 분할 테두리에 쓰는 화면 제목과 상태
     private var paneTitles: [String: PaneTitle] {
-        Dictionary(uniqueKeysWithValues: terminals.keys.map { id in
+        Dictionary(uniqueKeysWithValues: (Array(terminals.keys) + Array(editorViews.keys)).map { id in
             (id, PaneTitle(name: model.paneLabel(id), status: model.row(id)?.status ?? .none))
         })
     }
 
     private func focusTerminal() {
+        if let editor = focusedEditor {
+            // 편집기 안(찾기 막대 등)에 이미 포커스가 있으면 그대로
+            if let responder = editor.window?.firstResponder as? NSView, responder.isDescendant(of: editor) { return }
+            if let target = editor.focusTarget { editor.window?.makeFirstResponder(target) }
+            return
+        }
         guard let view = focusedTerminal?.view, let window = view.window, window.firstResponder !== view else { return }
         window.makeFirstResponder(view)
+    }
+
+    /// 지금 화면(터미널·편집기)에 키보드 포커스
+    func focusPane() { focusTerminal() }
+
+    /// 지금 화면의 뷰(도구 창에서 Esc 로 돌아갈 곳)
+    var focusedPaneView: NSView? { focusedEditor?.focusTarget ?? focusedTerminal?.view }
+
+    /// 앱을 끌 때: 보이는 편집기 커서를 기억
+    func rememberEditorCursors() {
+        for (id, editor) in editorViews {
+            model.rememberEditorCursor(id, editor.textView?.selectedRange().location ?? editor.document.cursor)
+        }
     }
 
     func receive(id: String, bytes: ArraySlice<UInt8>, replay: Bool) {

@@ -30,6 +30,9 @@ final class ToolWindowsController: NSObject {
         super.init()
 
         files.dockMenu = { [weak self] in self?.menu(for: .files) ?? NSMenu() }
+        // 파일 열기(2단계 편집기): 두 번 클릭·Enter = 새 탭(이미 열렸으면 그 화면), 오른쪽 클릭 = 나눠 열기
+        files.onOpenFile = { [weak model] path in model?.openFile(path) }
+        files.onOpenFileSplit = { [weak model] path, axis in model?.openFile(path, split: axis) }
         for (_, dock) in docks {
             dock.onSelect = { [weak self] tool in self?.select(tool) }
             dock.menuFor = { [weak self] tool in self?.menu(for: tool) ?? NSMenu() }
@@ -172,7 +175,7 @@ final class ToolWindowsController: NSObject {
     }
 
     private func focusTerminal() {
-        if let terminal = model.host?.focusedTerminal?.view { split.view.window?.makeFirstResponder(terminal) }
+        if let target = model.host?.focusedPaneView { split.view.window?.makeFirstResponder(target) }
     }
 
     /// 메뉴·단축키 이름: tool-toggle:<도구>, tool-move:<도구>:<left|right|hidden>, tool-select:<도구>

@@ -167,3 +167,65 @@ final class CodexRecipeTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(PaneRecipe.self, from: JSONEncoder().encode(recipe)), recipe)
     }
 }
+
+final class EditorPaneWorkspaceTests: XCTestCase {
+    private func workspaceWithEditor() -> (Workspace, String) {
+        let editor = EditorPane.newId()
+        var workspace = Workspace(tabs: [
+            TabState(id: "t1", root: SplitNode.pane("A").splitting("A", with: editor, axis: .horizontal), focused: editor),
+            TabState(id: "t2", root: .pane("B"), focused: "B"),
+        ], selected: "t1")
+        workspace.editors[editor] = EditorRecipe(path: "/tmp/x.swift", cursor: 12)
+        return (workspace, editor)
+    }
+
+    func testReconcileNeverDropsOrRevivesEditors() {
+        var (workspace, editor) = workspaceWithEditor()
+        // 데몬 목록에 편집기는 없다 — 같은 데몬이어도, 데몬이 바뀌어도 그대로
+        workspace.reconcile(live: ["A", "B"], daemonPid: 1)
+        XCTAssertTrue(workspace.allPanes.contains(editor))
+        workspace.reconcile(live: ["B"], daemonPid: 1)
+        XCTAssertEqual(workspace.allPanes, [editor, "B"])
+        workspace.reconcile(live: [], daemonPid: 2) // 데몬 재시작
+        XCTAssertTrue(workspace.allPanes.contains(editor))
+        XCTAssertFalse(workspace.dormant.contains(editor))
+        XCTAssertNil(workspace.recipes[editor])
+        XCTAssertEqual(workspace.editors[editor]?.path, "/tmp/x.swift")
+        // 데몬이 편집기 ID 를 알려 와도(그럴 일은 없지만) 새 탭으로 붙지 않는다
+        let tabs = workspace.tabs.count
+        workspace.reconcile(live: ["editor:ghost"], daemonPid: 2)
+        XCTAssertEqual(workspace.tabs.count, tabs)
+    }
+
+    func testForgetRemovesEditorRecipe() {
+        var (workspace, editor) = workspaceWithEditor()
+        XCTAssertEqual(workspace.editorPane(path: "/tmp/x.swift"), editor)
+        workspace.forget(pane: editor)
+        XCTAssertNil(workspace.editors[editor])
+        XCTAssertNil(workspace.editorPane(path: "/tmp/x.swift"))
+        XCTAssertEqual(workspace.tabs[0].root, .pane("A"))
+    }
+
+    func testPersistenceRoundTrip() throws {
+        let (workspace, editor) = workspaceWithEditor()
+        let data = try JSONEncoder().encode(workspace)
+        let decoded = try JSONDecoder().decode(Workspace.self, from: data)
+        XCTAssertEqual(decoded, workspace)
+        XCTAssertEqual(decoded.editors[editor], EditorRecipe(path: "/tmp/x.swift", cursor: 12))
+        XCTAssertEqual(decoded.editorPanes, [editor])
+    }
+
+    func testOldLayoutWithoutEditorsAndBrokenEditorLeaves() throws {
+        // 예전 파일(editors 없음)
+        let old = #"{"tabs":[{"id":"t","root":{"pane":{"_0":"A"}},"focused":"A","zoomed":false}],"selected":"t"}"#
+        let decoded = try JSONDecoder().decode(Workspace.self, from: Data(old.utf8))
+        XCTAssertEqual(decoded.editors, [:])
+        XCTAssertEqual(decoded.allPanes, ["A"])
+        // 파일 정보가 빠진 편집기 잎은 읽을 때 뺀다
+        var (workspace, editor) = workspaceWithEditor()
+        workspace.editors[editor] = nil
+        let repaired = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(workspace))
+        XCTAssertFalse(repaired.allPanes.contains(editor))
+        XCTAssertEqual(repaired.tabs[0].focused, "A")
+    }
+}

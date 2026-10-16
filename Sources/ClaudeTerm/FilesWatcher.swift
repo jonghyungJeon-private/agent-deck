@@ -197,10 +197,17 @@ enum GitRunner {
 
     /// nil = git 없음·저장소 아님·실패
     static func status(root: String, timeout: TimeInterval = 10) -> GitStatusSnapshot? {
+        guard let result = run(["-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=matching"],
+                               timeout: timeout), result.status == 0 else { return nil }
+        return GitStatusParser.parse(result.output)
+    }
+
+    /// git 한 번 실행(백그라운드에서만). git 이 없거나 실행하지 못하면 nil. 출력이 limit 를 넘으면 그만 읽고 끝낸다.
+    static func run(_ arguments: [String], timeout: TimeInterval = 10, limit: Int = .max) -> (status: Int32, output: Data)? {
         guard let git = executable else { return nil }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: git)
-        process.arguments = ["-C", root, "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignored=matching"]
+        process.arguments = arguments
         var env = ProcessInfo.processInfo.environment
         env["GIT_OPTIONAL_LOCKS"] = "0" // 색인을 고쳐 쓰지 않는다(사용자의 git 명령과 잠금 다툼 없음)
         env["LC_ALL"] = "C"
@@ -212,10 +219,19 @@ enum GitRunner {
         do { try process.run() } catch { return nil }
         let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout, execute: killer)
-        let data = out.fileHandleForReading.readDataToEndOfFile()
+        var data = Data()
+        let reader = out.fileHandleForReading
+        while true {
+            let chunk = reader.availableData
+            if chunk.isEmpty { break }
+            data.append(chunk)
+            if data.count > limit {
+                process.terminate()
+                break
+            }
+        }
         process.waitUntilExit()
         killer.cancel()
-        guard process.terminationStatus == 0 else { return nil }
-        return GitStatusParser.parse(data)
+        return (process.terminationStatus, data)
     }
 }

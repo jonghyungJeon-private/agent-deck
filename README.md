@@ -5,7 +5,8 @@ Claude Code·Codex CLI 세션을 위한 가벼운 터미널 앱(macOS, 사내 �
 셸과 claude 는 앱이 아니라 백그라운드 데몬이 붙잡고 있어서 앱을 끄거나 업데이트해도 세션이 계속 돌고,
 데몬까지 꺼져도(강제 종료·재부팅) 탭을 열면 `claude --resume` 으로 같은 자리에 되살린다.
 
-목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지", 최대한 가볍게. 파일 트리는 IntelliJ 식 도구 창(files)으로 보일 때만 일한다. 편집기·diff·브라우저는 아직 없다.
+목표는 "목록·상태·표시·알림 + 터미널 + 세션 유지", 최대한 가볍게. 파일 트리는 IntelliJ 식 도구 창(files)으로 보일 때만 일한다.
+가벼운 편집기(IDE 아님 — 자동 완성·리팩터링·LSP 없음)가 터미널과 같은 탭·분할에 열린다. diff 보기·브라우저는 아직 없다.
 (예전 메뉴바 앱 ClaudeSessions 는 이 앱으로 대체되어 코드에서 뺐다. 세션 기록 위치 `~/Library/Application Support/ClaudeSessions/` 는 그대로 쓴다.)
 
 ## Codex CLI
@@ -46,7 +47,7 @@ VERSION=0.2.0 scripts/build-term-proto.sh
 
 - 시험은 실제 기록·데몬과 분리해서: `CLAUDE_TERM_HOME=<폴더> CLAUDE_SESSIONS_HOME=<폴더>`.
 - 구조: `Sources/ClaudeTerm`(앱), `Sources/ClaudeTermDaemon`(PTY 를 붙잡는 데몬, `hook`·`ctl` 명령), `Sources/TermWire`(앱↔데몬 메시지),
-  `Sources/TermLayout`(탭·분할·되살리기 정보, 작업 트리 읽기), `Sources/SessionCore`(hook 처리·세션 기록·대화 파일 읽기·프로세스 정보),
+  `Sources/TermLayout`(탭·분할·되살리기 정보, 작업 트리 읽기), `Sources/EditorCore`(편집기의 화면 없는 부분: 줄 diff·줄 끝·바이너리 판별·안전한 저장·글자 색 훑기), `Sources/SessionCore`(hook 처리·세션 기록·대화 파일 읽기·프로세스 정보),
   `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
 
 ## 자세한 동작
@@ -110,7 +111,32 @@ VERSION=0.2.0 scripts/build-term-proto.sh
 - files: 포커스 화면의 작업 트리 맨 위(작업 트리가 아니면 화면 폴더)를 보인다. 머리 줄에 폴더 이름·브랜치·바뀐 파일 수, 오른쪽에 모두 접기.
   다른 프로젝트 화면으로 포커스가 옮겨 가면 루트가 바뀌고, 펼친 폴더는 루트별로 메모리에만 기억한다(루트 12개·루트당 400개까지).
   NSOutlineView 로 그리고, 폴더는 펼칠 때 백그라운드에서 읽는다(`.git`·`.DS_Store` 뺌, 폴더 먼저 → 대소문자 무시 이름순, 점 파일은 흐리게).
-  두 번 클릭·Enter 는 파일 열기 자리(2단계 편집기용 `onOpenFile`, 지금은 "편집기는 다음 단계" 안내만). 오른쪽 클릭: Finder 에서 보기·경로 복사·상대 경로 복사·여기서 셸 열기(새 탭).
+  두 번 클릭·Enter = 편집기로 열기(아래). 오른쪽 클릭: (파일이면) 오른쪽에 나눠 열기·아래에 나눠 열기, Finder 에서 보기·경로 복사·상대 경로 복사·여기서 셸 열기(새 탭).
+  편집기 화면이 포커스면 그 파일의 작업 트리 맨 위를 보인다.
+- 편집기: files 에서 두 번 클릭·Enter 하면 지금 탭 바로 뒤 새 탭에 열고, 이미 열린 파일이면 그 화면으로 간다(나눠 열기도 같음).
+  - 터미널과 같은 탭·분할에 들어간다(배치 잎 ID `editor:<UUID>`). 데몬과 상관없어 데몬 목록 맞추기에서 지워지지 않고 셸로 되살리지도 않으며,
+    spaces 목록에 나오지 않는다. 연 파일·커서 위치는 `term/layout.json`(`editors`)에 저장돼 앱을 다시 켜면 다시 열린다.
+  - 탭·분할 테두리 제목 = 파일 이름, 저장 안 했으면 뒤에 ●. 아래 상태 줄에 줄:열·UTF-8·줄 끝(LF/CRLF)·언어.
+  - 단축키: ⌘S 저장(파일 메뉴, 키 위치로 받아 한글 입력 중에도 — ⌘⇧S 는 그대로 spaces), ⌘F 찾기 막대·⌥⌘F 바꾸기·⌘G/⌘⇧G 다음/이전,
+    ⌘Z/⌘⇧Z 되돌리기(문서마다 따로, 탭을 옮겨도 이어짐), ⌘X 잘라내기. 찾기·되돌리기·잘라내기는 편집기에서만 켜져 터미널의 키는 그대로 터미널로 간다.
+    ⌘W·⌘D·⌘[ ⌘]·크게 보기 등 화면 단축키는 편집기에도 그대로(⌘W 는 편집기만 닫음). Enter 는 윗줄 들여쓰기를 잇는다. 줄바꿈 없음(가로 스크롤).
+  - 닫기(⌘W·탭 닫기·창 닫기·종료)할 때 저장 안 한 내용이 있으면 저장 / 저장 안 함 / 취소를 묻는다. 묻지 않고 저장하는 일은 없다.
+  - 모양: 터미널과 같은 JetBrains Mono·크기·바탕(합자는 끔), 줄 번호 여백, 지금 줄 바탕, Darcula 계열 글자 색.
+  - 글자 색(Swift·Kotlin/Java·TS/JS·Python·Go·Rust·JSON·YAML·TOML·Markdown·셸·SQL): 정규식 없이 한 번 훑는 스캐너로
+    키워드·문자열·주석·숫자·타입·@속성·키 정도만. 보이는 줄만 칠하고(편집하면 보이는 곳만 다시), 블록 주석·여러 줄 문자열 상태는
+    약 8KB 간격 기록에서 이어 훑는다. 500KB 넘는 파일은 색 없이.
+  - git 변경 표시(IntelliJ 식, HEAD 와 비교): 추가 초록 막대, 바뀜 파랑 막대, 지움 줄 사이 빨간 삼각형. 열 때 `git show HEAD:<경로>` 를
+    한 번(백그라운드) 읽고, 편집 뒤 0.3초 모아 줄 단위 Myers diff(앞뒤 같은 줄은 덜어 냄, 다른 곳 2,000 넘으면 한 덩어리로)를 백그라운드에서.
+    추적 안 하는 새 파일은 모두 추가, 무시된 파일·저장소 밖은 표시 없음. 2MB·5만 줄 넘으면 표시 없음. 되돌려 저장 내용과 같아지면 ●도 사라진다.
+  - 저장: 같은 폴더 임시 파일에 다 쓴 뒤 이름 바꿔 끼움(원래 권한 유지, 심볼릭 링크는 가리키는 파일에). UTF-8(BOM 있으면 유지), 원래 줄 끝(CRLF 등) 유지.
+  - 열지 않는 파일: 앞 8KB 에 NUL(바이너리), 5MB 초과, UTF-8 아님 → 읽기 전용 안내(Finder 에서 보기)만.
+  - 디스크에서 바뀌면(보이는 편집기는 파일 감시, 앱이 앞으로 올 때·탭을 열 때 확인): 고친 게 없으면 조용히 다시 읽고,
+    고쳤으면 배너 "디스크에서 바뀌었습니다 · 다시 읽기 / 내 것으로 덮어쓰기". 그 상태의 ⌘S 는 쓰지 않고 배너로 묻는다.
+  - 메모리: 편집기 뷰는 보이는 화면만 만든다. 숨은 편집기 중 저장된 것은 글을 놓고(다시 보일 때 디스크에서 읽음), 고친 것은 메모리에 둔다.
+    실측(release, 시험 창 약 2056×1262pt, 그림 저장 끔): 편집기 없을 때 194MB → 파일 5개 열고(숨김) 195MB → 그중 하나 보임 195.4MB(나머지는 창 그림 버퍼).
+    4.6MB 파일 하나를 열면 TextKit 배치 때문에 약 +140MB, 닫으면 대부분 돌려준다.
+  - 한계: 탭을 옮기면 저장된(깨끗한) 문서의 되돌리기 기록은 사라진다(글을 놓으므로). 같은 파일을 두 화면에 나눠 보기는 없다(이미 열린 화면으로 간다).
+    글자 색은 줄 단위 근사(정규식 리터럴 등은 모른다). 큰 파일(수 MB)은 열 때 잠깐 멈출 수 있다.
 - files 의 git 색(IntelliJ Darcula 계열): 바뀜·이름 바꿈 파랑, 새로 추가(스테이징) 초록, 추적 안 함 적갈색, 무시됨 흐린 올리브, 충돌 빨강,
   색만으로 구분하지 않게 오른쪽에 M·A·R·U·! 글자. 안에 바뀐 것이 있는 폴더는 옅은 파랑(접혀 있어도 보이게).
   `git status --porcelain=v1 -z --untracked-files=normal --ignored=matching` 를 백그라운드에서 한 번 돌린다(`GIT_OPTIONAL_LOCKS=0` — 색인을 고쳐 쓰지 않음).
@@ -134,6 +160,8 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
   도구 창·files 시험 명령: `tool files`(⌘⇧E 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
   `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.
+  편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
+  `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
   `CLAUDE_TERM_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
   이때와 `CLAUDE_TERM_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
