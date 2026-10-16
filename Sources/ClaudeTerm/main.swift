@@ -81,8 +81,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        if (menuItem.representedObject as? String) == "save" { return model.focusedIsEditor }
-        return true
+        switch menuItem.representedObject as? String {
+        case "save":
+            return model.focusedIsEditor
+        case "markdown-preview":
+            let editor = model.host?.focusedEditor
+            menuItem.state = editor?.preview != nil ? .on : .off
+            return editor?.canPreview ?? false
+        default:
+            return true
+        }
     }
 
     private func buildMenu() {
@@ -139,6 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addSubmenu(main, shell)
 
         let view = NSMenu(title: "보기")
+        // Markdown 파일: 편집 ↔ 미리보기(Markdown 편집기 화면일 때만 켜진다)
+        addAction(view, "Markdown 미리보기", "markdown-preview", "v", [.command, .shift])
+        view.addItem(.separator())
         addAction(view, "이전 화면", "previous-split", "[")
         addAction(view, "다음 화면", "next-split", "]")
         for (direction, key, name) in arrows {
@@ -225,6 +236,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // ⌘S = 편집기 저장(키 위치로 — 한글 입력 중에도). 편집기 화면이 아니면 그대로 보낸다(⌘⇧S 는 spaces).
             if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(1, .command), self.model.focusedIsEditor {
                 self.model.saveFocused()
+                return nil
+            }
+            // ⇧⌘V = Markdown 편집 ↔ 미리보기. Markdown 편집기가 아니면 그대로 보낸다.
+            if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(9, [.command, .shift]),
+               self.model.host?.focusedEditor?.canPreview == true {
+                self.model.perform("markdown-preview")
                 return nil
             }
             guard let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)] else { return event }
@@ -332,6 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ///   open-path <절대 경로>[|tab|right|down] | editor-type <글>(\n=줄바꿈) | editor-save | editor-undo | editor-state
     ///   editor-select <줄>[:<열>] | editor-answer <save|discard|cancel> (다음 확인 창 대신) | editor-banner <reload|overwrite>
     ///   editor-find | editor-check-disk | editors(모든 문서)
+    ///   Markdown 미리보기: editor-preview [on|off|toggle] | editor-preview-state | editor-preview-html <파일>
+    ///   editor-preview-snap <png>(웹 화면 그림) | editor-preview-js <식>(앱 쪽 세계에서) | editor-preview-raw(거르지 않은 HTML)
     private func debugEditor(command: String, argument: String) -> Bool {
         let editor = model.host?.focusedEditor
         switch command {
@@ -401,6 +420,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         case "editor-find":
             editor?.textView?.finderAction(.showFindInterface)
+        case "editor-preview":
+            guard let editor else { return true }
+            switch argument {
+            case "on": editor.setPreview(true)
+            case "off": editor.setPreview(false)
+            default: editor.togglePreview()
+            }
+        case "editor-preview-state":
+            let responder = window?.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
+            print("editor-preview-state canPreview=\(editor?.canPreview ?? false) scroll=\(editor?.document.previewScroll ?? -1) "
+                + "firstResponder=\(responder) " + (editor?.preview?.debugSummary ?? "preview=nil")
+                + " footprint=\(Memory.format(Memory.footprint()))")
+            fflush(stdout)
+        case "editor-preview-html":
+            editor?.preview?.debugDump(to: argument)
+        case "editor-preview-snap":
+            editor?.preview?.debugSnapshot(to: argument) { ok in
+                print("editor-preview-snap ok=\(ok) \(argument)")
+                fflush(stdout)
+            }
+        case "editor-preview-js":
+            editor?.preview?.debugEvaluate(argument) { result in
+                print("editor-preview-js \(result)")
+                fflush(stdout)
+            }
+        case "editor-preview-raw":
+            if let editor, let storage = editor.document.storage { editor.preview?.debugShowUnsanitized(markdown: storage.string) }
         case "editor-check-disk":
             editor?.document.checkDisk()
         default:
@@ -466,10 +512,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                          "up": NSUpArrowFunctionKey, "down": NSDownArrowFunctionKey]
             if let code = names[key] { key = String(UnicodeScalar(code)!); flags.insert([.function, .numericPad]) }
             if key == "enter" { key = "\r" }
-            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+", "e": "E", "s": "S"]
+            let shifted = ["[": "{", "]": "}", "d": "D", "=": "+", "e": "E", "s": "S", "v": "V"]
             let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
             // 실제 키보드(US 배열)의 키 코드
-            let codes: [String: UInt16] = ["d": 2, "t": 17, "e": 14, "s": 1, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
+            let codes: [String: UInt16] = ["d": 2, "t": 17, "e": 14, "s": 1, "v": 9, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
                                            "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
                                            String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,
                                            String(UnicodeScalar(NSRightArrowFunctionKey)!): 124,

@@ -1,4 +1,5 @@
 import AppKit
+import EditorCore
 import SwiftTerm
 import TermLayout
 import TermWire
@@ -123,7 +124,9 @@ final class TerminalHostController: NSViewController {
         for id in visible?.panes ?? [] {
             if EditorPane.isEditor(id) {
                 guard editorViews[id] == nil, let recipe = model.workspace.editors[id] else { continue }
-                editorViews[id] = EditorPaneView(document: model.editors.document(id: id, recipe: recipe), frame: container.bounds)
+                let editor = EditorPaneView(document: model.editors.document(id: id, recipe: recipe), frame: container.bounds)
+                editor.onOpenFile = { [weak self] path in self?.openLinkedFile(path) }
+                editorViews[id] = editor
             } else if terminals[id] == nil {
                 let terminal = PaneTerminal(id: id, client: model.client, frame: container.bounds)
                 terminals[id] = terminal
@@ -186,6 +189,12 @@ final class TerminalHostController: NSViewController {
 
     /// 지금 화면(터미널·편집기)에 키보드 포커스
     func focusPane() { focusTerminal() }
+
+    /// Markdown 미리보기에서 누른 로컬 파일 링크: 편집기로 연다(Markdown 이면 미리보기로)
+    func openLinkedFile(_ path: String) {
+        model.openFile(path)
+        if MarkdownFile.isMarkdown(path: path) { focusedEditor?.setPreview(true) }
+    }
 
     /// 지금 화면의 뷰(도구 창에서 Esc 로 돌아갈 곳)
     var focusedPaneView: NSView? { focusedEditor?.focusTarget ?? focusedTerminal?.view }

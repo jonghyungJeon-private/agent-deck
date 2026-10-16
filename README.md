@@ -130,6 +130,12 @@ VERSION=0.2.0 scripts/build-term-proto.sh
     추적 안 하는 새 파일은 모두 추가, 무시된 파일·저장소 밖은 표시 없음. 2MB·5만 줄 넘으면 표시 없음. 되돌려 저장 내용과 같아지면 ●도 사라진다.
   - 저장: 같은 폴더 임시 파일에 다 쓴 뒤 이름 바꿔 끼움(원래 권한 유지, 심볼릭 링크는 가리키는 파일에). UTF-8(BOM 있으면 유지), 원래 줄 끝(CRLF 등) 유지.
   - 열지 않는 파일: 앞 8KB 에 NUL(바이너리), 5MB 초과, UTF-8 아님 → 읽기 전용 안내(Finder 에서 보기)만.
+  - Markdown 미리보기(.md·.markdown·.mdown·.mkd): 여는 건 다른 파일처럼 편집기로. 상태 줄 왼쪽 [편집 | 미리보기] 단추·⇧⌘V·
+    보기 > Markdown 미리보기로 그 자리에서 바꾼다. 지금 버퍼(저장 안 한 편집 포함)를 보이고, 디스크에서 바뀌면 다시 그린다(스크롤 유지,
+    편집으로 갔다 와도 그 자리). 웹 화면(WKWebView)은 미리보기를 켤 때 만들고 편집으로 돌아가거나 닫으면 버린다.
+    변환은 넣어 둔 marked(`Resources/Markdown`, MIT)를 JavaScriptCore 에서 돌리고(실행 중 네트워크 없음), 허용 목록으로 거른 HTML 을
+    페이지 스크립트를 끈 웹 화면에 CSP(스크립트·네트워크 막음)와 함께 보인다. 그림은 문서 폴더 안의 것만(원격 그림은 이름표로),
+    링크: http·https·mailto 는 기본 앱으로, 로컬 파일은 편집기로(Markdown 이면 미리보기로), #제목은 그 자리 스크롤.
   - 디스크에서 바뀌면(보이는 편집기는 파일 감시, 앱이 앞으로 올 때·탭을 열 때 확인): 고친 게 없으면 조용히 다시 읽고,
     고쳤으면 배너 "디스크에서 바뀌었습니다 · 다시 읽기 / 내 것으로 덮어쓰기". 그 상태의 ⌘S 는 쓰지 않고 배너로 묻는다.
   - 메모리: 편집기 뷰는 보이는 화면만 만든다. 숨은 편집기 중 저장된 것은 글을 놓고(다시 보일 때 디스크에서 읽음), 고친 것은 메모리에 둔다.
@@ -162,6 +168,8 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
+  미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
+  `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   `CLAUDE_TERM_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
   이때와 `CLAUDE_TERM_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).

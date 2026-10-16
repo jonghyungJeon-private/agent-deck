@@ -2,7 +2,7 @@ import AppKit
 import EditorCore
 
 /// 편집기 화면(보이는 동안만 만든다): [디스크 변경 배너] / [줄 번호·변경 표시 여백 | 글] / [상태 줄].
-/// 바이너리·너무 큰 파일은 글 대신 안내만 보인다.
+/// 바이너리·너무 큰 파일은 글 대신 안내만 보인다. Markdown 은 상태 줄의 편집·미리보기 단추(⇧⌘V)로 그 자리에서 바꾼다.
 final class EditorPaneView: NSView, NSTextViewDelegate {
     let document: EditorDocument
     private(set) var textView: EditorTextView?
@@ -15,6 +15,13 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     private var notice: EditorNoticeView?
     private var bannerHeight: NSLayoutConstraint!
     private let body = NSView()
+    /// 미리보기(보는 동안만 있다)
+    private(set) var preview: MarkdownPreviewView?
+    private let modeSwitch = EditorModeSwitch()
+    private var modeSwitchWidth: NSLayoutConstraint!
+    private var previewRefreshQueued = false
+    /// 미리보기에서 로컬 파일 링크를 눌렀을 때(경로)
+    var onOpenFile: ((String) -> Void)?
 
     static let statusHeight: CGFloat = 20
 
@@ -30,11 +37,13 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         status.alignment = .right
         banner.onReload = { [weak self] in self?.document.reloadFromDisk() }
         banner.onOverwrite = { [weak self] in self?.document.overwriteDisk() }
-        for view in [banner, body, status] as [NSView] {
+        modeSwitch.onSelect = { [weak self] preview in self?.setPreview(preview) }
+        for view in [banner, body, modeSwitch, status] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         bannerHeight = banner.heightAnchor.constraint(equalToConstant: 0)
+        modeSwitchWidth = modeSwitch.widthAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             banner.topAnchor.constraint(equalTo: topAnchor),
             banner.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -44,7 +53,11 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
             body.leadingAnchor.constraint(equalTo: leadingAnchor),
             body.trailingAnchor.constraint(equalTo: trailingAnchor),
             body.bottomAnchor.constraint(equalTo: status.topAnchor),
-            status.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            modeSwitch.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            modeSwitch.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            modeSwitch.heightAnchor.constraint(equalToConstant: EditorModeSwitch.height),
+            modeSwitchWidth,
+            status.leadingAnchor.constraint(equalTo: modeSwitch.trailingAnchor, constant: 8),
             status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             status.bottomAnchor.constraint(equalTo: bottomAnchor),
             status.heightAnchor.constraint(equalToConstant: Self.statusHeight),
@@ -54,7 +67,10 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
                                                name: TermAppearance.fontSizeChanged, object: nil)
         document.loadIfNeeded()
         document.onViewUpdate = { [weak self] update in self?.documentUpdated(update) }
-        document.onTextEdited = { [weak self] range, delta in self?.highlighter?.edited(range, delta: delta) }
+        document.onTextEdited = { [weak self] range, delta in
+            self?.highlighter?.edited(range, delta: delta)
+            self?.schedulePreviewRefresh()
+        }
         buildContent()
         document.becameVisible()
         updateBanner()
@@ -64,12 +80,13 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
 
     override var isFlipped: Bool { true }
 
-    /// 첫 응답자로 삼을 뷰(글, 없으면 안내)
-    var focusTarget: NSView? { textView ?? notice }
+    /// 첫 응답자로 삼을 뷰(미리보기 중이면 미리보기, 아니면 글, 없으면 안내)
+    var focusTarget: NSView? { preview?.webView ?? textView ?? notice }
 
     // MARK: - 내용
 
     private func buildContent() {
+        teardownPreview()
         body.subviews.forEach { $0.removeFromSuperview() }
         teardownText()
         notice = nil
@@ -84,6 +101,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         case .unloaded:
             break
         }
+        applyMode()
     }
 
     /// 앱 글꼴 크기 변경: 글·줄 번호 여백 글꼴을 바꾸고 여백 폭을 다시 정한다
@@ -197,6 +215,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
 
     /// 화면에서 뺄 때(탭을 옮기거나 닫을 때). 깨끗한 문서는 글을 놓는다.
     func detach() {
+        teardownPreview()
         teardownText()
         document.onViewUpdate = nil
         document.onTextEdited = nil
@@ -214,6 +233,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
                 highlighter?.invalidateAll()
                 colorVisible()
                 gutter?.refresh()
+                refreshPreview() // 디스크에서 다시 읽은 내용
             }
             if hadFocus, let target = focusTarget { window?.makeFirstResponder(target) }
         }
@@ -229,6 +249,12 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
 
     private func updateStatus() {
         guard document.content == .text, let textView, let storage = document.storage else { return }
+        if preview != nil {
+            var parts = ["미리보기 · 읽기 전용", "⇧⌘V 편집으로"]
+            if document.isDirty { parts.insert("● 저장 안 됨 (편집 중인 내용을 보여 줌)", at: 0) }
+            status.stringValue = parts.joined(separator: "  ·  ")
+            return
+        }
         let location = min(textView.selectedRange().location, storage.length)
         let line = document.lines.line(containing: location)
         let column = location - document.lines.starts[line] + 1
@@ -238,6 +264,64 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         if !document.markersEnabled { parts.append("변경 표시 없음(큰 파일)") }
         if document.isDirty { parts.insert("● 저장 안 됨", at: 0) }
         status.stringValue = parts.joined(separator: "  ·  ")
+    }
+
+    // MARK: - Markdown 미리보기
+
+    /// 미리보기를 쓸 수 있는지(Markdown 이고 글로 연 파일)
+    var canPreview: Bool { document.isMarkdown && document.content == .text }
+
+    func togglePreview() { setPreview(!document.showsPreview) }
+
+    /// 편집 ↔ 미리보기. 이 화면에 포커스가 있었으면 바뀐 쪽으로 옮긴다.
+    func setPreview(_ on: Bool) {
+        guard !on || canPreview, on != (preview != nil) else { return }
+        let hadFocus = (window?.firstResponder as? NSView).map { $0.isDescendant(of: self) } ?? false
+        document.showsPreview = on
+        applyMode()
+        if hadFocus, let target = focusTarget { window?.makeFirstResponder(target) }
+    }
+
+    /// 문서 상태에 맞춰 글 / 미리보기를 보인다(미리보기 웹 화면은 이때 만들고, 편집으로 돌아가면 버린다)
+    private func applyMode() {
+        let on = document.showsPreview && canPreview
+        if on, preview == nil, let storage = document.storage {
+            let view = MarkdownPreviewView(path: document.path, scroll: document.previewScroll, frame: body.bounds)
+            view.onOpenFile = { [weak self] path in self?.onOpenFile?(path) }
+            embed(view)
+            preview = view
+            view.show(markdown: storage.string)
+        } else if !on {
+            teardownPreview()
+        }
+        scrollView?.isHidden = on
+        gutter?.isHidden = on
+        modeSwitch.isHidden = !canPreview
+        modeSwitch.selected = on ? 1 : 0
+        modeSwitchWidth.constant = canPreview ? modeSwitch.fittingWidth : 0
+        updateStatus()
+    }
+
+    private func teardownPreview() {
+        guard let preview else { return }
+        self.preview = nil
+        let document = self.document
+        preview.close { y in document.previewScroll = y }
+    }
+
+    /// 버퍼가 바뀌면(되돌리기 등) 한 차례에 한 번만 다시 그린다
+    private func schedulePreviewRefresh() {
+        guard preview != nil, !previewRefreshQueued else { return }
+        previewRefreshQueued = true
+        DispatchQueue.main.async { [weak self] in
+            self?.previewRefreshQueued = false
+            self?.refreshPreview()
+        }
+    }
+
+    private func refreshPreview() {
+        guard let preview, let storage = document.storage else { return }
+        preview.show(markdown: storage.string)
     }
 
     /// 시험용: 뷰 크기
@@ -594,6 +678,101 @@ final class EditorHighlighter {
         }
         return state
     }
+}
+
+// MARK: - 편집·미리보기 단추
+
+/// 상태 줄 왼쪽의 [편집 | 미리보기] 두 칸 단추(Markdown 파일만). 고른 칸은 강조색.
+final class EditorModeSwitch: NSView {
+    static let height: CGFloat = 16
+    static let titles = ["편집", "미리보기"]
+    var onSelect: ((Bool) -> Void)?
+    var selected = 0 {
+        didSet { if selected != oldValue { needsDisplay = true } }
+    }
+    private var hovered: Int?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        toolTip = "편집 ↔ 미리보기 (⇧⌘V)"
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    private func attributes(_ index: Int) -> [NSAttributedString.Key: Any] {
+        let on = index == selected
+        return [.font: TermAppearance.uiFont(10, bold: on),
+                .foregroundColor: on ? TermAppearance.accent : (hovered == index ? TermAppearance.textPrimary : TermAppearance.textDim)]
+    }
+
+    /// 두 칸 폭의 합(굵은 글꼴 기준이라 고른 칸이 바뀌어도 흔들리지 않게 넉넉히)
+    var fittingWidth: CGFloat { Self.widths.reduce(0, +) }
+
+    private static let widths: [CGFloat] = titles.map {
+        ceil(($0 as NSString).size(withAttributes: [.font: TermAppearance.uiFont(10, bold: true)]).width) + 16
+    }
+
+    private func segmentRects() -> [NSRect] {
+        let total = fittingWidth
+        let widths = Self.widths
+        let scale = bounds.width / max(total, 1)
+        var x: CGFloat = 0
+        return widths.map { width in
+            defer { x += width * scale }
+            return NSRect(x: x, y: 0, width: width * scale, height: bounds.height)
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
+        TermAppearance.chrome.setFill()
+        outline.fill()
+        let rects = segmentRects()
+        for (index, rect) in rects.enumerated() {
+            if index == selected {
+                let fill = NSBezierPath(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), xRadius: 3, yRadius: 3)
+                TermAppearance.accent.withAlphaComponent(0.16).setFill()
+                fill.fill()
+            }
+            let title = Self.titles[index] as NSString
+            let attrs = attributes(index)
+            let size = title.size(withAttributes: attrs)
+            title.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2), withAttributes: attrs)
+        }
+        if rects.count == 2 {
+            TermAppearance.border.setFill()
+            NSRect(x: rects[1].minX, y: 3, width: 1, height: bounds.height - 6).fill()
+        }
+        (selected == 1 ? TermAppearance.accent.withAlphaComponent(0.55) : TermAppearance.border).setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
+    }
+
+    private func index(at event: NSEvent) -> Int? {
+        let point = convert(event.locationInWindow, from: nil)
+        return segmentRects().firstIndex { $0.contains(point) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let index = index(at: event) else { return }
+        onSelect?(index == 1)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let index = index(at: event)
+        if index != hovered { hovered = index; needsDisplay = true }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovered = nil
+        needsDisplay = true
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
 }
 
 // MARK: - 배너·안내

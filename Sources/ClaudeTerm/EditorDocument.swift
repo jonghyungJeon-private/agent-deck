@@ -67,6 +67,12 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
     var cursor: Int
     /// 읽어 들인 바이트 수(표시 제한 판단)
     private(set) var loadedBytes = 0
+    /// Markdown 파일(미리보기 단추를 보인다)
+    let isMarkdown: Bool
+    /// 미리보기로 보는 중(탭을 옮겨 뷰를 다시 만들어도 이어진다)
+    var showsPreview = false
+    /// 미리보기 스크롤 위치(미리보기를 닫았다 열어도 그 자리로)
+    var previewScroll: Double = 0
 
     /// 뷰가 듣는다(보이는 동안만)
     var onViewUpdate: ((Update) -> Void)?
@@ -94,6 +100,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
         self.path = path
         self.cursor = cursor ?? 0
         language = SyntaxLanguage.detect(path: path)
+        isMarkdown = MarkdownFile.isMarkdown(path: path)
         super.init()
     }
 
@@ -493,7 +500,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
         return "editor \(id.suffix(6)) name=\(name) content=\(kind) dirty=\(isDirty) visible=\(isVisible) "
             + "length=\(storage?.length ?? -1) lines=\(storage == nil ? 0 : lines.lineCount) eol=\(lineEnding.label) bom=\(hasBOM) "
             + "base=\(baseName) markers=[\(marks.joined(separator: ","))] conflict=\(diskConflict.map { "\($0)" } ?? "-") "
-            + "undo=\(undoManager.canUndo) lang=\(language?.rawValue ?? "-")"
+            + "undo=\(undoManager.canUndo) lang=\(language?.rawValue ?? "-") markdown=\(isMarkdown) preview=\(showsPreview)"
     }
 }
 

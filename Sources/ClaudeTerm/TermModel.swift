@@ -912,6 +912,7 @@ final class TermModel: ObservableObject {
         case "close-tab": closeTab()
         case "rename": renameFocused()
         case "save": saveFocused()
+        case "markdown-preview": host?.focusedEditor?.togglePreview()
         case "focus": if let direction = parts.dropFirst().first.flatMap({ Direction(rawValue: $0) }) { moveFocus(direction) }
         case "next-split": cycleFocus(1)
         case "previous-split": cycleFocus(-1)

@@ -40,6 +40,9 @@ PLIST
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # 터미널 글꼴(JetBrains Mono, OFL / Symbols Nerd Font, MIT) — 앱 안에서만 등록해 쓴다
 cp -R Resources/Fonts "$APP/Contents/Resources/Fonts"
+# Markdown 미리보기 변환기(marked, MIT) — 앱 안에서만 쓰고 실행 중에 네트워크에서 받지 않는다
+mkdir -p "$APP/Contents/Resources/Markdown"
+cp Resources/Markdown/marked.umd.js Resources/Markdown/LICENSE "$APP/Contents/Resources/Markdown/"
 codesign --force --sign - "$APP/Contents/MacOS/ClaudeTermDaemon"
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 ZIP="dist/ClaudeTerm-$VERSION.zip"

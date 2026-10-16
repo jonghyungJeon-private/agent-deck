@@ -50,7 +50,7 @@ public enum SyntaxLanguage: String, CaseIterable, Sendable {
         case "json", "jsonc", "json5", "jsonl": return .json
         case "yml", "yaml": return .yaml
         case "toml": return .toml
-        case "md", "markdown", "mdx": return .markdown
+        case "md", "markdown", "mdown", "mkd", "mdx": return .markdown
         case "sh", "bash", "zsh", "fish", "command", "ksh": return .shell
         case "sql": return .sql
         default: break
