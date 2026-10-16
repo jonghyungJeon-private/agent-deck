@@ -97,7 +97,8 @@ final class TabBarView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         TermAppearance.chrome.setFill()
         bounds.fill()
-        for (index, tab) in tabs.enumerated() where index < tabRects.count {
+        // 끄는 동안엔 탭을 층(그림)으로 옮겨 그리므로 바탕만
+        for (index, tab) in tabs.enumerated() where index < tabRects.count && drag == nil {
             let rect = tabRects[index]
             let isSelected = index == selected
             if isSelected {
@@ -142,6 +143,12 @@ final class TabBarView: NSView {
                 TermAppearance.border.withAlphaComponent(0.6).setFill()
                 CGRect(x: rect.maxX - 0.5, y: rect.midY - 7, width: 1, height: 14).fill()
             }
+        }
+        // 분할 화면을 끌어 와 탭으로 놓을 틈
+        if let insertion, let last = tabRects.last {
+            let x = insertion < tabRects.count ? tabRects[insertion].minX : last.maxX
+            TermAppearance.accent.setFill()
+            CGRect(x: max(0, x - 1.5), y: 3, width: 3, height: bounds.height - 6).fill()
         }
         let plus = "+" as NSString
         let plusAttributes: [NSAttributedString.Key: Any] = [
@@ -212,6 +219,7 @@ final class TabBarView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        press = nil
         if plusRect.contains(point) {
             onNew?()
         } else if let index = tabRects.firstIndex(where: { $0.contains(point) }) {
@@ -220,9 +228,31 @@ final class TabBarView: NSView {
             } else if event.clickCount == 2 {
                 onRename?(index) // 두 번 누르면 이름 바꾸기
             } else {
-                onSelect?(index)
+                // 고르기는 놓을 때(끌면 옮기기 — 다른 탭을 끌어 지금 탭의 분할에 놓을 수 있게 미리 고르지 않는다)
+                press = (index, point)
             }
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let press else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if drag == nil {
+            guard hypot(point.x - press.point.x, point.y - press.point.y) >= Self.dragThreshold,
+                  tabRects.indices.contains(press.index) else { return }
+            beginDrag(press.index, grab: press.point.x - tabRects[press.index].minX)
+        }
+        moveDrag(to: point, window: event.locationInWindow)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let press else { return }
+        self.press = nil
+        guard let drag else {
+            onSelect?(press.index)
+            return
+        }
+        endDrag(drag, window: event.locationInWindow)
     }
 
     /// 오른쪽 클릭: 이름 바꾸기·탭 닫기
@@ -236,6 +266,153 @@ final class TabBarView: NSView {
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
+
+    /// 창이 뒤에 있어도 첫 클릭으로 바로 고르거나 끌 수 있게(분할 틈과 같게)
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // MARK: - 끌어서 옮기기
+
+    /// 이보다 덜 움직이고 놓으면 클릭
+    private static let dragThreshold: CGFloat = 4
+    /// 탭 줄 안에서 놓음: (탭, 옮긴 뒤 자리)
+    var onMove: ((Int, Int) -> Void)?
+    /// 탭 줄 밖(분할 영역)으로 끄는 중: 창 좌표, 탭 줄로 돌아오면 nil
+    var onDragOutside: ((Int, NSPoint?) -> Void)?
+    /// 탭 줄 밖에 놓음(창 좌표)
+    var onDropOutside: ((Int, NSPoint) -> Void)?
+
+    private struct Drag {
+        var index: Int
+        /// 시작할 때 탭 자리(끄는 동안 목록이 새로 와도 이것으로)
+        var rects: [CGRect]
+        /// 누른 곳이 탭 왼쪽에서 떨어진 거리
+        var grab: CGFloat
+        /// 탭마다 그림 한 장(다른 탭은 미끄러지듯 비키고 끄는 탭은 마우스를 따라간다)
+        var layers: [CALayer]
+        var inside = true
+        /// 놓으면 갈 자리
+        var to: Int
+    }
+
+    private var press: (index: Int, point: CGPoint)?
+    private var drag: Drag?
+    /// 분할 화면을 끌어 와 탭으로 놓을 틈(세로 줄로 보인다)
+    private var insertion: Int?
+
+    /// 탭 줄 위로 보는 범위(아래로 조금 벗어나도 순서 바꾸기로 둔다)
+    func isInBand(_ windowPoint: NSPoint) -> Bool {
+        let point = convert(windowPoint, from: nil)
+        return !bounds.isEmpty && point.y >= -8 && point.y <= bounds.maxY + 14
+            && point.x >= bounds.minX - 40 && point.x <= bounds.maxX + 40
+    }
+
+    /// 그 자리에 놓으면 들어갈 틈(0 = 맨 앞, 탭 수 = 맨 뒤)
+    func gap(at windowPoint: NSPoint) -> Int {
+        let x = convert(windowPoint, from: nil).x
+        return tabRects.filter { $0.midX < x }.count
+    }
+
+    func setInsertion(_ gap: Int?) {
+        guard gap != insertion else { return }
+        insertion = gap
+        needsDisplay = true
+    }
+
+    /// 시험용: 탭 자리(창 좌표)
+    var windowTabRects: [CGRect] { tabRects.map { convert($0, to: nil) } }
+
+    private func snapshot(_ rect: CGRect) -> CGImage? {
+        guard let rep = bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        cacheDisplay(in: rect, to: rep)
+        return rep.cgImage
+    }
+
+    private func beginDrag(_ index: Int, grab: CGFloat) {
+        hovered = nil
+        hoveringClose = false
+        hoveringPlus = false
+        wantsLayer = true
+        let images = tabRects.map(snapshot) // 바탕만 그리기 전에 찍는다
+        var layers: [CALayer] = []
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (i, rect) in tabRects.enumerated() {
+            let tabLayer = CALayer()
+            tabLayer.frame = rect
+            tabLayer.contents = images[i]
+            if i == index {
+                tabLayer.zPosition = 1
+                tabLayer.borderColor = TermAppearance.accent.cgColor
+                tabLayer.borderWidth = 1
+                tabLayer.shadowOpacity = 0.5
+                tabLayer.shadowRadius = 6
+                tabLayer.shadowOffset = .zero
+            }
+            layer?.addSublayer(tabLayer)
+            layers.append(tabLayer)
+        }
+        CATransaction.commit()
+        drag = Drag(index: index, rects: tabRects, grab: grab, layers: layers, to: index)
+        needsDisplay = true
+    }
+
+    private func moveDrag(to point: CGPoint, window: NSPoint) {
+        guard var drag else { return }
+        let inside = isInBand(window)
+        var frames = drag.rects
+        if inside {
+            let width = drag.rects[drag.index].width
+            let end = drag.rects.last?.maxX ?? width
+            let x = min(max(point.x - drag.grab, 0), max(0, end - width))
+            // 끄는 탭을 뺀 순서에서 가운데가 끄는 탭 가운데보다 왼쪽인 탭 수 = 놓일 자리
+            let others = drag.rects.indices.filter { $0 != drag.index }
+            var cursor: CGFloat = 0
+            var to = 0
+            for i in others {
+                if cursor + drag.rects[i].width / 2 < x + width / 2 { to += 1 }
+                cursor += drag.rects[i].width
+            }
+            cursor = 0
+            for (k, i) in others.enumerated() {
+                if k == to { cursor += width }
+                frames[i].origin.x = cursor
+                cursor += drag.rects[i].width
+            }
+            frames[drag.index].origin.x = x
+            drag.to = to
+        }
+        // 밖으로 나가면 다른 탭은 제자리로, 끄는 탭은 숨긴다(놓일 곳은 분할 영역 위에 보인다)
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(0.16)
+        for (i, tabLayer) in drag.layers.enumerated() where i != drag.index { tabLayer.frame = frames[i] }
+        CATransaction.commit()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        drag.layers[drag.index].frame = frames[drag.index]
+        drag.layers[drag.index].isHidden = !inside
+        CATransaction.commit()
+        drag.inside = inside
+        self.drag = drag
+        onDragOutside?(drag.index, inside ? nil : window)
+    }
+
+    private func endDrag(_ drag: Drag, window: NSPoint) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        drag.layers.forEach { $0.removeFromSuperlayer() }
+        CATransaction.commit()
+        self.drag = nil
+        needsDisplay = true
+        onDragOutside?(drag.index, nil)
+        guard drag.rects.count == tabs.count else { return } // 끄는 사이 탭이 열리거나 닫힘
+        if !drag.inside {
+            onDropOutside?(drag.index, window)
+        } else if drag.to != drag.index {
+            onMove?(drag.index, drag.to)
+        } else {
+            onSelect?(drag.index)
+        }
+    }
 }
 
 /// 닫힘 블록으로 동작하는 메뉴 항목

@@ -16,6 +16,8 @@ final class TerminalHostController: NSViewController {
     private let container = SplitContainerView()
     private let placeholder = NSTextField(labelWithString: "")
     private let tabBar = TabBarView()
+    /// 탭·화면을 끄는 동안 놓일 곳을 보이는 덮개
+    private let dropOverlay = DropOverlayView()
     private var tabBarHeight: NSLayoutConstraint!
     private var monitors: [Any] = []
     /// 편집기 이동(⌘B·⌥F7·⌘O·뒤로·앞으로)
@@ -69,7 +71,13 @@ final class TerminalHostController: NSViewController {
             self.model.selectTab(index)
             self.model.rename(pane: self.model.workspace.tabs[index].focused)
         }
-        for view in [container, placeholder, tabBar] as [NSView] {
+        tabBar.onMove = { [weak self] from, to in self?.model.moveTab(from: from, to: to) }
+        tabBar.onDragOutside = { [weak self] index, point in self?.dragTab(index, at: point, drop: false) }
+        tabBar.onDropOutside = { [weak self] index, point in self?.dragTab(index, at: point, drop: true) }
+        container.onPaneDrag = { [weak self] id, point, ended in self?.drag(.pane(id), at: point, drop: ended) }
+        container.onExtract = { [weak self] id in self?.model.extractPane(id) }
+        dropOverlay.isHidden = true
+        for view in [container, placeholder, tabBar, dropOverlay] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
@@ -85,6 +93,10 @@ final class TerminalHostController: NSViewController {
             container.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             container.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            dropOverlay.topAnchor.constraint(equalTo: root.topAnchor),
+            dropOverlay.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            dropOverlay.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            dropOverlay.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: root.centerYAnchor),
         ])
@@ -234,7 +246,72 @@ final class TerminalHostController: NSViewController {
         return (terminal.cols, terminal.rows)
     }
 
+    // MARK: - 탭·화면 끌어 옮기기
+    // 탭: 탭 줄 안에서는 순서 바꾸기(탭 줄이 직접 그린다), 밖으로 끌어 지금 탭의 화면 위에 놓으면 그 화면을 나눠 탭째 넣는다.
+    // 화면(분할 제목 줄): 다른 화면 위에 놓으면 그쪽으로 나눠 옮기고, 탭 줄에 놓으면 새 탭으로.
+
+    private enum DragItem {
+        case tab(String)
+        case pane(String)
+    }
+
+    private func dragTab(_ index: Int, at point: NSPoint?, drop: Bool) {
+        guard model.workspace.tabs.indices.contains(index) else { return dropOverlay.clear() }
+        drag(.tab(model.workspace.tabs[index].id), at: point, drop: drop)
+    }
+
+    /// 끄는 중이면 놓일 곳을 보이고, 놓았으면 옮긴다. point 가 nil 이면 탭 줄 안(탭 줄이 순서 바꾸기를 직접 보인다).
+    private func drag(_ item: DragItem, at point: NSPoint?, drop: Bool) {
+        let target = point.flatMap { dropTarget(item, at: $0) }
+        if case .tab(let gap)? = target?.drop, !drop { tabBar.setInsertion(gap) } else { tabBar.setInsertion(nil) }
+        guard !drop, let point else {
+            dropOverlay.clear()
+            guard drop, let target else { return }
+            switch item {
+            case .tab(let id): model.move(tab: id, to: target.drop)
+            case .pane(let id): model.move(pane: id, to: target.drop)
+            }
+            return
+        }
+        let title: String
+        var source: CGRect?
+        switch item {
+        case .tab(let id):
+            title = model.workspace.tabs.first { $0.id == id }.map(model.tabTitle) ?? ""
+        case .pane(let id):
+            title = model.paneLabel(id)
+            source = container.paneFrame(id).map { dropOverlay.convert($0, from: container) }
+        }
+        dropOverlay.show(zone: target?.zone, source: source, chip: title, at: dropOverlay.convert(point, from: nil))
+    }
+
+    /// 놓을 곳. 끄는 탭·화면 자신 위는 없음.
+    private func dropTarget(_ item: DragItem, at point: NSPoint) -> (drop: PaneDrop, zone: CGRect?)? {
+        if case .pane = item, tabBar.isInBand(point) { return (.tab(gap: tabBar.gap(at: point)), nil) }
+        guard let (pane, direction, rect) = container.dropZone(at: point) else { return nil }
+        let own: [String]
+        switch item {
+        case .tab(let id): own = model.workspace.tabs.first { $0.id == id }?.root.panes ?? []
+        case .pane(let id): own = [id]
+        }
+        guard !own.contains(pane) else { return nil }
+        return (.split(target: pane, toward: direction), dropOverlay.convert(rect, from: container))
+    }
+
     // MARK: - 시험용
+
+    /// 끌기 시험용 좌표(창 좌표, 아래가 0): 탭 가운데, 화면 자리와 제목 줄 가운데
+    func debugDragPoints() -> String {
+        func point(_ p: CGPoint) -> String { "\(Int(p.x)),\(Int(p.y))" }
+        var lines = tabBar.windowTabRects.enumerated().map { "tab \($0.offset) center=\(point(CGPoint(x: $0.element.midX, y: $0.element.midY)))" }
+        for id in model.workspace.selectedTab?.visibleRoot.panes ?? [] {
+            guard let frame = container.paneFrame(id) else { continue }
+            let rect = container.convert(frame, to: nil)
+            lines.append("pane \(id.prefix(8)) rect=\(point(rect.origin)) \(Int(rect.width))x\(Int(rect.height)) "
+                + "title=\(point(container.convert(CGPoint(x: frame.midX, y: frame.minY + 8), to: nil)))")
+        }
+        return lines.joined(separator: "\n")
+    }
 
     /// 한글 입력기(IME)가 하는 것과 같은 순서로 조합 중 글자 → 확정 글자를 넣는다.
     func simulateIME(composing: [String], commit: String) {

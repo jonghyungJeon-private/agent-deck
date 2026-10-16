@@ -42,6 +42,19 @@ public indirect enum SplitNode: Codable, Equatable {
         }
     }
 
+    /// target 화면을 둘로 나눠 node(화면 하나 또는 분할 나무)를 direction 쪽에 둔다(끌어다 놓기)
+    public func inserting(_ node: SplitNode, at target: String, toward direction: Direction) -> SplitNode {
+        switch self {
+        case .pane(let id):
+            guard id == target else { return self }
+            let before = direction == .left || direction == .up
+            return .split(axis: direction.axis, ratio: 0.5, first: before ? node : self, second: before ? self : node)
+        case .split(let a, let r, let first, let second):
+            return .split(axis: a, ratio: r, first: first.inserting(node, at: target, toward: direction),
+                          second: second.inserting(node, at: target, toward: direction))
+        }
+    }
+
     /// 화면 하나를 빼고 그 짝이 자리를 채운다. 다 빠지면 nil.
     public func removing(_ target: String) -> SplitNode? {
         switch self {
@@ -304,6 +317,14 @@ public struct EditorRecipe: Codable, Equatable {
     }
 }
 
+/// 끌어 온 탭·화면을 놓을 곳
+public enum PaneDrop: Equatable {
+    /// target 화면을 나눠 direction 쪽에
+    case split(target: String, toward: Direction)
+    /// 탭 줄의 틈(0 = 맨 앞, 탭 수 = 맨 뒤)에 탭으로
+    case tab(gap: Int)
+}
+
 /// 창 하나의 탭 묶음. 앱을 껐다 켜도 이어지도록 파일로 저장한다.
 public struct Workspace: Codable, Equatable {
     public var tabs: [TabState] = []
@@ -373,6 +394,68 @@ public struct Workspace: Codable, Equatable {
         tab.root = root
         if root.panes.count == 1 { tab.zoomed = false }
         tabs[index] = tab
+    }
+
+    // MARK: - 탭·화면 옮기기(배치만 바뀐다 — 데몬 화면·편집기는 그대로)
+
+    /// 탭 순서 바꾸기(to = 옮긴 뒤 자리, 범위를 넘으면 끝으로). 바뀌었으면 true.
+    @discardableResult
+    public mutating func moveTab(from: Int, to: Int) -> Bool {
+        guard tabs.indices.contains(from) else { return false }
+        let to = min(max(to, 0), tabs.count - 1)
+        guard to != from else { return false }
+        tabs.insert(tabs.remove(at: from), at: to)
+        return true
+    }
+
+    /// 탭을 통째로 옮긴다. 틈이면 순서만, 다른 탭의 화면이면 그 화면을 나눠 이 탭의 분할 나무를 그대로 넣고 이 탭은 닫는다.
+    /// 옮긴 탭(합쳤으면 받은 탭)을 고른다. 바뀌었으면 true.
+    @discardableResult
+    public mutating func move(tab id: String, to drop: PaneDrop) -> Bool {
+        guard let from = tabs.firstIndex(where: { $0.id == id }) else { return false }
+        switch drop {
+        case .tab(let gap):
+            let moved = moveTab(from: from, to: gap > from ? gap - 1 : gap)
+            let changed = moved || selected != id
+            selected = id
+            return changed
+        case .split(let target, let direction):
+            let source = tabs[from]
+            guard !source.root.contains(target), let into = tabIndex(containing: target) else { return false }
+            var tab = tabs[into]
+            tab.root = tab.root.inserting(source.root, at: target, toward: direction)
+            tab.focused = source.focused
+            tab.zoomed = false
+            tabs[into] = tab
+            tabs.remove(at: from)
+            selected = tab.id
+            return true
+        }
+    }
+
+    /// 화면 하나를 옮긴다: 다른 화면 옆(같은 탭 안도 됨)이나 탭 줄의 틈(새 탭으로 꺼내기).
+    /// 비게 된 탭은 닫히고, 옮긴 화면이 있는 탭을 골라 그 화면에 포커스. 바뀌었으면 true.
+    @discardableResult
+    public mutating func move(pane: String, to drop: PaneDrop) -> Bool {
+        guard let from = tabIndex(containing: pane) else { return false }
+        // 혼자 있던 화면은 탭째 옮기는 것과 같다(탭 ID 를 지킨다)
+        if tabs[from].root.panes == [pane] { return move(tab: tabs[from].id, to: drop) }
+        switch drop {
+        case .tab(let gap):
+            remove(pane: pane)
+            let tab = TabState(root: .pane(pane), focused: pane)
+            tabs.insert(tab, at: min(max(gap, 0), tabs.count))
+            selected = tab.id
+        case .split(let target, let direction):
+            guard target != pane, tabIndex(containing: target) != nil else { return false }
+            remove(pane: pane)
+            guard let into = tabIndex(containing: target) else { return false }
+            tabs[into].root = tabs[into].root.inserting(.pane(pane), at: target, toward: direction)
+            tabs[into].focused = pane
+            tabs[into].zoomed = false
+            selected = tabs[into].id
+        }
+        return true
     }
 
     /// 화면을 완전히 없앤다(되살리기 정보까지)

@@ -229,3 +229,126 @@ final class EditorPaneWorkspaceTests: XCTestCase {
         XCTAssertEqual(repaired.tabs[0].focused, "A")
     }
 }
+
+final class TabMoveTests: XCTestCase {
+    let editor = EditorPane.prefix + "E1"
+
+    /// t1 = A | B(위) C(아래), t2 = D, t3 = 편집기 하나
+    func workspace() -> Workspace {
+        let tree = SplitNode.pane("A").splitting("A", with: "B", axis: .horizontal).splitting("B", with: "C", axis: .vertical)
+        var workspace = Workspace(tabs: [TabState(id: "t1", root: tree, focused: "A"),
+                                         TabState(id: "t2", root: .pane("D"), focused: "D"),
+                                         TabState(id: "t3", root: .pane(editor), focused: editor)], selected: "t1")
+        workspace.editors[editor] = EditorRecipe(path: "/tmp/a.swift")
+        return workspace
+    }
+
+    func testInsertingPutsNodeOnThatSide() {
+        let x = SplitNode.pane("X")
+        XCTAssertEqual(SplitNode.pane("A").inserting(x, at: "A", toward: .left),
+                       .split(axis: .horizontal, ratio: 0.5, first: x, second: .pane("A")))
+        XCTAssertEqual(SplitNode.pane("A").inserting(x, at: "A", toward: .down),
+                       .split(axis: .vertical, ratio: 0.5, first: .pane("A"), second: x))
+        // 안쪽 화면만 나뉘고 나머지 비율은 그대로
+        let tree = SplitNode.split(axis: .horizontal, ratio: 0.3, first: .pane("A"), second: .pane("B"))
+        XCTAssertEqual(tree.inserting(x, at: "B", toward: .up),
+                       .split(axis: .horizontal, ratio: 0.3, first: .pane("A"),
+                              second: .split(axis: .vertical, ratio: 0.5, first: x, second: .pane("B"))))
+        XCTAssertEqual(tree.inserting(x, at: "Z", toward: .up), tree)
+    }
+
+    func testReorderTabs() {
+        var w = workspace()
+        XCTAssertTrue(w.moveTab(from: 0, to: 2))
+        XCTAssertEqual(w.tabs.map(\.id), ["t2", "t3", "t1"])
+        XCTAssertFalse(w.moveTab(from: 2, to: 9)) // 이미 맨 끝
+        XCTAssertTrue(w.moveTab(from: 2, to: -1))
+        XCTAssertEqual(w.tabs.map(\.id), ["t1", "t2", "t3"])
+        XCTAssertFalse(w.moveTab(from: 5, to: 0))
+        // 틈 기준: t3 를 맨 앞 틈으로, t1 을 맨 뒤 틈으로. 옮긴 탭이 골라진다.
+        XCTAssertTrue(w.move(tab: "t3", to: .tab(gap: 0)))
+        XCTAssertEqual(w.tabs.map(\.id), ["t3", "t1", "t2"])
+        XCTAssertEqual(w.selected, "t3")
+        XCTAssertTrue(w.move(tab: "t1", to: .tab(gap: 3)))
+        XCTAssertEqual(w.tabs.map(\.id), ["t3", "t2", "t1"])
+        // 제자리 틈(앞뒤)은 순서가 그대로
+        XCTAssertFalse(w.move(tab: "t1", to: .tab(gap: 2)))
+        XCTAssertEqual(w.tabs.map(\.id), ["t3", "t2", "t1"])
+    }
+
+    func testMoveTabIntoAnotherTabsPane() {
+        var w = workspace()
+        // 분할된 탭 t1 을 D 의 왼쪽에: 나무째 들어가고 t1 은 닫힌다, 포커스는 t1 이 보던 화면
+        XCTAssertTrue(w.move(tab: "t1", to: .split(target: "D", toward: .left)))
+        XCTAssertEqual(w.tabs.map(\.id), ["t2", "t3"])
+        XCTAssertEqual(w.tabs[0].root.panes, ["A", "B", "C", "D"])
+        guard case .split(.horizontal, 0.5, let first, .pane("D")) = w.tabs[0].root else { return XCTFail() }
+        XCTAssertEqual(first.panes, ["A", "B", "C"])
+        XCTAssertEqual(w.tabs[0].focused, "A")
+        XCTAssertEqual(w.selected, "t2")
+        // 자기 화면 위로는 못 놓는다
+        XCTAssertFalse(w.move(tab: "t2", to: .split(target: "B", toward: .up)))
+        // 편집기 탭도 같다
+        XCTAssertTrue(w.move(tab: "t3", to: .split(target: "B", toward: .down)))
+        XCTAssertEqual(w.tabs.map(\.id), ["t2"])
+        XCTAssertEqual(w.tabs[0].root.panes, ["A", "B", editor, "C", "D"])
+        XCTAssertEqual(w.tabs[0].focused, editor)
+        XCTAssertEqual(w.editors[editor]?.path, "/tmp/a.swift") // 편집기 정보는 그대로
+    }
+
+    func testMovePaneWithinTab() {
+        var w = workspace()
+        w.tabs[0].zoomed = true
+        // C 를 A 위로: A|B 에서 (C/A)|B
+        XCTAssertTrue(w.move(pane: "C", to: .split(target: "A", toward: .up)))
+        XCTAssertEqual(w.tabs.count, 3)
+        XCTAssertEqual(w.tabs[0].root, .split(axis: .horizontal, ratio: 0.5,
+                                              first: .split(axis: .vertical, ratio: 0.5, first: .pane("C"), second: .pane("A")),
+                                              second: .pane("B")))
+        XCTAssertEqual(w.tabs[0].focused, "C")
+        XCTAssertFalse(w.tabs[0].zoomed)
+        XCTAssertFalse(w.move(pane: "C", to: .split(target: "C", toward: .left)))
+        XCTAssertFalse(w.move(pane: "C", to: .split(target: "nope", toward: .left)))
+        XCTAssertEqual(w.tabs[0].root.panes, ["C", "A", "B"])
+    }
+
+    func testMovePaneToAnotherTabAndEmptiedTabCloses() {
+        var w = workspace()
+        // B 를 D 오른쪽으로: t1 은 A|C 로 남고 포커스는 그대로
+        XCTAssertTrue(w.move(pane: "B", to: .split(target: "D", toward: .right)))
+        XCTAssertEqual(w.tabs[0].root.panes, ["A", "C"])
+        XCTAssertEqual(w.tabs[0].focused, "A")
+        XCTAssertEqual(w.tabs[1].root, .split(axis: .horizontal, ratio: 0.5, first: .pane("D"), second: .pane("B")))
+        XCTAssertEqual(w.tabs[1].focused, "B")
+        XCTAssertEqual(w.selected, "t2")
+        // 혼자 있던 편집기를 A 아래로: 편집기 탭은 닫힌다
+        XCTAssertTrue(w.move(pane: editor, to: .split(target: "A", toward: .down)))
+        XCTAssertEqual(w.tabs.map(\.id), ["t1", "t2"])
+        XCTAssertEqual(w.tabs[0].root.panes, ["A", editor, "C"])
+        XCTAssertEqual(w.selected, "t1")
+        XCTAssertEqual(w.tabs[0].focused, editor)
+    }
+
+    func testExtractPaneToNewTab() throws {
+        var w = workspace()
+        w.tabs[0].focused = "B"
+        XCTAssertTrue(w.move(pane: "B", to: .tab(gap: 1)))
+        XCTAssertEqual(w.tabs.count, 4)
+        XCTAssertEqual(w.tabs[0].root.panes, ["A", "C"])
+        XCTAssertEqual(w.tabs[0].focused, "A") // 뺀 화면 앞 화면
+        XCTAssertEqual(w.tabs[1].root, .pane("B"))
+        XCTAssertEqual(w.selected, w.tabs[1].id)
+        // 맨 끝 틈(범위를 넘어도 끝으로)
+        XCTAssertTrue(w.move(pane: "C", to: .tab(gap: 99)))
+        XCTAssertEqual(w.tabs.last?.root, .pane("C"))
+        // 혼자 있는 화면을 틈으로 = 탭 순서만(탭 ID 그대로)
+        let id = w.tabs.last!.id
+        XCTAssertTrue(w.move(pane: "C", to: .tab(gap: 0)))
+        XCTAssertEqual(w.tabs.first?.id, id)
+        XCTAssertEqual(w.tabs.count, 5)
+        // 순서는 배치 파일에 남는다
+        let decoded = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(w))
+        XCTAssertEqual(decoded.tabs.map(\.id), w.tabs.map(\.id))
+        XCTAssertEqual(decoded.selected, id)
+    }
+}

@@ -161,7 +161,12 @@ final class SplitContainerView: NSView {
 
     /// 틈을 누르면 놓을 때까지 직접 따라간다(끄는 동안 터미널이 이벤트를 가져가지 않게)
     override func mouseDown(with event: NSEvent) {
-        guard let divider = divider(at: convert(event.locationInWindow, from: nil)), let window else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        titlePress = nil
+        guard let divider = divider(at: point), let window else {
+            titlePress = titlePane(at: point).map { ($0, point) }
+            return
+        }
         while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
             drag(divider, to: convert(next.locationInWindow, from: nil))
             if next.type == .leftMouseUp { break }
@@ -179,4 +184,68 @@ final class SplitContainerView: NSView {
         }
         onRatioChange?(divider.path, ratio)
     }
+
+    // MARK: - 제목 줄을 끌어 화면 옮기기
+
+    /// 이보다 덜 움직이면 끌기가 아니다
+    private static let dragThreshold: CGFloat = 4
+    /// 화면을 끄는 중(창 좌표). 놓았으면 마지막 값이 true.
+    var onPaneDrag: ((String, NSPoint, Bool) -> Void)?
+    /// 제목 오른쪽 클릭 > 새 탭으로 꺼내기
+    var onExtract: ((String) -> Void)?
+    private var titlePress: (pane: String, point: NSPoint)?
+    private var titleDragging = false
+
+    /// 분할 테두리 제목 줄 위의 화면(나눠져 있을 때만 제목이 있다)
+    private func titlePane(at point: NSPoint) -> String? {
+        guard bordered else { return nil }
+        return frames.first { $0.value.contains(point) && point.y < $0.value.minY + Self.insetTop }?.key
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let press = titlePress else { return }
+        if !titleDragging {
+            let point = convert(event.locationInWindow, from: nil)
+            guard hypot(point.x - press.point.x, point.y - press.point.y) >= Self.dragThreshold else { return }
+            titleDragging = true
+        }
+        onPaneDrag?(press.pane, event.locationInWindow, false)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer {
+            titlePress = nil
+            titleDragging = false
+        }
+        guard let press = titlePress, titleDragging else { return }
+        onPaneDrag?(press.pane, event.locationInWindow, true)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let pane = titlePane(at: convert(event.locationInWindow, from: nil)) else { return nil }
+        let menu = NSMenu()
+        menu.addItem(MenuAction(title: "새 탭으로 꺼내기") { [weak self] in self?.onExtract?(pane) })
+        return menu
+    }
+
+    /// 놓을 곳: 가리킨 화면에서 가장 가까운 가장자리 쪽. rect 는 그 쪽 절반(이 뷰 좌표).
+    func dropZone(at windowPoint: NSPoint) -> (pane: String, direction: Direction, rect: CGRect)? {
+        let point = convert(windowPoint, from: nil)
+        guard let (id, rect) = frames.first(where: { $0.value.contains(point) }) else { return nil }
+        let fx = (point.x - rect.minX) / max(rect.width, 1)
+        let fy = (point.y - rect.minY) / max(rect.height, 1)
+        let edges: [(Direction, CGFloat)] = [(.left, fx), (.right, 1 - fx), (.up, fy), (.down, 1 - fy)]
+        let direction = edges.min { $0.1 < $1.1 }?.0 ?? .right
+        var zone = rect.insetBy(dx: 3, dy: 3)
+        switch direction {
+        case .left: zone.size.width /= 2
+        case .right: zone.origin.x += zone.width / 2; zone.size.width /= 2
+        case .up: zone.size.height /= 2
+        case .down: zone.origin.y += zone.height / 2; zone.size.height /= 2
+        }
+        return (id, direction, zone)
+    }
+
+    /// 화면 자리(이 뷰 좌표)
+    func paneFrame(_ id: String) -> CGRect? { frames[id] }
 }

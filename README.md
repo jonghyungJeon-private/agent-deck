@@ -93,7 +93,12 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   단축키(Ghostty 기본값, 한글 입력 중에도 키 위치로 동작):
   ⌘T 새 탭 · ⌘D 오른쪽으로 나누기 · ⌘⇧D 아래로 나누기 · ⌘W 화면 닫기(셸이 아닌 프로그램이 돌면 묻는다) · ⌘⌥W 탭 닫기 ·
   ⌘[ ⌘] 이전/다음 화면(편집기 화면에선 뒤로/앞으로 — 아래 "코드 이동") · ⌘⌥방향키 그쪽 화면으로 · ⌘⇧↩ 화면 크게 보기/되돌리기 · ⌘⌃= 크기 같게 · ⌘⌃방향키 나눈 선 옮기기 ·
-  ⌘⇧[ ⌘⇧] 또는 ⌃Tab ⌃⇧Tab 이전/다음 탭 · ⌘1~8 탭, ⌘9 마지막 탭. 새 탭·분할은 지금 화면의 폴더에서 열린다.
+  ⌘⇧[ ⌘⇧] 또는 ⌃Tab ⌃⇧Tab 이전/다음 탭 · ⌘1~8 탭, ⌘9 마지막 탭 · ⌥⇧⌘← ⌥⇧⌘→ 지금 탭을 왼쪽/오른쪽으로 한 칸. 새 탭·분할은 지금 화면의 폴더에서 열린다.
+- 탭·화면 옮기기(배치만 바뀌어 셸·claude 는 다시 뜨지 않는다, 터미널·편집기 둘 다):
+  탭을 끌어 순서를 바꾼다(끄는 탭이 마우스를 따라가고 다른 탭이 비켜 선다, 조금만 움직이고 놓으면 클릭). 순서는 `layout.json` 에 남고 ⌘1~9 도 따른다.
+  탭을 탭 줄 밖으로 끌어 지금 탭의 화면 위에 놓으면 가장 가까운 가장자리 쪽 절반이 강조색으로 보이고, 놓으면 그 화면을 나눠 탭째(분할 나무 그대로) 들어간다.
+  분할 테두리 제목 줄을 끌면 그 화면만 옮긴다: 다른 화면 위 = 그쪽으로 나눠 넣기, 탭 줄 위 = 그 틈에 새 탭(세로 줄로 보임).
+  제목 줄 오른쪽 클릭·셸 메뉴 > 새 탭으로 꺼내기. 비게 된 탭은 닫히고 포커스는 옮긴 화면으로. 탭을 누르면 놓을 때 골라진다(끌어서 지금 탭에 합칠 수 있게).
 - 이름은 한 규칙으로 정해 탭·왼쪽 목록·분할 테두리에 똑같이 쓴다(앞의 것이 있으면 그것):
   ① 이 앱에서 직접 바꾼 이름(탭 두 번 클릭, 탭·목록 오른쪽 클릭, 셸 메뉴 > 이름 바꾸기 — 비우면 자동 이름으로)
   ② 사람이 붙인 claude 세션 이름(/rename, `claude -n`). claudec 처럼 `<폴더>@<브랜치>`·`<폴더>-<HHMM>` 로 기계적으로 붙인 이름은 건너뛴다
@@ -184,7 +189,8 @@ VERSION=0.2.0 scripts/build-term-proto.sh
 - 진단: `dist/ClaudeTerm.app/Contents/MacOS/ClaudeTermDaemon ctl list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>`
 - 시험용: `CLAUDE_TERM_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
   `CLAUDE_TERM_DEBUG=1` 이면 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
-  틈 끌기(`drag`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
+  틈 끌기(`drag`)·마우스 단계별(`mouse <down|drag|up|right> <x> <y>`)·오른쪽 클릭 메뉴 항목 실행(`menu-pick <x> <y> <항목>`)·
+  탭·분할 나무(`tabs`)·끌기 좌표(`dragpoints`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
   도구 창·files 시험 명령: `tool files`(⌘⇧E 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
   `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.

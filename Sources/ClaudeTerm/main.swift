@@ -94,6 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return model.host?.navigator.canGoBack ?? false
         case "nav-forward":
             return model.host?.navigator.canGoForward ?? false
+        case "extract-pane":
+            return (model.workspace.selectedTab?.root.panes.count ?? 0) > 1
+        case "move-tab:left":
+            return (model.workspace.selectedIndex ?? 0) > 0
+        case "move-tab:right":
+            return model.workspace.selectedIndex.map { $0 < model.workspace.tabs.count - 1 } ?? false
         default:
             return true
         }
@@ -150,6 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(shell, "탭 닫기", "close-tab", "w", [.command, .option])
         shell.addItem(.separator())
         addAction(shell, "이름 바꾸기…", "rename", "")
+        addAction(shell, "화면을 새 탭으로 꺼내기", "extract-pane", "")
         addSubmenu(main, shell)
 
         // 이동(IntelliJ 식). ⌘[ ⌘] 는 편집기 화면에서만 뒤로·앞으로(터미널에선 이전·다음 화면)
@@ -184,6 +191,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         view.addItem(.separator())
         addAction(view, "이전 탭", "previous-tab", "[", [.command, .shift])
         addAction(view, "다음 탭", "next-tab", "]", [.command, .shift])
+        // 탭 옮기기(IntelliJ 의 왼쪽/오른쪽으로 옮기기와 같은 ⌥⇧⌘←/→). 끌어서도 옮긴다.
+        addAction(view, "탭 왼쪽으로 옮기기", "move-tab:left", arrows[0].1, [.command, .option, .shift])
+        addAction(view, "탭 오른쪽으로 옮기기", "move-tab:right", arrows[1].1, [.command, .option, .shift])
         for number in 1...9 {
             addAction(view, number == 9 ? "마지막 탭" : "탭 \(number)", "tab:\(number)", "\(number)")
         }
@@ -240,6 +250,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             map[ShortcutKey(code, [.command, .option])] = "focus:\(direction)"
             map[ShortcutKey(code, [.command, .control])] = "resize:\(direction)"
         }
+        map[ShortcutKey(123, [.command, .option, .shift])] = "move-tab:left"
+        map[ShortcutKey(124, [.command, .option, .shift])] = "move-tab:right"
         for (number, code) in zip(1...9, [18, 19, 20, 21, 23, 22, 26, 28, 25] as [UInt16]) {
             map[ShortcutKey(code, .command)] = "tab:\(number)"
         }
@@ -673,6 +685,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 isARepeat: false, keyCode: codes[key] ?? 0) {
                 NSApp.sendEvent(event)
             }
+        case "tabs":
+            // 탭 순서·분할 나무(화면 ID 앞 4자, * = 포커스, > = 고른 탭)
+            func describe(_ node: SplitNode, _ focused: String) -> String {
+                switch node {
+                case .pane(let id): return String(id.prefix(4)) + (id == focused ? "*" : "")
+                case .split(let axis, _, let first, let second):
+                    return "(" + describe(first, focused) + (axis == .horizontal ? " | " : " / ") + describe(second, focused) + ")"
+                }
+            }
+            for (index, tab) in model.workspace.tabs.enumerated() {
+                print("tabs \(index == model.workspace.selectedIndex ? ">" : " ")\(index) \(tab.id.prefix(4)) \(describe(tab.root, tab.focused))"
+                    + (tab.zoomed ? " zoomed" : ""))
+            }
+            print("tabs end")
+            fflush(stdout)
+        case "dragpoints":
+            print(model.host?.debugDragPoints() ?? "")
+            print("dragpoints end")
+            fflush(stdout)
+        case "mouse":
+            // 끌기 단계별 시험: mouse <down|drag|up|right> <x> <y> (창 좌표, 아래가 0). 사이에 그림을 찍어 볼 수 있다.
+            let v = argument.split(separator: " ").map(String.init)
+            guard v.count == 3, let window, let x = Double(v[1]), let y = Double(v[2]) else { return }
+            let kinds: [String: NSEvent.EventType] = ["down": .leftMouseDown, "drag": .leftMouseDragged, "up": .leftMouseUp,
+                                                      "right": .rightMouseDown]
+            guard let kind = kinds[v[0]], let event = NSEvent.mouseEvent(
+                with: kind, location: NSPoint(x: x, y: y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            else { return }
+            if kind == .rightMouseDown {
+                // 오른쪽 클릭 메뉴 항목만 출력(메뉴를 띄우면 시험이 멈춘다)
+                let view = window.contentView?.hitTest(window.contentView!.convert(event.locationInWindow, from: nil))
+                let titles = view?.menu(for: event)?.items.map(\.title) ?? []
+                print("menu " + titles.joined(separator: " / "))
+                fflush(stdout)
+                return
+            }
+            window.sendEvent(event)
+        case "menu-pick":
+            // menu-pick <x> <y> <항목 제목>: 그 자리 오른쪽 클릭 메뉴 항목 실행
+            let v = argument.split(separator: " ", maxSplits: 2).map(String.init)
+            guard v.count == 3, let window, let content = window.contentView, let x = Double(v[0]), let y = Double(v[1]),
+                  let event = NSEvent.mouseEvent(
+                    with: .rightMouseDown, location: NSPoint(x: x, y: y), modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1),
+                  let item = content.hitTest(content.convert(event.locationInWindow, from: nil))?.menu(for: event)?
+                    .items.first(where: { $0.title == v[2] }), let action = item.action
+            else { return }
+            NSApp.sendAction(action, to: item.target, from: item)
         case "views":
             // 창 맨 위 뷰 구조(무엇이 탭 줄을 덮는지)
             func dump(_ view: NSView, _ depth: Int) {

@@ -894,11 +894,40 @@ final class TermModel: ObservableObject {
         updateSelectedTab { $0.root = $0.root.settingRatio(at: path, to: ratio) }
     }
 
+    // MARK: - 탭·화면 옮기기
+    // 배치만 바꾼다. 데몬 화면(PTY)은 그대로라 셸·claude 가 다시 뜨지 않고, 계속 보이는 화면은 뷰도 그대로 옮겨 붙는다.
+
+    /// 탭 줄에서 끌어 순서 바꾸기(to = 옮긴 뒤 자리). 옮긴 탭을 고른다.
     func moveTab(from: Int, to: Int) {
-        guard workspace.tabs.indices.contains(from), workspace.tabs.indices.contains(to), from != to else { return }
+        guard workspace.tabs.indices.contains(from) else { return }
+        move(tab: workspace.tabs[from].id, to: .tab(gap: to > from ? to + 1 : to))
+    }
+
+    /// 지금 탭을 왼쪽(-1)·오른쪽(+1)으로 한 칸
+    func moveSelectedTab(by offset: Int) {
+        guard let index = workspace.selectedIndex else { return }
         var next = workspace
-        next.tabs.insert(next.tabs.remove(at: from), at: to)
+        guard next.moveTab(from: index, to: index + offset) else { return }
         setWorkspace(next, render: false)
+    }
+
+    func move(tab id: String, to drop: PaneDrop) {
+        var next = workspace
+        guard next.move(tab: id, to: drop) else { return }
+        setWorkspace(next, render: true)
+    }
+
+    func move(pane id: String, to drop: PaneDrop) {
+        var next = workspace
+        guard next.move(pane: id, to: drop) else { return }
+        setWorkspace(next, render: true)
+    }
+
+    /// 지금 화면을 새 탭으로 꺼내 지금 탭 바로 뒤에 둔다(분할된 탭에서만)
+    func extractPane(_ id: String? = nil) {
+        guard let id = id ?? selectedId, let index = workspace.tabIndex(containing: id),
+              workspace.tabs[index].root.panes.count > 1 else { return }
+        move(pane: id, to: .tab(gap: index + 1))
     }
 
     /// 메뉴·단축키·시험 명령이 함께 쓰는 이름
@@ -924,6 +953,8 @@ final class TermModel: ObservableObject {
         case "zoom": toggleZoom()
         case "equalize": equalize()
         case "resize": if let direction = parts.dropFirst().first.flatMap({ Direction(rawValue: $0) }) { resizeSplit(direction) }
+        case "move-tab": moveSelectedTab(by: parts.dropFirst().first == "left" ? -1 : 1)
+        case "extract-pane": extractPane()
         case "next-tab": selectTab(offset: 1)
         case "previous-tab": selectTab(offset: -1)
         case "tab":
