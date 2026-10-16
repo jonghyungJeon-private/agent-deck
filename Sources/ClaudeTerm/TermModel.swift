@@ -124,6 +124,8 @@ final class TermModel: ObservableObject {
     /// 세션별 첫 질문(찾으면 고정). 못 찾았으면 그때 파일 크기를 적어 두고 커질 때만 다시 본다.
     private var firstPrompts: [String: (prompt: String?, size: UInt64)] = [:]
     let names = SessionNames()
+    /// spaces 의 접기·보이는 순서(탭 순서와 따로)
+    let spaces = SpacesStore()
     private let codexScanner = CodexScanner()
     /// 하위 에이전트 훑기(worker 전용). 10초에 한 번만.
     private let subagents = SubagentScanner()

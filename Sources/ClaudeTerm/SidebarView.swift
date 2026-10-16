@@ -11,6 +11,8 @@ private extension Color {
 /// 어두운 바탕에 고정폭 글꼴, 색은 상태와 포커스에만 쓴다.
 struct SidebarView: View {
     @ObservedObject var model: TermModel
+    /// 접기·순서(term/spaces.json). 목록에 보이는 방식일 뿐 탭 순서와는 상관없다.
+    @ObservedObject private var spaces: SpacesStore
     /// 도크에 도구가 하나뿐이면 머리 줄에 "spaces" 를 보인다(둘이면 위 도구 버튼 줄이 보인다)
     var showsTitle = true
     /// 머리 줄 오른쪽 클릭: 왼쪽·오른쪽으로 옮기기, 숨기기
@@ -18,6 +20,14 @@ struct SidebarView: View {
     var currentSide: DockSide = .left
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
     @State private var expandedAgent: String?
+
+    init(model: TermModel, showsTitle: Bool = true, onDock: ((DockSide) -> Void)? = nil, currentSide: DockSide = .left) {
+        _model = ObservedObject(wrappedValue: model)
+        _spaces = ObservedObject(wrappedValue: model.spaces)
+        self.showsTitle = showsTitle
+        self.onDock = onDock
+        self.currentSide = currentSide
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,34 +42,19 @@ struct SidebarView: View {
                     }
                     // 묶음·작업 트리·세션을 한 줄짜리 목록으로 펼쳐 그린다.
                     // ForEach 를 겹쳐 쓰면 안쪽 줄이 바뀐 것을 SwiftUI 가 놓쳐 이름이 늦게 바뀌었다.
-                    ForEach(SidebarItem.flatten(model.groups)) { item in
-                        switch item {
-                        case .group(let group):
-                            GroupRowView(group: group, menu: { openMenu(group.path) })
-                        case .worktree(let section):
-                            WorktreeRowView(section: section)
-                                .contextMenu { openMenu(section.path) }
-                        case .session(let row, let depth):
-                            SessionRowView(row: row, depth: depth,
-                                           selected: row.id == model.selectedId,
-                                           tabNumber: model.workspace.tabIndex(containing: row.id).map { $0 + 1 })
-                                .onTapGesture { model.focus(pane: row.id) }
-                                .contextMenu {
-                                    Button("이름 바꾸기…") { model.rename(pane: row.id) }
-                                    Button("화면 닫기(셸·에이전트 종료)") { model.close(pane: row.id) }
-                                    Divider()
-                                    openMenu(row.cwd)
-                                }
-                        case .agent(let agent, let depth, let owner):
-                            AgentRowView(agent: agent, depth: depth, owner: owner, expanded: expandedAgent == agent.id)
-                                .onTapGesture {
-                                    // 띄운 에이전트 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
-                                    model.focus(pane: agent.paneId)
-                                    expandedAgent = expandedAgent == agent.id ? nil : agent.id
-                                }
-                        case .gap:
-                            Spacer().frame(height: 10)
-                        }
+                    let items = SidebarItem.flatten(model.groups, spaces: spaces.state)
+                    ForEach(items) { item in
+                        row(item)
+                            .opacity(isDragged(item) ? 0.35 : 1)
+                            .overlay(alignment: insertion(item) == .below ? .bottom : .top) {
+                                if let edge = insertion(item) { InsertionLine(edge: edge, indent: item.indent) }
+                            }
+                            .onDrop(of: [.text], delegate: SpacesDropDelegate(item: item, items: items,
+                                                                              groups: model.groups, store: spaces))
+                            .onHover { inside in
+                                // 창 밖에 놓는 등 끌기가 취소되면 놓기 알림이 없다 → 마우스가 떼진 채 다시 오면 지운다
+                                if inside, spaces.drag != nil, NSEvent.pressedMouseButtons == 0 { spaces.drag = nil }
+                            }
                     }
                 }
                 .padding(.vertical, 4)
@@ -72,6 +67,93 @@ struct SidebarView: View {
         .environment(\.colorScheme, .dark)
     }
 
+    @ViewBuilder
+    private func row(_ item: SidebarItem) -> some View {
+        switch item {
+        case .group(let group, let collapsed, let summary):
+            GroupRowView(group: group, collapsed: collapsed, summary: summary,
+                         holdsSelection: collapsed && group.sections.contains { $0.rows.contains { $0.id == model.selectedId } },
+                         onToggle: { spaces.toggle(SpacesState.groupKey(group.path)) },
+                         menu: { openMenu(group.path) },
+                         context: {
+                             Button(collapsed ? "펼치기" : "접기") { spaces.toggle(SpacesState.groupKey(group.path)) }
+                             collapseAllButtons
+                             Divider()
+                             openMenu(group.path)
+                         })
+                .onDrag {
+                    spaces.drag = SpacesDrag(kind: .group, id: group.path)
+                    return NSItemProvider(object: group.path as NSString)
+                }
+        case .worktree(let section, _, let collapsed, let summary):
+            WorktreeRowView(section: section, collapsed: collapsed, summary: summary,
+                            holdsSelection: collapsed && section.rows.contains { $0.id == model.selectedId },
+                            onToggle: { spaces.toggle(SpacesState.worktreeKey(section.path)) })
+                .contextMenu {
+                    Button(collapsed ? "펼치기" : "접기") { spaces.toggle(SpacesState.worktreeKey(section.path)) }
+                    Divider()
+                    openMenu(section.path)
+                }
+        case .session(let row, let depth, _, let section):
+            SessionRowView(row: row, depth: depth,
+                           selected: row.id == model.selectedId,
+                           tabNumber: model.workspace.tabIndex(containing: row.id).map { $0 + 1 })
+                .onTapGesture { model.focus(pane: row.id) }
+                .onDrag {
+                    spaces.drag = SpacesDrag(kind: .session, id: row.id, section: section)
+                    return NSItemProvider(object: row.id as NSString)
+                }
+                .contextMenu {
+                    Button("이름 바꾸기…") { model.rename(pane: row.id) }
+                    Button("화면 닫기(셸·에이전트 종료)") { model.close(pane: row.id) }
+                    Divider()
+                    openMenu(row.cwd)
+                }
+        case .agent(let agent, let depth, let owner, _):
+            AgentRowView(agent: agent, depth: depth, owner: owner, expanded: expandedAgent == agent.id)
+                .onTapGesture {
+                    // 띄운 에이전트 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
+                    model.focus(pane: agent.paneId)
+                    expandedAgent = expandedAgent == agent.id ? nil : agent.id
+                }
+        case .gap:
+            // 묶음 끝 틈: 묶음을 끌어 내릴 때 놓을 자리 줄이 여기 그려진다
+            Color.clear.frame(height: 10).contentShape(Rectangle())
+        }
+    }
+
+    private func isDragged(_ item: SidebarItem) -> Bool {
+        guard let drag = spaces.drag else { return false }
+        switch (drag.kind, item) {
+        case (.group, .gap): return false
+        case (.group, _): return item.groupPath == drag.id
+        case (.session, .session(let row, _, _, _)): return row.id == drag.id
+        default: return false
+        }
+    }
+
+    /// 끌어 놓을 자리 표시: 묶음은 머리 줄 위(올릴 때) 또는 묶음 끝 틈(내릴 때), 세션은 그 줄 위·아래
+    private func insertion(_ item: SidebarItem) -> InsertionLine.Edge? {
+        guard let drag = spaces.drag, let target = drag.target else { return nil }
+        switch (drag.kind, item) {
+        case (.group, .group(let group, _, _)) where group.path == target && !drag.after: return .above
+        case (.group, .gap(let path)) where path == target && drag.after: return .middle
+        case (.session, .session(let row, _, _, _)) where row.id == target: return drag.after ? .below : .above
+        default: return nil
+        }
+    }
+
+    @ViewBuilder
+    private var collapseAllButtons: some View {
+        Button("모두 접기") { spaces.collapseAll(model.groups) }
+        Button("모두 펼치기") { spaces.expandAll() }
+    }
+
+    /// 지금 펼쳐진 묶음·작업 트리가 하나라도 있는지(머리 줄 버튼이 접기/펼치기 중 무엇을 할지)
+    private var anyExpanded: Bool {
+        SpacesStore.collapsibleKeys(model.groups).contains { !spaces.state.isCollapsed($0) }
+    }
+
     private var header: some View {
         HStack(spacing: 4) {
             if showsTitle {
@@ -80,6 +162,13 @@ struct SidebarView: View {
                     .foregroundStyle(Color(TermAppearance.textDim))
             }
             Spacer()
+            if !model.groups.isEmpty {
+                let collapse = anyExpanded
+                IconChromeButton(symbol: collapse ? "rectangle.compress.vertical" : "rectangle.expand.vertical",
+                                 help: collapse ? "모두 접기" : "모두 펼치기") {
+                    if collapse { spaces.collapseAll(model.groups) } else { spaces.expandAll() }
+                }
+            }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 4) {
                     ChromeButton(label: "+ claude", help: "폴더를 골라 새 탭에서 claude 실행") {
@@ -106,7 +195,9 @@ struct SidebarView: View {
         .frame(height: TerminalHostController.tabBarHeight)
         .contentShape(Rectangle())
         .contextMenu {
+            collapseAllButtons
             if let onDock {
+                Divider()
                 Button((currentSide == .left ? "✓ " : "") + "왼쪽으로 옮기기") { onDock(.left) }
                 Button((currentSide == .right ? "✓ " : "") + "오른쪽으로 옮기기") { onDock(.right) }
                 Divider()
@@ -231,6 +322,28 @@ struct ChromeButton: View {
     }
 }
 
+/// 사이드바 위 그림 버튼(글자 버튼과 같은 모양)
+struct IconChromeButton: View {
+    let symbol: String
+    let help: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
+                .frame(width: 22, height: 20)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(help)
+    }
+}
+
 /// 상태 점. 꺼진 화면·쉬는 중은 속이 빈 점, 입력 대기는 테두리를 두른 점(색만으로 구분하지 않게 모양도 다르게).
 struct StatusDot: View {
     let status: WorkStatus
@@ -252,25 +365,101 @@ struct StatusDot: View {
     }
 }
 
-struct GroupRowView<MenuContent: View>: View {
+/// 접기 화살표(▸ 접힘, ▾ 펼침)
+struct DisclosureChevron: View {
+    let collapsed: Bool
+    var highlighted = false
+
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(Color(highlighted ? TermAppearance.textPrimary : TermAppearance.textDim))
+            .rotationEffect(.degrees(collapsed ? 0 : 90))
+            .frame(width: 10, height: 10)
+    }
+}
+
+/// 접힌 줄의 상태 합계: 상태 점 + 수(입력 대기·오류는 붉은 바탕으로 눈에 띄게), 일하는 하위 에이전트, 세션 수
+struct SpacesSummaryView: View {
+    let summary: SpacesSummary
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(SpacesSummary.Kind.allCases.filter { summary.count($0) > 0 }, id: \.self) { kind in
+                let attention = kind == .waiting || kind == .error
+                HStack(spacing: 3) {
+                    StatusDot(status: WorkStatus(summary: kind))
+                    Text("\(summary.count(kind))")
+                        .font(Font(TermAppearance.uiFont(10, bold: attention)))
+                        .foregroundStyle(Color(attention ? TermAppearance.red : TermAppearance.textPrimary).opacity(attention ? 1 : 0.85))
+                }
+                .padding(.horizontal, attention ? 5 : 0)
+                .padding(.vertical, attention ? 1 : 0)
+                .background {
+                    if attention {
+                        Capsule().fill(Color(TermAppearance.red).opacity(0.18))
+                            .overlay(Capsule().strokeBorder(Color(TermAppearance.red).opacity(0.55), lineWidth: 1))
+                    }
+                }
+            }
+            if summary.runningAgents > 0 {
+                Text("↳\(summary.runningAgents)")
+                    .font(Font(TermAppearance.uiFont(10)))
+                    .foregroundStyle(Color(TermAppearance.yellow))
+            }
+            Text(summary.sessions > 0 ? "세션 \(summary.sessions)" : "세션 없음")
+                .font(Font(TermAppearance.uiFont(10)))
+                .foregroundStyle(Color(TermAppearance.textDim))
+        }
+        .fixedSize()
+        .help(helpText)
+    }
+
+    private var helpText: String {
+        var parts = summary.entries.map { "\(WorkStatus(summary: $0.kind).label ?? "") \($0.count)" }
+        if summary.runningAgents > 0 { parts.append("하위 에이전트 작업 중 \(summary.runningAgents)") }
+        parts.append("세션 \(summary.sessions)")
+        return parts.joined(separator: " · ")
+    }
+}
+
+struct GroupRowView<MenuContent: View, ContextContent: View>: View {
     let group: FolderGroup
+    let collapsed: Bool
+    /// 접혔을 때만(안의 상태 합계)
+    let summary: SpacesSummary?
+    /// 접힌 묶음 안에 지금 고른 화면이 있다
+    let holdsSelection: Bool
+    let onToggle: () -> Void
     @ViewBuilder let menu: () -> MenuContent
+    @ViewBuilder let context: () -> ContextContent
     @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            StatusDot(status: WorkStatus.top(group.sections.flatMap { $0.rows.map(\.status) }))
-                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-            VStack(alignment: .leading, spacing: 1) {
-                Text(group.name)
-                    .font(Font(TermAppearance.uiFont(12, bold: true)))
-                    .foregroundStyle(Color(TermAppearance.textPrimary))
-                Text(group.branch ?? (group.path as NSString).abbreviatingWithTildeInPath)
-                    .font(Font(TermAppearance.uiFont(10)))
-                    .foregroundStyle(Color(TermAppearance.textDim))
+        HStack(alignment: .center, spacing: 6) {
+            // 화살표·이름 어디를 눌러도 접고 편다(+ 메뉴는 따로)
+            HStack(alignment: .center, spacing: 6) {
+                DisclosureChevron(collapsed: collapsed, highlighted: hovering)
+                StatusDot(status: WorkStatus.top(group.sections.flatMap { $0.rows.map(\.status) }))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(group.name)
+                        .font(Font(TermAppearance.uiFont(12, bold: true)))
+                        .foregroundStyle(Color(TermAppearance.textPrimary))
+                    // 접혔으면 둘째 줄 앞에 안의 상태 합계(이름은 폭을 그대로 쓴다)
+                    HStack(spacing: 6) {
+                        if let summary { SpacesSummaryView(summary: summary) }
+                        Text((summary == nil ? "" : "· ") + (group.branch ?? (group.path as NSString).abbreviatingWithTildeInPath))
+                            .font(Font(TermAppearance.uiFont(10)))
+                            .foregroundStyle(Color(TermAppearance.textDim))
+                    }
+                }
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .padding(.leading, 2)
+                Spacer(minLength: 4)
             }
-            .lineLimit(1)
-            Spacer(minLength: 4)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onToggle)
             Menu {
                 menu()
             } label: {
@@ -282,34 +471,49 @@ struct GroupRowView<MenuContent: View>: View {
             .opacity(hovering ? 1 : 0.35)
             .help("이 폴더에서 새로 열기")
         }
-        .padding(.leading, 14)
+        .padding(.leading, 8)
         .padding(.trailing, 10)
         .padding(.vertical, 6)
+        .background(Color(holdsSelection || hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
+        .overlay(alignment: .leading) {
+            if holdsSelection { Rectangle().fill(Color(TermAppearance.accent).opacity(0.7)).frame(width: 2) }
+        }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .contextMenu { menu() }
-        .help(group.path)
+        .contextMenu { context() }
+        .help(group.path + (collapsed ? "\n누르면 펼칩니다 · 끌어서 순서를 바꿉니다" : "\n누르면 접습니다 · 끌어서 순서를 바꿉니다"))
     }
 }
 
 struct WorktreeRowView: View {
     let section: WorktreeSection
+    let collapsed: Bool
+    let summary: SpacesSummary?
+    let holdsSelection: Bool
+    let onToggle: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
+        HStack(alignment: .center, spacing: 6) {
+            DisclosureChevron(collapsed: collapsed, highlighted: hovering)
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Color(section.isClaude ? TermAppearance.claudeColor : TermAppearance.textDim))
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(section.name)
                     .font(Font(TermAppearance.uiFont(11, bold: true)))
                     .foregroundStyle(Color(TermAppearance.textPrimary))
-                Text(section.branch ?? "")
-                    .font(Font(TermAppearance.uiFont(10)))
-                    .foregroundStyle(Color(TermAppearance.textDim))
+                HStack(spacing: 6) {
+                    if let summary { SpacesSummaryView(summary: summary) }
+                    Text((summary == nil || section.branch == nil ? "" : "· ") + (section.branch ?? ""))
+                        .font(Font(TermAppearance.uiFont(10)))
+                        .foregroundStyle(Color(TermAppearance.textDim))
+                }
             }
             Spacer(minLength: 4)
-            if section.agents.contains(where: \.isRunning) {
+            if summary != nil {
+                EmptyView()
+            } else if section.agents.contains(where: \.isRunning) {
                 Text("● 작업 중 \(section.agents.filter(\.isRunning).count)")
                     .font(Font(TermAppearance.uiFont(10, bold: true)))
                     .foregroundStyle(Color(TermAppearance.yellow))
@@ -321,11 +525,17 @@ struct WorktreeRowView: View {
         }
         .lineLimit(1)
         .truncationMode(.middle)
-        .padding(.leading, 14 + 13)
+        .padding(.leading, 14 + 7)
         .padding(.trailing, 10)
         .padding(.vertical, 4)
+        .background(Color(holdsSelection || hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
+        .overlay(alignment: .leading) {
+            if holdsSelection { Rectangle().fill(Color(TermAppearance.accent).opacity(0.7)).frame(width: 2) }
+        }
         .contentShape(Rectangle())
-        .help(section.isClaude ? "claude 가 만든 작업 트리 · \(section.path)" : section.path)
+        .onHover { hovering = $0 }
+        .onTapGesture(perform: onToggle)
+        .help((section.isClaude ? "claude 가 만든 작업 트리 · \(section.path)" : section.path) + (collapsed ? "\n누르면 펼칩니다" : "\n누르면 접습니다"))
     }
 }
 
@@ -387,46 +597,166 @@ struct SessionRowView: View {
     }
 }
 
-/// 왼쪽 목록 한 줄(묶음 머리·작업 트리·세션·묶음 사이 틈)
+/// 왼쪽 목록 한 줄(묶음 머리·작업 트리·세션·묶음 사이 틈). 접힘·순서(SpacesState)를 입혀 펼친다.
 enum SidebarItem: Identifiable, Equatable {
-    case group(FolderGroup)
-    case worktree(WorktreeSection)
-    case session(PaneRow, depth: Int)
+    /// summary: 접혔을 때만 안의 상태 합계
+    case group(FolderGroup, collapsed: Bool, summary: SpacesSummary?)
+    case worktree(WorktreeSection, group: String, collapsed: Bool, summary: SpacesSummary?)
+    /// section: 이 세션이 든 칸(작업 트리 경로) — 끌어서 순서를 바꿀 수 있는 범위
+    case session(PaneRow, depth: Int, group: String, section: String)
     /// 하위 에이전트(owner: 띄운 에이전트 화면 이름 — 다른 줄 아래에 있을 때만)
-    case agent(SubagentActivity, depth: Int, owner: String?)
+    case agent(SubagentActivity, depth: Int, owner: String?, group: String)
     case gap(String)
 
     var id: String {
         switch self {
-        case .group(let group): return "g:" + group.path
-        case .worktree(let section): return "w:" + section.path
-        case .session(let row, _): return "s:" + row.id
-        case .agent(let agent, _, _): return "a:" + agent.sessionId + agent.id
+        case .group(let group, _, _): return "g:" + group.path
+        case .worktree(let section, _, _, _): return "w:" + section.path
+        case .session(let row, _, _, _): return "s:" + row.id
+        case .agent(let agent, _, _, _): return "a:" + agent.sessionId + agent.id
         case .gap(let path): return "gap:" + path
         }
     }
 
-    static func flatten(_ groups: [FolderGroup]) -> [SidebarItem] {
+    /// 이 줄이 든 묶음(저장소·폴더 경로)
+    var groupPath: String {
+        switch self {
+        case .group(let group, _, _): return group.path
+        case .worktree(_, let group, _, _), .session(_, _, let group, _), .agent(_, _, _, let group): return group
+        case .gap(let path): return path
+        }
+    }
+
+    /// 끌어 놓을 자리 줄을 들여 쓸 너비
+    var indent: CGFloat {
+        switch self {
+        case .session(_, let depth, _, _): return 14 + CGFloat(depth) * 15
+        default: return 8
+        }
+    }
+
+    static func flatten(_ groups: [FolderGroup], spaces: SpacesState = SpacesState()) -> [SidebarItem] {
         var items: [SidebarItem] = []
         let owners = Dictionary(groups.flatMap { $0.sections.flatMap(\.rows) }.map { ($0.id, $0.name) },
                                 uniquingKeysWith: { first, _ in first })
-        for group in groups {
-            items.append(.group(group))
-            for section in group.sections {
-                let depth = section.isMain ? 1 : 2
-                if !section.isMain {
-                    items.append(.worktree(section))
-                    // 이 작업 트리에서 일하는 하위 에이전트(띄운 claude 는 다른 줄에 있으므로 이름을 함께 보인다)
-                    items += section.agents.map { .agent($0, depth: depth, owner: owners[$0.paneId]) }
-                }
-                for row in section.rows {
-                    items.append(.session(row, depth: depth))
-                    items += row.agents.map { .agent($0, depth: depth + 1, owner: nil) }
+        for group in SpacesOrder.apply(groups, order: spaces.groupOrder, id: \.path) {
+            let collapsed = spaces.isCollapsed(SpacesState.groupKey(group.path))
+            items.append(.group(group, collapsed: collapsed, summary: collapsed ? summary(group.sections) : nil))
+            if !collapsed {
+                for section in group.sections {
+                    let depth = section.isMain ? 1 : 2
+                    if !section.isMain {
+                        let closed = spaces.isCollapsed(SpacesState.worktreeKey(section.path))
+                        items.append(.worktree(section, group: group.path, collapsed: closed,
+                                               summary: closed ? summary([section]) : nil))
+                        if closed { continue }
+                        // 이 작업 트리에서 일하는 하위 에이전트(띄운 claude 는 다른 줄에 있으므로 이름을 함께 보인다)
+                        items += section.agents.map { .agent($0, depth: depth, owner: owners[$0.paneId], group: group.path) }
+                    }
+                    for row in SpacesOrder.apply(section.rows, order: spaces.sessionOrder, id: \.id) {
+                        items.append(.session(row, depth: depth, group: group.path, section: section.path))
+                        items += row.agents.map { .agent($0, depth: depth + 1, owner: nil, group: group.path) }
+                    }
                 }
             }
             items.append(.gap(group.path))
         }
         return items
+    }
+
+    /// 칸들 안의 세션·하위 에이전트 상태 합계(꺼진 화면은 상태 없이 세션으로만 센다)
+    static func summary(_ sections: [WorktreeSection]) -> SpacesSummary {
+        var summary = SpacesSummary()
+        for section in sections {
+            for row in section.rows {
+                summary.add(session: row.dormant ? nil : row.status.summaryKind)
+                row.agents.forEach { summary.add(agentRunning: $0.isRunning) }
+            }
+            section.agents.forEach { summary.add(agentRunning: $0.isRunning) }
+        }
+        return summary
+    }
+
+    /// 시험 명령 `spaces` 의 한 줄
+    var debugLine: String {
+        func counts(_ summary: SpacesSummary?) -> String {
+            guard let summary else { return "" }
+            return " summary=" + (summary.entries.map { "\($0.kind.rawValue):\($0.count)" } + ["agents:\(summary.runningAgents)", "sessions:\(summary.sessions)"])
+                .joined(separator: ",")
+        }
+        switch self {
+        case .group(let group, let collapsed, let summary):
+            return "group \(group.path) collapsed=\(collapsed)" + counts(summary)
+        case .worktree(let section, _, let collapsed, let summary):
+            return "  worktree \(section.path) collapsed=\(collapsed)" + counts(summary)
+        case .session(let row, let depth, _, _):
+            return String(repeating: "  ", count: depth) + "session \(row.id.prefix(4)) \(row.name) status=\(row.status.debugName)"
+        case .agent(let agent, let depth, _, _):
+            return String(repeating: "  ", count: depth) + "agent \(agent.description) running=\(agent.isRunning)"
+        case .gap: return "gap"
+        }
+    }
+}
+
+/// 끌어 놓을 자리 줄(강조색, 앞에 작은 고리)
+struct InsertionLine: View {
+    enum Edge { case above, below, middle }
+    let edge: Edge
+    let indent: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Circle().strokeBorder(Color(TermAppearance.accent), lineWidth: 2).frame(width: 7, height: 7)
+            Rectangle().fill(Color(TermAppearance.accent)).frame(height: 2)
+        }
+        .padding(.leading, indent - 3)
+        .padding(.trailing, 8)
+        .frame(maxHeight: edge == .middle ? .infinity : nil)
+        .offset(y: edge == .above ? -3.5 : edge == .below ? 3.5 : 0)
+        .allowsHitTesting(false)
+    }
+}
+
+/// 목록 줄 하나에 끌어 놓기. 묶음은 다른 묶음의 아무 줄에, 세션은 같은 칸의 세션에만 놓을 수 있다(그 밖은 무시).
+private struct SpacesDropDelegate: DropDelegate {
+    let item: SidebarItem
+    let items: [SidebarItem]
+    let groups: [FolderGroup]
+    let store: SpacesStore
+
+    func validateDrop(info: DropInfo) -> Bool { store.drag != nil }
+
+    func dropEntered(info: DropInfo) { update() }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: update() ? .move : .forbidden)
+    }
+
+    func dropExited(info: DropInfo) {
+        guard var drag = store.drag, let target = drag.target, target == drag.target(for: item) else { return }
+        drag.target = nil
+        store.drag = drag
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard store.drag != nil else { return false }
+        let ok = update()
+        store.finishDrag(groups: groups)
+        return ok
+    }
+
+    /// 이 줄 위에 있을 때 놓을 자리를 정한다. 놓을 수 있으면 true.
+    @discardableResult
+    private func update() -> Bool {
+        guard var drag = store.drag else { return false }
+        let target = drag.target(for: item)
+        let after = target.map { SpacesOrder.insertsAfter(drag.siblings(in: items), drag.id, onto: $0) } ?? false
+        if drag.target != target || drag.after != after {
+            drag.target = target
+            drag.after = after
+            store.drag = drag
+        }
+        return target != nil
     }
 }
 

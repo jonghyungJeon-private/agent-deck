@@ -353,8 +353,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             RunLoop.main.add(timer, forMode: .common)
             snapshotTimer = timer
         }
+        // CLAUDE_TERM_DEBUG_NAME: 시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게 알림 이름을 바꾼다
+        let channel = env["CLAUDE_TERM_DEBUG_NAME"].flatMap { $0.isEmpty ? nil : $0 } ?? "dev.claude-sessions.term.debug"
         DistributedNotificationCenter.default().addObserver(
-            forName: Notification.Name("dev.claude-sessions.term.debug"), object: nil, queue: .main
+            forName: Notification.Name(channel), object: nil, queue: .main
         ) { [weak self] note in
             guard let self, let command = note.object as? String else { return }
             self.debug(command)
@@ -397,7 +399,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "open-file":
             toolWindows?.files.debugOpen(argument)
         default:
-            if !debugEditor(command: parts.first ?? "", argument: argument) { debugTerminal(parts.first ?? "", argument) }
+            if debugEditor(command: parts.first ?? "", argument: argument) { return }
+            if model.spaces.debug(parts.first ?? "", argument, groups: model.groups) { return }
+            debugTerminal(parts.first ?? "", argument)
         }
     }
 

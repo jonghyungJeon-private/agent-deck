@@ -1,4 +1,5 @@
 import AppKit
+import TermLayout
 
 /// claude 화면의 작업 상태(hook 기록에서). 색만으로 구분하지 않도록 글자도 함께 보인다.
 enum WorkStatus: Equatable {
@@ -92,5 +93,28 @@ enum WorkStatus: Equatable {
 
     static func top(_ statuses: [WorkStatus]) -> WorkStatus {
         statuses.max { $0.rank < $1.rank } ?? .none
+    }
+
+    /// spaces 접힌 줄의 합계에 셀 종류(상태가 없는 셸·연결 전 claude 는 세션 수에만)
+    var summaryKind: SpacesSummary.Kind? {
+        switch self {
+        case .none, .unknown, .codexUnknown: return nil
+        case .working: return .working
+        case .waiting: return .waiting
+        case .done: return .done
+        case .idle: return .idle
+        case .error: return .error
+        }
+    }
+
+    /// 합계를 같은 점·색으로 그리려고
+    init(summary kind: SpacesSummary.Kind) {
+        switch kind {
+        case .working: self = .working
+        case .waiting: self = .waiting(nil)
+        case .done: self = .done
+        case .idle: self = .idle
+        case .error: self = .error(nil)
+        }
     }
 }

@@ -183,6 +183,10 @@ VERSION=0.2.0 scripts/build-term-proto.sh
 - 왼쪽 목록은 폴더(git 저장소)별로 묶고, 저장소의 작업 트리(worktree)를 아래에 펼친다(claude 가 만든 `.claude/worktrees/` 는 주황 아이콘).
   화면의 폴더는 claude 가 돌면 claude 프로세스의, 아니면 셸의 지금 폴더를 따른다(작업 트리로 옮겨 가면 그 아래로 옮겨진다).
   git 을 실행하지 않고 `.git` 파일만 읽는다. 폴더·작업 트리 줄의 `+`·오른쪽 클릭으로 그 자리에서 claude·셸을 새 탭으로 연다.
+  폴더·작업 트리 줄을 누르면(▸/▾) 접고 편다. 접힌 줄 둘째 줄에는 안(작업 트리·세션·하위 에이전트까지)의 상태 합계 — 같은 상태 점 + 수,
+  입력 대기·오류는 붉은 테두리로 따로, `↳N` 일하는 하위 에이전트, 세션 수. 머리 줄 버튼·오른쪽 클릭으로 모두 접기/펼치기.
+  폴더 머리 줄·세션 줄을 끌어 순서를 바꾼다(세션은 같은 작업 트리 안에서만, 다른 칸에 놓으면 무시). 이 순서는 목록에서만 쓰고
+  탭 순서·⌘1~9 는 바뀌지 않는다. 새 세션은 칸 맨 뒤에 붙는다. 접힘·순서는 `term/spaces.json` 에 저장한다(묶음은 경로, 세션은 화면 ID).
 - 스크롤: 바뀌지 않은 줄은 지난번 그린 결과를 다시 써서 한 번 그리기가 약 1/3 로 줄었다(PATCHES.md).
 - 터미널 엔진은 한글 폭·입력 표시를 고친 SwiftTerm 사본(`Vendor/SwiftTerm`, 고친 내용은 `PATCHES.md`).
 - 데이터 위치: `~/Library/Application Support/ClaudeSessions/term/`(소켓·로그). `CLAUDE_TERM_HOME` 으로 바꿀 수 있다.
@@ -194,6 +198,9 @@ VERSION=0.2.0 scripts/build-term-proto.sh
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
   도구 창·files 시험 명령: `tool files`(⌘⇧E 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
   `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.
+  spaces 시험 명령: `spaces`(보이는 줄·접힌 줄 합계·저장 상태)·`spaces-toggle g:<묶음 경로>|w:<작업 트리 경로>`·`spaces-collapse-all`·`spaces-expand-all`·
+  `spaces-move-group <경로>|<대상 경로>`·`spaces-move-session <화면 ID>|<대상 화면 ID>`(ID 는 앞 4글자로도)·`spaces-drag <group|session> <ID>|<대상>`(끄는 모습만 그림)·`spaces-drag-end`.
+  `CLAUDE_TERM_DEBUG_NAME=<이름>` 이면 그 이름의 알림만 받는다(시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게).
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
   이동 시험 명령: `goto [<줄>:<열>]`·`usages [<줄>:<열>]`·`symbol <글>`·`popup`(목록 내용)·`popup-key <up|down|enter|esc>`·
