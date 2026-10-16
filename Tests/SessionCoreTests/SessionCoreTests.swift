@@ -147,7 +147,7 @@ final class HookInstallerTests: XCTestCase {
         let installer = HookInstaller(settingsURL: settings, executablePath: "/A B/ClaudeSessions")
         XCTAssertNil(try installer.install())
         XCTAssertEqual(try installer.status(), .installed)
-        XCTAssertEqual(installer.command, "\"/A B/ClaudeSessions\" hook")
+        XCTAssertEqual(installer.command, "[ -x \"/A B/ClaudeSessions\" ] || exit 0; exec \"/A B/ClaudeSessions\" hook")
     }
 
     func testInvalidSettingsIsNotOverwritten() throws {

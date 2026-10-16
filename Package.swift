@@ -5,7 +5,7 @@ let package = Package(
     name: "ClaudeTerm",
     platforms: [.macOS(.v13)],
     products: [
-        // 내장 터미널 시제품: 화면 앱 + 세션을 붙잡고 있는 데몬
+        // AgentDeck(표시 이름). 제품·실행 파일 이름은 예전 그대로: 화면 앱 + 세션을 붙잡고 있는 데몬
         .executable(name: "ClaudeTerm", targets: ["ClaudeTerm"]),
         .executable(name: "ClaudeTermDaemon", targets: ["ClaudeTermDaemon"]),
     ],

@@ -294,7 +294,8 @@ final class MarkdownSchemeHandler: NSObject, WKURLSchemeHandler {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "webp": "image/webp",
         "svg": "image/svg+xml", "bmp": "image/bmp", "ico": "image/x-icon", "avif": "image/avif",
     ]
-    static let fonts: Set<String> = ["JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf", "JetBrainsMono-Italic.ttf"]
+    static let fonts: Set<String> = ["JetBrainsMono-Regular.ttf", "JetBrainsMono-Bold.ttf", "JetBrainsMono-Italic.ttf",
+                                     "D2Coding-Ver1.3.2-20180524.ttf", "D2CodingBold-Ver1.3.2-20180524.ttf"]
     static let maxImageBytes = 20 << 20
 
     let documentPath: String
@@ -425,13 +426,17 @@ enum MarkdownPage {
         let raised = hex(TermAppearance.chromeRaised)
         let accent = hex(TermAppearance.accent)
         let selection = hex(EditorStyle.selection)
-        let mono = "\"CT Mono\", \"D2Coding\", \"NanumGothicCoding\", ui-monospace, Menlo, monospace"
+        // 웹 화면은 다른 프로세스라 앱에 등록한 글꼴을 못 본다 → 앱에 넣은 D2Coding 을 한글이 있을 때만 받아 쓴다
+        let hangulRange = "unicode-range:U+1100-11FF,U+3130-318F,U+AC00-D7AF"
+        let mono = "\"CT Mono\", \"CT Hangul\", \"D2Coding\", \"NanumGothicCoding\", ui-monospace, Menlo, monospace"
         let check = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l3 3 6-7' "
             + "fill='none' stroke='%23\(bg.dropFirst())' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
         return """
         @font-face{font-family:"CT Mono";src:url("ctmd://app/fonts/JetBrainsMono-Regular.ttf");font-weight:400;font-style:normal}
         @font-face{font-family:"CT Mono";src:url("ctmd://app/fonts/JetBrainsMono-Bold.ttf");font-weight:700;font-style:normal}
         @font-face{font-family:"CT Mono";src:url("ctmd://app/fonts/JetBrainsMono-Italic.ttf");font-weight:400;font-style:italic}
+        @font-face{font-family:"CT Hangul";src:url("ctmd://app/fonts/D2Coding-Ver1.3.2-20180524.ttf");font-weight:400;\(hangulRange)}
+        @font-face{font-family:"CT Hangul";src:url("ctmd://app/fonts/D2CodingBold-Ver1.3.2-20180524.ttf");font-weight:700;\(hangulRange)}
         :root{color-scheme:dark}
         html{background:\(bg)}
         body{margin:0;background:\(bg);color:\(text);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Helvetica Neue",sans-serif;

@@ -5,7 +5,9 @@ import SwiftUI
 import TermLayout
 import TermWire
 
-// 내장 터미널 시제품: 왼쪽 세션 목록 + 오른쪽 터미널. 셸·claude 는 데몬(ClaudeTermDaemon)이 붙잡고 있다.
+// AgentDeck: 왼쪽 세션 목록 + 오른쪽 터미널. 셸·claude 는 데몬(ClaudeTermDaemon)이 붙잡고 있다.
+// 표시 이름만 AgentDeck 이고, 안쪽 이름(실행 파일 ClaudeTerm·ClaudeTermDaemon, 묶음 ID dev.claude-sessions.term,
+// 데이터 폴더 ClaudeSessions, CLAUDE_TERM_* 환경 변수)은 그대로 둔다 — hook 인식·데이터·권한을 옮기지 않으려고.
 
 // Claude 세션 안에서 띄워도 그 세션 표시 변수가 데몬·셸로 넘어가지 않게(대화 저장이 꺼지는 문제)
 InheritedEnvironment.reexecIfNeeded(executablePath: Bundle.main.executablePath)
@@ -36,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         toolWindows = tools
 
         let window = NSWindow(contentViewController: tools.split)
-        window.title = "Claude Term (시제품)"
+        window.title = "AgentDeck"
         window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
         window.backgroundColor = TermAppearance.chrome
@@ -100,6 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return (model.workspace.selectedIndex ?? 0) > 0
         case "move-tab:right":
             return model.workspace.selectedIndex.map { $0 < model.workspace.tabs.count - 1 } ?? false
+        case "hooks-disconnect":
+            return [.ok, .update].contains(model.hookState)
+        case "codex-hooks-disconnect":
+            menuItem.isHidden = ![.ok, .update].contains(model.codexHookState)
+            return !menuItem.isHidden
         default:
             return true
         }
@@ -110,7 +117,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let appItem = NSMenuItem()
         main.addItem(appItem)
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "Claude Term 종료(세션은 유지)", action: #selector(NSApplication.terminate(_:)),
+        appMenu.addItem(withTitle: "AgentDeck 정보", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+                        keyEquivalent: "")
+        addAction(appMenu, "업데이트 확인…", "update-check", "")
+        appMenu.addItem(.separator())
+        // hook 빼기(넣기는 사이드바 아래 "연결하기"). Codex 것은 연결돼 있을 때만 보인다.
+        addAction(appMenu, "Claude Code 연결 해제…", "hooks-disconnect", "")
+        addAction(appMenu, "Codex 연결 해제…", "codex-hooks-disconnect", "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "AgentDeck 가리기", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(withTitle: "기타 가리기", action: #selector(NSApplication.hideOtherApplications(_:)),
+                                         keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(withTitle: "모두 보기", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "AgentDeck 종료(세션은 유지)", action: #selector(NSApplication.terminate(_:)),
                         keyEquivalent: "q")
         appItem.submenu = appMenu
 
@@ -343,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
     ///   도구 창: tool <files|spaces>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
     ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
+    ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
         let snapshotDir = env["CLAUDE_TERM_SNAPSHOT"].flatMap { $0.isEmpty ? nil : $0 }
@@ -398,6 +420,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         case "open-file":
             toolWindows?.files.debugOpen(argument)
+        case "alert-answer":
+            // alert-answer <번호…>: 다음 확인 창들에서 누를 버튼(0 = 첫 버튼)
+            AppAlert.pendingAnswers += argument.split(separator: " ").compactMap { Int($0) }
+        case "update-state":
+            print("update-state current=\(model.updates.current ?? "-") available=\(model.updates.available?.tag ?? "-")")
+            fflush(stdout)
+        case "update-open":
+            model.updates.presentUpdate()
+        case "fonts":
+            print("fonts " + TermAppearance.debugFontSources())
+            fflush(stdout)
+        case "hooks-state":
+            print("hooks-state claude=\(model.hookState) codex=\(model.codexHookState)")
+            fflush(stdout)
+        case "appmenu":
+            if let menu = NSApp.mainMenu?.items.first?.submenu {
+                menu.update()
+                print("appmenu: " + menu.items.map { $0.isSeparatorItem ? "—" : $0.title + ($0.isHidden ? "(숨김)" : $0.isEnabled ? "" : "(꺼짐)") }
+                    .joined(separator: " / "))
+                fflush(stdout)
+            }
         default:
             if debugEditor(command: parts.first ?? "", argument: argument) { return }
             if model.spaces.debug(parts.first ?? "", argument, groups: model.groups) { return }

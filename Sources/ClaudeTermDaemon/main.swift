@@ -8,6 +8,8 @@ import TermWire
 // 화면을 그리지 않고, 화면마다 지난 출력만 상한을 두고 보관한다(앱이 다시 붙을 때 되살리는 용도).
 //   ClaudeTermDaemon            : 데몬(이미 떠 있으면 바로 끝남)
 //   ClaudeTermDaemon hook       : Claude Code hook(세션 기록)
+//   ClaudeTermDaemon codex-hook : Codex hook(작업 상태)
+//   ClaudeTermDaemon unhook     : 이 앱의 hook 을 Claude Code·Codex 설정에서 뺀다(삭제할 때)
 //   ClaudeTermDaemon ctl ...    : 시험·진단용 클라이언트 (list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>)
 
 if CommandLine.arguments.dropFirst().first == "ctl" {
@@ -20,6 +22,9 @@ if CommandLine.arguments.dropFirst().first == "hook" {
 
 if CommandLine.arguments.dropFirst().first == "codex-hook" {
     exit(CodexHook.run())
+}
+if CommandLine.arguments.dropFirst().first == "unhook" {
+    exit(Unhook.run(Array(CommandLine.arguments.dropFirst(2))))
 }
 
 signal(SIGPIPE, SIG_IGN)

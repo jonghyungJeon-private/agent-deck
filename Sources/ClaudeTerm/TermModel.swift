@@ -149,23 +149,51 @@ final class TermModel: ObservableObject {
     /// 목록에서 고른 줄 = 지금 탭의 포커스 화면
     var selectedId: String? { workspace.selectedTab?.focused }
 
+    private var daemonPath: String {
+        Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ClaudeTermDaemon").path
+    }
     /// hook 은 데몬 실행 파일이 맡는다(AppKit 을 띄우지 않아 가볍다)
-    private var hookInstaller: HookInstaller {
-        let path = Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ClaudeTermDaemon").path
-        return HookInstaller(executablePath: path, marker: "ClaudeTermDaemon")
-    }
-
-    private var codexHookInstaller: HookInstaller {
-        HookInstaller(settingsURL: CodexSessions.defaultHome.appendingPathComponent("hooks.json"),
-            executablePath: Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ClaudeTermDaemon").path,
-            marker: "ClaudeTermDaemon", events: CodexHook.events, subcommand: "codex-hook")
-    }
+    private var hookInstaller: HookInstaller { .claude(daemonPath: daemonPath) }
+    private var codexHookInstaller: HookInstaller { .codex(daemonPath: daemonPath) }
 
     func connectCodexHooks() {
         do {
             _ = try codexHookInstaller.install()
-            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks 에서 ClaudeTermDaemon 훅을 검토·신뢰한 뒤 사용하세요."
+            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks 에서 ClaudeTermDaemon 훅을 검토·신뢰한 뒤 사용하세요(갱신했으면 다시 신뢰)."
         } catch { notice = "Codex 연결 실패: \(error.localizedDescription)" }
+        checkHooks()
+    }
+
+    /// 메뉴 "Claude Code 연결 해제…": 무엇을 빼는지 보여 주고 확인받은 뒤 이 앱의 hook 만 뺀다
+    func disconnectHooks() {
+        disconnect(hookInstaller, label: "Claude Code", effect: "새로 시작하는 claude 세션의 이름·되살리기·작업 상태·알림이 동작하지 않습니다.")
+    }
+
+    func disconnectCodexHooks() {
+        disconnect(codexHookInstaller, label: "Codex", effect: "Codex 세션의 권한 요청·질문 대기·완료 상태와 알림이 더 이상 오지 않습니다.")
+    }
+
+    private func disconnect(_ installer: HookInstaller, label: String, effect: String) {
+        let file = (installer.settingsURL.path as NSString).abbreviatingWithTildeInPath
+        let alert = NSAlert()
+        alert.messageText = "\(label) 연결을 해제할까요?"
+        alert.informativeText = """
+            \(file) 에서 이 앱이 넣은 hook(ClaudeTermDaemon, \(installer.eventNames.count)개 이벤트)만 뺍니다. \
+            다른 hook·설정은 그대로이고, 바꾸기 전에 백업을 남깁니다.
+
+            \(effect) 이미 열린 세션은 계속 돌고, 언제든 다시 연결할 수 있습니다.
+            """
+        alert.addButton(withTitle: "연결 해제")
+        alert.addButton(withTitle: "취소")
+        guard AppAlert.run(alert) == .alertFirstButtonReturn else { return }
+        do {
+            let result = try installer.uninstall()
+            notice = result.removed == 0 ? "\(label): 뺄 hook 이 없습니다."
+                : "\(label) 연결을 해제했습니다(hook \(result.removed)개)."
+                    + (result.backup.map { "\n이전 설정 백업: \(($0.path as NSString).abbreviatingWithTildeInPath)" } ?? "")
+        } catch {
+            notice = "\(label) 연결을 해제하지 못했습니다: \(error.localizedDescription)"
+        }
         checkHooks()
     }
 
@@ -210,12 +238,15 @@ final class TermModel: ObservableObject {
     }
 
     let notifier = Notifier()
+    /// 새 버전 알림(하루 한 번까지, 켤 때·앞으로 나올 때만)
+    let updates = UpdateNotifier()
     /// 알림을 보낸 상태(세션별 "세션#상태 번호", 번호 없는 예전 기록은 "상태@시각") — 같은 상태로 두 번 보내지 않는다
     private var notified: [String: String] = [:]
     private var notifyPrimed = false
 
     func start() {
         checkHooks()
+        updates.start()
         editors.onTitleChange = { [weak self] in self?.host?.refreshTitles() }
         notifier.onOpen = { [weak self] pane in self?.focus(pane: pane) }
         notifier.start()
@@ -959,6 +990,9 @@ final class TermModel: ObservableObject {
         case "extract-pane": extractPane()
         case "next-tab": selectTab(offset: 1)
         case "previous-tab": selectTab(offset: -1)
+        case "update-check": updates.checkNow()
+        case "hooks-disconnect": disconnectHooks()
+        case "codex-hooks-disconnect": disconnectCodexHooks()
         case "tab":
             if parts.count > 1, let number = Int(parts[1]) {
                 selectTab(number >= 9 ? workspace.tabs.count - 1 : number - 1)

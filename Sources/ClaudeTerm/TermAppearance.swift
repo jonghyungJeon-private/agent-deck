@@ -50,7 +50,7 @@ enum TermAppearance {
         0x666666, 0xd54e53, 0xb9ca4a, 0xe7c547, 0x7aa6da, 0xc397d8, 0x70c0b1, 0xeaeaea,
     ]
 
-    /// 앱에 넣은 글꼴을 이 프로세스에만 등록한다(사용자 글꼴 폴더는 건드리지 않음).
+    /// 앱에 넣은 글꼴(Resources/Fonts — JetBrains Mono, Nerd Font 아이콘, D2Coding)을 이 프로세스에만 등록한다(사용자 글꼴 폴더는 건드리지 않음).
     static func registerBundledFonts() {
         guard let dir = Bundle.main.resourceURL?.appendingPathComponent("Fonts"),
               let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
@@ -60,9 +60,18 @@ enum TermAppearance {
         }
     }
 
-    /// 한글을 그릴 고정폭 글꼴. 설치돼 있으면 앞의 것부터 쓴다(Ghostty 도 설치된 고정폭 한글 글꼴을 고른다 — 이 PC 는 D2Coding).
-    /// 하나도 없으면 시스템이 고르는 Apple SD Gothic Neo 로 그려진다.
+    /// 한글을 그릴 고정폭 글꼴. D2Coding 은 앱에 들어 있어(Resources/Fonts) 설치하지 않은 PC 에서도 같은 모양이다.
+    /// 앞의 것부터 쓰고, 하나도 못 찾으면 시스템이 고르는 Apple SD Gothic Neo 로 그려진다.
     static let hangulFonts = ["D2Coding", "NanumGothicCoding"]
+
+    /// 시험용: 이름별로 실제로 잡힌 글꼴 파일(앱에 넣은 것인지 시스템 것인지 확인)
+    static func debugFontSources() -> String {
+        (["JetBrainsMono-Regular", "SymbolsNFM"] + hangulFonts + ["D2CodingBold"]).map { name in
+            guard let font = NSFont(name: name, size: 13) else { return "\(name)=없음" }
+            let url = CTFontCopyAttribute(font as CTFont, kCTFontURLAttribute) as? URL
+            return "\(name)=\(url?.path ?? "?")"
+        }.joined(separator: " | ")
+    }
 
     /// 지금 크기의 터미널 글꼴
     static var font: NSFont { font(size: fontSize) }

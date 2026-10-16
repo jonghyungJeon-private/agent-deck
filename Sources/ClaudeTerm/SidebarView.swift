@@ -212,8 +212,8 @@ struct SidebarView: View {
         let message: String? = {
             switch model.hookState {
             case .missing: return "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다."
-            case .legacy: return "예전 ClaudeSessions 앱으로 연결돼 있습니다. ClaudeTerm 으로 옮기면 작업 상태(작업 중·입력 대기·완료)도 보이고 그 앱을 지워도 됩니다."
-            case .update: return "작업 상태(작업 중·입력 대기·완료) 표시와 알림을 쓰려면 Claude Code 연결을 갱신하세요."
+            case .legacy: return "예전 ClaudeSessions 앱으로 연결돼 있습니다. AgentDeck 으로 옮기면 작업 상태(작업 중·입력 대기·완료)도 보이고 그 앱을 지워도 됩니다."
+            case .update: return "Claude Code 연결이 예전 판이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다."
             case .error(let detail): return "Claude Code 설정을 읽지 못했습니다: \(detail)"
             default: return nil
             }
@@ -232,7 +232,7 @@ struct SidebarView: View {
                     Button {
                         model.connectHooks()
                     } label: {
-                        Text(model.hookState == .legacy ? "ClaudeTerm 으로 옮기기" : model.hookState == .update ? "갱신하기" : "연결하기")
+                        Text(model.hookState == .legacy ? "AgentDeck 으로 옮기기" : model.hookState == .update ? "갱신하기" : "연결하기")
                             .font(Font(TermAppearance.uiFont(11, bold: true)))
                             .foregroundStyle(Color(TermAppearance.chrome))
                             .padding(.horizontal, 10)
@@ -240,7 +240,7 @@ struct SidebarView: View {
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent)))
                     }
                     .buttonStyle(.plain)
-                    .help("~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로)")
+                    .help("~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로). 앱을 지우면 hook 은 아무것도 하지 않습니다.")
                 }
             }
             .padding(10)
@@ -264,7 +264,9 @@ struct SidebarView: View {
     private var codexHookBanner: some View {
         if model.codexHookState != .unknown && model.codexHookState != .ok {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요.")
+                Text(model.codexHookState == .update
+                     ? "Codex 연결이 예전 판이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks 에서 훅을 다시 신뢰하세요."
+                     : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요.")
                     .fixedSize(horizontal: false, vertical: true)
                 if case .error(let detail) = model.codexHookState {
                     Text(detail).foregroundStyle(Color(TermAppearance.red))
@@ -293,7 +295,7 @@ struct SidebarView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.prompt = "여기서 claude 실행"
-        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("demo_Project")
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
         guard panel.runModal() == .OK, let url = panel.url else { return }
         done(url.path)
     }
@@ -819,9 +821,15 @@ struct AgentRowView: View {
     }
 }
 
-/// 도크 맨 아래 상태 줄: 오류·메모리·버전·데몬 연결. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
+/// 도크 맨 아래 상태 줄: 새 버전·오류·메모리·버전·데몬 연결. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
 struct StatusFooterView: View {
     @ObservedObject var model: TermModel
+    @ObservedObject private var updates: UpdateNotifier
+
+    init(model: TermModel) {
+        _model = ObservedObject(wrappedValue: model)
+        _updates = ObservedObject(wrappedValue: model.updates)
+    }
 
     private static let versionLabel: String = {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -833,6 +841,10 @@ struct StatusFooterView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
+            if let release = updates.available {
+                UpdateLine(tag: UpdateNotifier.display(release.tag)) { updates.presentUpdate() }
+                    .padding(.bottom, 3)
+            }
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
@@ -849,5 +861,35 @@ struct StatusFooterView: View {
         .background(Color(TermAppearance.chrome))
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
         .environment(\.colorScheme, .dark)
+    }
+}
+
+/// 상태 줄 맨 위 "새 버전 v0.x.y — 업데이트"(눈에 띄게 강조색, 누르면 업데이트 방법)
+private struct UpdateLine: View {
+    let tag: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Circle().fill(Color(TermAppearance.accent)).frame(width: 6, height: 6)
+                Text("새 버전 \(tag) — 업데이트")
+                    .font(Font(TermAppearance.uiFont(11, bold: true)))
+                    .underline(hovering)
+            }
+            .foregroundStyle(Color(TermAppearance.accent))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent).opacity(hovering ? 0.18 : 0.1)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { inside in
+            hovering = inside
+            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help("업데이트 명령과 릴리스 페이지 보기")
     }
 }
