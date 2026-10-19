@@ -1,0 +1,105 @@
+{
+  "source_revision": "8852d26",
+  "window_points": [
+    1200,
+    760
+  ],
+  "fake_projects": [
+    "shop-api",
+    "shop-web",
+    "shop-docs",
+    "shop-api-feature-coupon"
+  ],
+  "captures": [
+    {
+      "file": "spaces.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "c7a4ad7281e5c9f2741a58b3e85abb0d5c4c1ddf4e6cc89c19728c63444ecbed",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "collapsed.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "0dbfce5880ee19af78ccd79ad406a7f455b6304807a8416095fb2b154622dc45",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "split-before.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "3f7a056ba772c14caa43c5406b81e147729e482fb89489a2c1be1e7a39b4a7e9",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "split-drag.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "0567544461d596140fad5411904d5e19a662fd6c6f176a62f652d52991e4d305",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "split-after.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "41a75f4a8ddc918321a3799cae3b6f660e96181d164bcd2ce928c9643fc87c79",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "files.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "15e06061d406c4e750d474895f8c3071148590e22d9e1fd4a8394bdf16297914",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "markdown.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "81c21d68ace053efa2bd0b4884488e6fe41d07f15bd5971cdea1a2d41f1b5e3c",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "definition.png",
+      "pixels": [
+        2400,
+        1520
+      ],
+      "sha256": "659a71ce274a5935ad6c31b28784ef80ccc2e8eda218eb767fa52cc6d0c99d5f",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    },
+    {
+      "file": "settings.png",
+      "pixels": [
+        1200,
+        1680
+      ],
+      "sha256": "d1d842545c7063d44df6a577966a3370ec3500534db0960c4d897eb740f4ffd0",
+      "app_pid": 12501,
+      "run": "run-20261019-150935-6e2edc"
+    }
+  ]
+}
