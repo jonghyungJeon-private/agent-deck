@@ -272,6 +272,28 @@ unhook() {
   say "  (앱을 지운 뒤에도 0.2 이후 hook 은 아무것도 하지 않고 끝나므로 급하지 않습니다)"
 }
 
+# launchd 로 띄운 세션 데몬 작업(앱의 coalition 밖에 두려고 — docs/ARCHITECTURE.md "데몬 띄우기"). 인자는 term 폴더들.
+# 그 폴더의 dev.agentdeck.daemon.plist 에 적힌 이름(Label)으로 내리고 plist 를 지운다. 쉬다 끝나 올라가 있기만 한 작업도 내린다.
+# 아직 돌고 있는데 위에서 끄기로 한 데몬($daemons)이 아니면(개발 빌드 등) 건드리지 않는다. 다른 이름의 작업은 보지 않는다.
+bootout_daemon_jobs() {
+  local uid term plist label pid
+  uid="$(id -u)"
+  for term in "$@"; do
+    plist="$term/dev.agentdeck.daemon.plist"
+    [[ -f "$plist" ]] || continue
+    label="$(/usr/libexec/PlistBuddy -c 'Print :Label' "$plist" 2>/dev/null || true)"
+    [[ "$label" == dev.agentdeck.daemon.* ]] || continue
+    # 이미 내려간 작업이면 print 가 실패한다(정상) — pipefail 로 설치기가 멈추지 않게 실패를 삼킨다
+    pid="$( { launchctl print "gui/$uid/$label" 2>/dev/null || true; } | awk -F' = ' '$1 == "\tpid" { print $2; exit }')"
+    if [[ -n "$pid" && " ${daemons:-} " != *" $pid "* ]]; then
+      say "! 세션 데몬 작업 $label 이 아직 실행 중(pid $pid)이라 그대로 둡니다"
+      continue
+    fi
+    launchctl bootout "gui/$uid/$label" >/dev/null 2>&1 || true
+    rm -f "$plist"
+  done
+}
+
 uninstall_app() {
   local apps=() app
   while IFS= read -r app; do apps+=("$app"); done < <(installed_apps)
@@ -308,6 +330,10 @@ uninstall_app() {
     kill -KILL $daemons 2>/dev/null || true
     say "✔ 세션 데몬을 껐습니다"
   fi
+  local terms=()
+  for data in "${datas[@]}"; do terms+=("$data/term"); done
+  [[ -n "$term_home" ]] && terms+=("$term_home")
+  bootout_daemon_jobs "${terms[@]}"
   if ((${#apps[@]})); then
     for app in "${apps[@]}"; do rm -rf "$app" && say "✔ 지움: $app"; done
   fi

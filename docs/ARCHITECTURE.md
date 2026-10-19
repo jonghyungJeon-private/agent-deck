@@ -12,7 +12,8 @@ AgentDeck.app/Contents/MacOS/
 ```
 
 - 묶음 ID `dev.agentdeck.app`, 데이터 `~/Library/Application Support/AgentDeck`, 환경 변수 `AGENTDECK_*`. 0.3 까지의 안쪽 이름에서 바꿨다(아래).
-- 앱 ↔ 데몬: 유닉스 소켓(`term/daemon.sock`)으로 짧은 메시지(`Sources/TermWire`). 데몬은 앱과 다른 세션(setsid)으로 떠서 앱이 끝나도 남는다.
+- 앱 ↔ 데몬: 유닉스 소켓(`term/daemon.sock`)으로 짧은 메시지(`Sources/TermWire`). 데몬은 앱이 **launchd 작업**으로 띄워(아래 "데몬 띄우기")
+  앱의 coalition 밖에 있으므로 앱이 끝나도·강제 종료돼도 남는다(setsid 만으로는 부족하다 — 아래).
   앱은 정한 데이터 위치를 `AgentDeckDaemon --root <폴더>` 로 넘긴다(셸 환경에 남지 않게 인자로).
 - Claude Code·Codex hook → 데몬 실행 파일이 세션 기록 파일(`sessions/<세션>.json`, `codex-sessions/`)에 적고, 앱은 2초마다 목록을 다시 만들며 읽는다.
 - 소스: `Sources/AgentDeck`(앱), `Sources/AgentDeckDaemon`(데몬), `Sources/TermWire`(앱↔데몬 메시지·데이터 위치 `DataLocation`·환경 변수 `AgentDeckEnv`),
@@ -85,6 +86,51 @@ AgentDeck.app/Contents/MacOS/
 - 데몬 재시작·재부팅으로 사라진 Codex 화면은 저장된 정확한 ID로 `codex resume <UUID>`를 실행한다.
   모델·프로필·권한 등의 원래 옵션과 `CODEX_HOME`을 이어받고, 첫 질문·`--last`·`--worktree`는 다시 실행하지 않는다.
   예전 Claude 전용 배치 파일도 그대로 읽는다.
+
+## 데몬 띄우기(launchd 작업)
+
+**setsid 로는 데몬이 살아남지 못한다.** 예전에는 앱이 `posix_spawn` + `POSIX_SPAWN_SETSID` 로 데몬을 띄웠다. setsid 는 세션·프로세스 묶음만 바꾸고
+앱의 **coalition** 은 그대로라, 데몬과 그 아래 셸·claude 가 모두 앱의 coalition 에 남는다. 앱(또는 화면 안에서 직접 실행한 AgentDeck 실행 파일)이 끝나면
+loginwindow 가 그것을 "남은 앱"으로 보고(`applicationDeath … has related coalition pids [데몬, zsh, claude…]`) Background Task Management(BTM)에
+뒤에서 돌아도 되는지 묻는다. BTM 이 허락하면 Dock 에 남은 아이콘으로 두지만, 모르는 앱 정체(새 묶음 ID·새 경로·작업 트리 빌드 등)로 결국
+"not allowed to run in the background" 가 되면 `_LSForceQuitApplication … killing coalition pid <데몬>` — 데몬과 모든 화면이 **SIGKILL** 된다.
+Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 사용자 세션이 이렇게 두 번 끊김, unified log `category == "quitsupport"` 로 확인).
+새로 설치한 동료도 똑같이 겪는다.
+
+그래서 앱은 데몬을 자기 coalition 을 갖는 launchd 작업으로 띄운다(`TermWire/DaemonLaunchAgent`, 앱 `DaemonClient.launchDaemon`):
+
+- 작업 이름 `dev.agentdeck.daemon.<term 폴더 경로의 FNV-1a 64 앞 12자리>`(데몬 하나 = term 폴더 하나라 그 경로로 정한다. 시험 폴더마다 다르다).
+- `term/dev.agentdeck.daemon.plist` 를 쓰고 `/bin/launchctl bootstrap gui/<uid> <plist>`(셸 없이). 내용: `ProgramArguments` = [이 앱의 `AgentDeckDaemon`, `--root`, <데이터 위치>],
+  `RunAtLoad`, `KeepAlive=false`(쉬다 끝나는 것과 싸우지 않게 — 그래서 `launchctl submit` 은 쓰지 않는다), `AbandonProcessGroup`(데몬이 끝나도 셸을 거두지 않게),
+  `ProcessType=Interactive`, 표준 출력·오류 → `term/daemon-stderr.log`, `EnvironmentVariables`(아래).
+- 데몬이 끝날 때(쉬다 끝남·SIGTERM) 자기 작업도 내린다(`launchctl bootout`, 끝날 때까지 최대 3초 기다림). 작업이 올라간 채 남으면
+  LaunchServices 가 그 작업을 올린 앱에 묶어 둔다(`lsappinfo` 의 `loadedJobs`, loginwindow `has non-ignorable loaded jobs`) —
+  그러면 앱이 끝난 뒤에도 Dock 에 남은 아이콘(exited-with-subordinates)으로 붙잡혀 BTM 판단을 받는다. 데몬과 함께 작업을 내리면
+  예전처럼 데몬이 끝날 때 남은 아이콘도 사라진다(`applicationExited … has fully exited`). 이 묶임은 올린 쪽을 바꿔도
+  (launchctl 의 책임 프로세스 떼기, 한 번짜리 올리기 작업, 실행 파일을 앱 밖으로 복사, 다른 이름 접두어) 없어지지 않았다(2026-10-19 실측).
+- 강제로 끝난 데몬(SIGKILL)의 작업은 올라간 채 멈춰 있다. 다음에 띄울 때 `launchctl print` 로 **돌고 있지 않음을 확인한 뒤에만** `bootout` 하고
+  새 plist 로 다시 `bootstrap` 한다(앱 경로·환경이 바뀌었을 수 있다). 돌고 있는 작업은 절대 내리지 않는다(내리면 launchd 가 SIGTERM → 화면이 다 끝난다).
+  이미 올라가 있어 `bootstrap` 이 실패하면 `kickstart`(`-k` 없이 — 돌고 있으면 그대로)로 시작만 한다.
+- 앱은 소켓에 붙지 못할 때만 띄운다. 이미 돌고 있는 데몬(예전 방식으로 뜬 것 포함)에는 그대로 붙고, 띄우는 방식을 바꾸려고 다시 띄우지 않는다.
+  예전 방식으로 뜬 데몬은 스스로 끝난 뒤(화면을 다 닫고 60초, 재부팅 등) 다음에 띄울 때부터 launchd 작업이 된다.
+- 올렸는데 3초 안에 소켓이 안 생기면(막 끝나던 데몬의 작업이 아직 내려가는 중이었던 경우 등) launchd 로 한 번 더 띄우고, 그래도 안 되거나
+  launchctl 이 실패하면 예전 방식(posix_spawn + setsid)으로 띄우고 `term/daemon.log` 에 남긴다(앱은 계속 쓸 수 있다 — 단 coalition 위험은 그대로).
+  시험용 `AGENTDECK_DAEMON_DIRECT=1` 이면 처음부터 예전 방식.
+- **환경**: launchd 작업은 앱의 환경을 이어받지 않는다. 예전처럼 화면 셸이 앱 환경을 그대로 받게, 띄울 때 앱 환경을 `EnvironmentVariables` 로 넘긴다
+  (PATH·LANG/LC_*·SHELL·HOME·USER·LOGNAME·TMPDIR·SSH_AUTH_SOCK·`AGENTDECK_*` 시험 변수 등 전부). 빼는 것: launchd 가 작업마다 정하는 `XPC_SERVICE_NAME`·`XPC_FLAGS`,
+  앱 표시 `__CFBundleIdentifier`, 셸이 정하는 `_`·`PWD`·`OLDPWD`, 앱을 띄운 화면·세션 표시(`AGENTDECK_PANE`·`CLAUDE_SESSIONS_PANE`·`CODEX_THREAD_ID`·`CLAUDECODE`·`CLAUDE_CODE_*` 등).
+  화면마다 데몬이 넣는 값(TERM·COLORTERM·TERM_PROGRAM·AGENTDECK_PANE·LANG 채우기)은 예전과 같다. 올린 뒤에는 plist 에서 환경을 지운다
+  (launchd 는 올릴 때 읽은 내용을 쓴다 — 토큰 같은 값이 파일에 남지 않게). 남는 plist 는 이름·경로 기록이고 삭제 스크립트가 `Label` 을 읽는다.
+- 데몬은 시작할 때 어떻게 떴는지 남긴다(`시작 (launchd 작업 dev.agentdeck.daemon.…)` 또는 `시작 (직접 띄움(posix_spawn), 부모 pid N)`).
+  SIGTERM 을 받으면 `SIGTERM 받음, 끝냄 (화면 N개, 연결 M개)` 를 남기고 끝난다 — 기록 없이 사라졌으면 SIGKILL(강제 종료) 이다.
+  launchd 작업이면 이어서 `launchd 작업을 내림: <이름>`.
+- 재부팅·로그아웃하면 작업은 사라진다(`~/Library/LaunchAgents` 에 두지 않으므로 로그인할 때 저절로 뜨지 않는다 — 예전과 같다).
+- 삭제(`install.sh --uninstall`): 데몬을 끄기로 확인받은 뒤(끈 데몬은 스스로 작업을 내린다), 데이터 폴더의 `term/dev.agentdeck.daemon.plist` 에
+  적힌 작업이 남아 있으면 `launchctl bootout` 하고 plist 를 지운다. 아직 돌고 있는데 끄기로 한 데몬이 아니면(개발 빌드 등) 그대로 둔다.
+- 남은 위험: 앱이 끝난 뒤 데몬이 도는 동안은 여전히 Dock 에 남은 아이콘(올린 작업 때문)이 있고, BTM 이 "허락 안 됨" 이라 하거나 그 아이콘을
+  강제 종료하면 loginwindow 가 `_LSForceQuitApplication` 을 부른다. 그때 죽이는 대상은 앱의 coalition·하위 앱이고 데몬은 거기에 없지만,
+  올라간 작업을 어떻게 다루는지는 실측하지 못했다(허락 안 됨 경로를 재현하지 못했고, Dock 강제 종료는 사람이 눌러야 한다).
+- 확인: `launchctl print gui/$UID/<이름>`(state·pid), 데몬 `ps -o ppid` 가 1. 이름은 `term/dev.agentdeck.daemon.plist` 의 `Label`.
 
 ## 자세한 동작
 
@@ -253,6 +299,10 @@ AgentDeck.app/Contents/MacOS/
   예전 데몬을 흉내 내려면 main 의 `ClaudeTermDaemon` 을 `git archive` 로 꺼내 scratch 에서 빌드하고,
   **반드시** `CLAUDE_TERM_HOME`·`CLAUDE_SESSIONS_HOME` 을 가짜 예전 폴더로 주어 띄운다(없으면 실제 폴더를 쓴다).
   시험 프로세스는 띄울 때 기록한 PID 로만 끈다(`pkill`·이름으로 찾아 끄기 금지 — 실제 데몬과 실행 파일 이름이 같다).
+- **시험 앱은 반드시 LaunchServices 로 띄운다**: `open -n --env AGENTDECK_HOME=… --env AGENTDECK_APP_SUPPORT=… --env HOME=<가짜 홈> --env AGENTDECK_NO_ACTIVATE=1 … <경로>/AgentDeck.app`
+  (`ps -o ppid` 가 1 인지 확인). AgentDeck 화면 안의 셸에서 `Contents/MacOS/AgentDeck` 를 직접 실행하면 그 앱이 사용자 데몬의 coalition 에 들어가,
+  그 앱이 끝날 때 loginwindow 가 사용자 데몬과 모든 화면을 강제 종료할 수 있다. 같은 이유로 Dock 에 남은 AgentDeck 아이콘(멈춘·끝난 시험 앱)을
+  **강제 종료하지 않는다**. 시험 데몬의 launchd 작업은 시험 폴더로 계산한 이름만 `bootout` 한다(다른 `dev.agentdeck.daemon.*` 는 건드리지 않는다).
 - 시험용: `AGENTDECK_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
   `AGENTDECK_DEBUG=1` 이면 보낼 알림(`notify <상태> · <이름> key=…`)·Dock 배지 변화(`dock-badge N`)를 표준 출력에 찍고(`AGENTDECK_NO_NOTIFY=1` 과 함께 쓴다), 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
   틈 끌기(`drag`)·마우스 단계별(`mouse <down|drag|up|right> <x> <y>`)·오른쪽 클릭 메뉴 항목 실행(`menu-pick <x> <y> <항목>`)·
@@ -271,6 +321,7 @@ AgentDeck.app/Contents/MacOS/
   `cmd-click <줄>:<열>`·`cmd-hover <줄>:<열>`(밑줄 확인)·`nav-back`·`nav-forward`·`nav-state`·`index-state`·`index-build <루트>`(색인 시간·메모리).
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
+  종료 시험 명령: `quit`(⌘Q 와 같은 길 — 데몬·화면이 앱과 따로 남는지 볼 때).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
   `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호)·`settings-snap <png>`·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
   `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·

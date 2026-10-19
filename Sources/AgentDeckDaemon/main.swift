@@ -5,6 +5,7 @@ import SessionCore
 import TermWire
 
 // 내장 터미널의 세션을 붙잡고 있는 데몬. 앱을 끄거나 업데이트해도 셸·claude 가 계속 돌게 한다.
+// 앱은 이 데몬을 launchd 작업으로 띄운다(TermWire/DaemonLaunchAgent — 앱의 coalition 밖이라 앱이 강제 종료돼도 남는다).
 // 화면을 그리지 않고, 화면마다 지난 출력만 상한을 두고 보관한다(앱이 다시 붙을 때 되살리는 용도).
 //   AgentDeckDaemon [--root <폴더>] : 데몬(이미 떠 있으면 바로 끝남). 앱이 정한 데이터 위치를 --root 로 받는다
 //   AgentDeckDaemon hook            : Claude Code hook(세션 기록)
@@ -150,7 +151,11 @@ final class Daemon {
                                                  attributes: [.posixPermissions: 0o700])
         // 한 사용자당 데몬 하나
         lockFd = open(home.appendingPathComponent("daemon.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-        guard lockFd >= 0, flock(lockFd, LOCK_EX | LOCK_NB) == 0 else { exit(0) }
+        guard lockFd >= 0, flock(lockFd, LOCK_EX | LOCK_NB) == 0 else {
+            // 다른 데몬(예전 방식으로 뜬 것 등)이 이미 이 폴더를 맡고 있다. launchd 작업으로 떴으면 작업만 내리고 끝난다(소켓은 그 데몬 것).
+            unloadOwnJob()
+            exit(0)
+        }
         let listenFd: Int32
         do {
             listenFd = try UnixSocket.listen(in: home)
@@ -169,10 +174,28 @@ final class Daemon {
         timer.setEventHandler { [unowned self] in exitIfIdle() }
         timer.resume()
         idleTimer = timer
-        Log.write("시작")
+        Log.write("시작 (\(Self.launchOrigin()))")
+
+        // launchd 작업을 내리거나(bootout)·삭제·데이터 옮기기가 끄면 SIGTERM. 기록을 남겨 SIGKILL(강제 종료)과 구별한다.
+        // 화면 셸은 PTY 가 닫히며 끊김 신호(SIGHUP)를 받는다(기본 동작으로 끝날 때와 같다).
+        signal(SIGTERM, SIG_IGN)
+        let term = DispatchSource.makeSignalSource(signal: SIGTERM, queue: queue)
+        term.setEventHandler { [unowned self] in
+            end("SIGTERM 받음, 끝냄 (화면 \(panes.count)개, 연결 \(clients.count)개)")
+        }
+        term.resume()
+        termSource = term
     }
 
     var idleTimer: DispatchSourceTimer?
+    var termSource: DispatchSourceSignal?
+
+    /// 어떻게 떴는지(기록용): launchd 작업이면 XPC_SERVICE_NAME 이 그 이름. 예전 방식이면 앱의 값이 이어지거나 없다.
+    static func launchOrigin(_ env: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        if let label = DaemonLaunchAgent.ownLabel(env) { return "launchd 작업 \(label)" }
+        let parent = getppid()
+        return parent == 1 ? "직접 띄움, 부모 없음(ppid 1)" : "직접 띄움(posix_spawn), 부모 pid \(parent)"
+    }
 
     func exitIfIdle() {
         guard panes.isEmpty, clients.isEmpty else {
@@ -182,9 +205,33 @@ final class Daemon {
         let since = idleSince ?? Date()
         idleSince = since
         guard Date().timeIntervalSince(since) >= Self.idleExit else { return }
-        Log.write("화면·연결이 없어 끝냄")
+        end("화면·연결이 없어 끝냄")
+    }
+
+    /// 깨끗이 끝낸다: 소켓을 지우고, launchd 작업으로 떴으면 작업도 내린 뒤 끝난다
+    /// (작업이 올라간 채 남으면 그 작업을 올린 앱이 Dock 에 "남은 앱"으로 붙잡힌다 — DaemonLaunchAgent.spawnBootout).
+    /// 내리기는 launchd 가 이 프로세스에 SIGTERM 을 보내며 끝나므로 SIGTERM 을 기본 동작으로 되돌리고 기다린다
+    /// (launchd 가 이미 내리는 중이면 launchctl 이 이 프로세스가 끝나길 기다리므로 3초까지만).
+    func end(_ reason: String) -> Never {
+        Log.write(reason)
         unlink(home.appendingPathComponent(TermPaths.socketName).path)
+        unloadOwnJob()
         exit(0)
+    }
+
+    /// launchd 작업으로 떴으면 그 작업을 내린다(돌고 있는 자신을 내리면 launchd 가 SIGTERM 을 보내 여기서 끝날 수 있다)
+    func unloadOwnJob() {
+        guard let label = DaemonLaunchAgent.ownLabel() else { return }
+        termSource?.cancel()
+        signal(SIGTERM, SIG_DFL)
+        Log.write("launchd 작업을 내림: \(label)")
+        guard let pid = DaemonLaunchAgent.spawnBootout(label: label) else {
+            Log.write("launchd 작업을 내리지 못함(launchctl 실행 실패): \(label)")
+            return
+        }
+        let deadline = Date().addingTimeInterval(3)
+        var status: Int32 = 0
+        while waitpid(pid, &status, WNOHANG) == 0, Date() < deadline { usleep(20_000) }
     }
 
     func acceptClients(_ listenFd: Int32) {

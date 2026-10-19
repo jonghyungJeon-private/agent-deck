@@ -460,6 +460,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "editor-pin":
             // 지금 화면(편집기 미리보기)을 고정 — 분할 제목 두 번 누르기와 같음
             if let id = model.selectedId { model.pin(editor: id) }
+        case "quit":
+            // 앱 메뉴 "종료"(⌘Q)와 같은 길 — 데몬이 앱과 따로 남는지 시험할 때
+            NSApp.terminate(nil)
         case "alert-answer":
             // alert-answer <번호…>: 다음 확인 창들에서 누를 버튼(0 = 첫 버튼)
             AppAlert.pendingAnswers += argument.split(separator: " ").compactMap { Int($0) }
