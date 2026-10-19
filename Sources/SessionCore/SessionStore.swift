@@ -29,6 +29,9 @@ public struct SessionRecord: Codable, Equatable, Identifiable {
     /// 상태를 적을 때마다 1씩 오르는 번호. 날짜는 초 단위로만 저장되므로(예전 빌드와 같은 형식)
     /// 같은 초 안의 상태 변화(입력 대기 → 완료)는 이 번호로 구분한다. 예전 기록에는 없다.
     public var stateSeq: Int?
+    /// 마지막 Stop 때 아직 돌던 백그라운드 일(hook 입력 `background_tasks`). 남았으면 "완료" 대신 "오케스트레이션 중".
+    /// nil 이면 모름(그 필드가 없는 예전 Claude Code).
+    public var background: [BackgroundTask]?
 
     public var id: String { sessionId }
 

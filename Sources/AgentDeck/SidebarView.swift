@@ -363,7 +363,8 @@ struct IconChromeButton: View {
     }
 }
 
-/// 상태 점. 꺼진 화면·쉬는 중은 속이 빈 점, 입력 대기는 테두리를 두른 점(색만으로 구분하지 않게 모양도 다르게).
+/// 상태 점. 꺼진 화면·쉬는 중은 속이 빈 점, 입력 대기는 테두리를 두른 점, 오케스트레이션 중은 점선 고리 + 가운데 점
+/// (색만으로 구분하지 않게 모양도 다르게).
 struct StatusDot: View {
     let status: WorkStatus
     var dormant = false
@@ -377,6 +378,10 @@ struct StatusDot: View {
                 Circle().strokeBorder(color, lineWidth: 1.2)
             } else if case .waiting = status {
                 Circle().fill(color).padding(2).overlay(Circle().strokeBorder(color, lineWidth: 1))
+            } else if case .orchestrating = status {
+                // 오케스트레이션 중: 점선 고리(돌고 있는 일들) + 가운데 작은 점(메인)
+                Circle().fill(color).padding(ui(2.6))
+                    .overlay(Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.2, dash: [1.8, 1.3])))
             } else {
                 Circle().fill(color)
             }
@@ -591,6 +596,15 @@ struct SessionRowView: View {
                         .uiFont(10)
                         .foregroundStyle(Color(TermAppearance.textDim))
                 } else {
+                if case .orchestrating = row.status {
+                    // 오케스트레이션 중: 남은 일 수가 핵심이라 줄을 하나 더 써서 잘리지 않게(폴더는 묶음 머리에 있다)
+                    Text(row.status.label ?? "")
+                        .foregroundStyle(Color(row.status.color))
+                        .uiFont(10)
+                    Text(row.status.detail ?? "")
+                        .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
+                        .uiFont(10)
+                } else {
                 HStack(spacing: 0) {
                     if let label = row.status.label {
                         Text(label + " · ")
@@ -604,6 +618,7 @@ struct SessionRowView: View {
                         .foregroundStyle(Color(TermAppearance.textDim))
                 }
                 .uiFont(10)
+                }
                 }
             }
             .lineLimit(1)

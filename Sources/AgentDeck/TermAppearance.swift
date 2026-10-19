@@ -117,6 +117,8 @@ enum TermAppearance {
     static let yellow = NSColor(srgbHex: 0xe5c07b)
     static let red = NSColor(srgbHex: 0xe06c75)
     static let cyan = NSColor(srgbHex: 0x56b6c2)
+    /// 오케스트레이션 중(포커스 테두리 강조색보다 붉은 보라 — 둘이 섞여 보이지 않게)
+    static let purple = NSColor(srgbHex: 0xc678dd)
 
     /// 사이드바·탭 줄 글꼴(터미널과 같은 JetBrains Mono). 크기를 그대로 쓴다 — 글꼴 크기를 따라가려면 `scaledUIFont`.
     static func uiFont(_ size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {

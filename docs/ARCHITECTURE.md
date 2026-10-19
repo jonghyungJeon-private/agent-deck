@@ -254,7 +254,7 @@ AgentDeck.app/Contents/MacOS/
   **반드시** `CLAUDE_TERM_HOME`·`CLAUDE_SESSIONS_HOME` 을 가짜 예전 폴더로 주어 띄운다(없으면 실제 폴더를 쓴다).
   시험 프로세스는 띄울 때 기록한 PID 로만 끈다(`pkill`·이름으로 찾아 끄기 금지 — 실제 데몬과 실행 파일 이름이 같다).
 - 시험용: `AGENTDECK_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
-  `AGENTDECK_DEBUG=1` 이면 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
+  `AGENTDECK_DEBUG=1` 이면 보낼 알림(`notify <상태> · <이름> key=…`)·Dock 배지 변화(`dock-badge N`)를 표준 출력에 찍고(`AGENTDECK_NO_NOTIFY=1` 과 함께 쓴다), 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
   틈 끌기(`drag`)·마우스 단계별(`mouse <down|drag|up|right> <x> <y>`)·오른쪽 클릭 메뉴 항목 실행(`menu-pick <x> <y> <항목>`)·
   탭·분할 나무(`tabs`)·끌기 좌표(`dragpoints`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
@@ -290,6 +290,7 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
 | 작업 중 | 노랑 점 | `UserPromptSubmit`(질문을 보냄) |
 | 입력 대기 | 빨강 테두리 점, 안 보는 탭은 붉은 바탕 + 아래 줄 | `PermissionRequest`(권한 요청), `Notification` 의 `permission_prompt`·`elicitation_dialog`·`elicitation_url_dialog`·`agent_needs_input` |
 | 완료 | 청록 점 | `Stop`(응답을 마침). 그 화면을 보면(앱이 앞에 있을 때) "쉬는 중"으로 바뀐다 |
+| 오케스트레이션 중 | 보라 점선 고리 + 가운데 점, "에이전트 N · 백그라운드 M" | `Stop` 의 `background_tasks` 에 아직 도는 일이 있음(아래). 알림·Dock 배지 없음 |
 | 오류 | 빨강 점 | `StopFailure`(API 오류 등, 오류 종류를 함께 보임) |
 | 쉬는 중 | 초록 속 빈 점 | 완료를 확인했거나 `Notification` 의 `idle_prompt`(입력 없이 약 60초) |
 
@@ -297,6 +298,31 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
   화면 짝짓기는 hook 이 적은 화면 ID(`pane`)가 먼저다.
 - 알림: 입력 대기·완료·오류로 바뀌면 macOS 알림을 보낸다(누르면 그 화면으로). 지금 보고 있는 화면, 앱을 켠 직후 이미 그 상태였던 화면은 알리지 않는다.
   Dock 아이콘 배지에 확인이 필요한 화면 수가 뜬다. `AGENTDECK_NO_NOTIFY=1` 이면 알림을 보내지 않는다(시험용). 묶음 ID 가 바뀌어(0.4) 알림 권한은 다시 묻는다.
+- 오케스트레이션 중(메인은 응답을 마쳤는데 맡긴 백그라운드 일이 도는 동안). 실측 Claude Code 2.1.303:
+  - **hook**: `Stop` 입력에 `background_tasks`(그때 도는 일 — 상태 running·pending 만, 항목 `id`·`type`(`subagent`·`shell`·`monitor`·`workflow`·
+    `teammate`·`cloud session`·`MCP task`·`dream`…)·`status`·`description`)가 온다(바이너리의 Stop 입력 만들기에서 `taskRegistry` 를 직렬화하는 것 확인,
+    공식 문서 hooks "Stop input"). hook 이 이 목록을 기록(`background`)에 남긴다. `dream`·`auto-mode scan`·`memory import` 는 내부 정리라 뺀다.
+    에이전트 = subagent·teammate·workflow·cloud session, 백그라운드 = 셸·모니터·MCP 작업(모르는 종류 포함). 필드가 없는 예전 판은 예전 그대로(완료).
+  - **끝남 확인(파일)**: 앱이 2초 목록 갱신 때, Stop 목록이 남은(완료·쉬는 중·입력 대기) 세션만 일마다 stat·작은 읽기 한두 번(새 타이머 없음).
+    - 하위 에이전트: `~/.claude/projects/<폴더>/<세션>/subagents/agent-<id>.meta.json` 의 `"finished":true`(끝날 때 meta 를 고쳐 쓴다.
+      SendMessage 로 다시 이어 시키면 finished 가 빠진 meta 로 다시 쓰는 것을 확인). meta 에 없으면(10/16 이전 판) 기록 끝에서 마지막
+      `"type":"assistant"` 줄이 `"stop_reason":"end_turn"` 이고 그 뒤에 user 줄이 없으면 끝(실제 기록 20개 모두 meta 와 일치, 도는 에이전트는 tool_use).
+    - 셸: `/private/tmp/claude-<uid>/<폴더>/<세션>/tasks/<id>.output`(에이전트는 그 기록으로 가는 링크, 셸은 일반 파일) 끝 줄이
+      `[exited with code N]`·`[killed]` 면 끝(실측 — 끝난 것은 모두 표시가 있고, 표시 없는 파일은 `sleep` 이 실제로 열고 있었다).
+      출력 파일이 없어졌으면(폴더는 있음) 끝, 폴더를 못 찾거나(`CLAUDE_CODE_TMPDIR` 를 바꾼 경우) 파일이 없는 종류(워크플로 등)는 hook 을 믿는다.
+      시험용으로 `AGENTDECK_CLAUDE_TMP` 로 바꾼다.
+  - **상태 규칙**(`WorkStateRules.effective`): 완료·쉬는 중 + 도는 일 있음 → 오케스트레이션 중(확인한 완료여도). 다 끝난 직후 60초(`reportGrace`)도
+    오케스트레이션 중 — 백그라운드 에이전트가 결과를 보고하면 Claude Code 가 메인 턴을 스스로 시작하고 이때도 `UserPromptSubmit` 가 온다
+    (문서: "A background subagent reporting back") → 작업 중 → 남은 일 없는 `Stop` → 완료(알림 한 번). 60초 안에 hook 이 안 오면
+    원래 완료로 돌아가 그때 알린다(같은 상태 번호라 한 번만). 하위 에이전트의 권한 요청은 지금처럼 입력 대기(알림)이고, 허락해 그 에이전트 기록이
+    늘면(메인 대화는 그대로) 오케스트레이션 중으로 돌아간다.
+  - `SubagentStart`·`SubagentStop` hook 도 있지만(입력에 `agent_id`·`agent_type`·`agent_transcript_path`, SubagentStop 도 `background_tasks`)
+    넣지 않았다: 백그라운드 일이 끝나면 위 보고 턴의 `UserPromptSubmit`→`Stop` 이 새 목록을 주므로 더 얻는 것이 없고, 넣으면 모든 사용자에게
+    "갱신하기" 안내가 다시 뜬다. hook 을 놓쳐도 파일 확인과 60초 대비책이 받친다.
+  - 하위 에이전트 줄의 "작업 중"도 같은 끝 표시로 정한다(예전: 최근 1분 안에 기록이 늘었는지 — 긴 명령을 기다리면 끝난 것처럼 보였다).
+    끝 표시가 없어도 12분 넘게 기록이 그대로면 멈춘 것으로 본다.
+  - Codex: 부모 턴이 끝났는데(완료·쉬는 중) 하위 에이전트(`thread_spawn_edges` 가 닫히지 않았고 그 턴이 진행 중)가 있으면 오케스트레이션 중
+    (하위 훑기 10초 주기 결과). Codex 의 백그라운드 셸은 알아낼 방법이 없어 보지 않는다.
 - **기존 사용자는 사이드바 아래 "갱신하기"를 한 번 눌러야 한다.** 예전 연결(SessionStart·SessionEnd 만)으로는 상태 hook 이 없어
   claude 화면이 상태 없이 claude 색 점으로만 보인다. 갱신은 그 뒤 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
 - 알려진 한계:
@@ -304,5 +330,7 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
   - 권한 요청 `Notification` 은 늦게 올 수 있어 `PermissionRequest` 로 바로 "입력 대기"로 바꾼다. 허락한 뒤에는 따로 오는 hook 이 없어,
     "입력 대기" 시각보다 2초 넘게 뒤에 대화 파일이 늘면 다시 일하는 것으로 보고 "작업 중"으로 바꾼다(추정).
   - "완료 → 쉬는 중"은 앱이 앞에 있고 그 화면을 고르고 있을 때만 바뀐다.
+  - 끝나지 않는 백그라운드 셸(개발 서버·`tail -f`·모니터)을 띄운 세션은 그것이 도는 동안 계속 오케스트레이션 중이고 완료로 알리지 않는다
+    (Claude Code 도 "백그라운드 일이 깨워 줄 때를 기다리는 중"으로 본다).
 
 아직 없는 것: 글꼴·색 설정.

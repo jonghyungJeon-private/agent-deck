@@ -20,6 +20,8 @@ public enum HookHandler {
         let notification_type: String?
         let message: String?
         let error: String?
+        /// Stop 때 아직 도는 백그라운드 일(하위 에이전트·셸 등)
+        let background_tasks: BackgroundTaskList?
     }
 
     /// 상태를 적는 hook 이벤트
@@ -96,6 +98,7 @@ public enum HookHandler {
         record.stateAt = context.now
         record.stateMessage = nil
         record.stateSeq = (record.stateSeq ?? 0) + 1
+        record.background = nil
         try store.save(record)
         // 열라고 보낸 세션이 실제로 떴다
         reservations.release([event.session_id])
@@ -112,7 +115,7 @@ public enum HookHandler {
         var message: String?
         switch event.hook_event_name {
         case "UserPromptSubmit": state = "working"
-        case "Stop": state = "done"
+        case "Stop": state = "done"  // 백그라운드 일이 남았으면 앱이 "오케스트레이션 중"으로 보인다(WorkStateRules)
         case "StopFailure":
             state = "error"
             message = event.error
@@ -143,6 +146,8 @@ public enum HookHandler {
         record.stateMessage = message.map { String($0.prefix(200)) }
         record.stateSeq = (record.stateSeq ?? 0) + 1
         record.pane = AgentDeckEnv.value("PANE", in: context.environment) ?? record.pane
+        // 남은 백그라운드 일은 Stop 이 알려 준다. 다른 상태(질문·입력 대기 등)에선 그대로 둔다.
+        if event.hook_event_name == "Stop" { record.background = event.background_tasks?.tasks }
         try store.save(record)
     }
 

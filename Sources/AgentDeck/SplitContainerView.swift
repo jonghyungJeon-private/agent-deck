@@ -11,7 +11,7 @@ struct PaneTitle: Equatable {
     /// 테두리에 이름 앞에 붙일 상태(쉬는 중·모름은 붙이지 않는다)
     var statusLabel: String? {
         switch status {
-        case .working, .waiting, .done, .error: return status.label
+        case .working, .waiting, .done, .orchestrating, .error: return status.label
         default: return nil
         }
     }

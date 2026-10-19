@@ -375,8 +375,10 @@ final class TermModel: ObservableObject {
         }
         worker.async { [weak self] in
             guard let self else { return }
-            let newRows = self.makeRows(state.panes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
-            let newGroups = Self.makeGroups(newRows, agents: self.scanAgents(newRows))
+            var newRows = self.makeRows(state.panes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
+            let agents = self.scanAgents(newRows)
+            newRows = Self.applyCodexOrchestration(newRows, agents: agents)
+            let newGroups = Self.makeGroups(newRows, agents: agents)
             DispatchQueue.main.async { self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance) }
         }
     }
@@ -577,9 +579,31 @@ final class TermModel: ObservableObject {
         let modified = session.state == "waiting"
             ? WorkStateRules.transcriptModifiedAt(session.transcriptPath ?? titles[session.sessionId]?.path)
             : nil
+        // 응답을 마칠 때(Stop) 남은 백그라운드 일이 있었던 세션만 그 일들을 파일로 확인한다(일마다 stat 몇 번 — 2초 목록 갱신에 얹음)
+        var background: WorkStateRules.Background?
+        if let tasks = session.background, let stoppedAt = at, ["done", "idle", "waiting"].contains(session.state ?? "") {
+            background = BackgroundWork.inspect(tasks, transcriptPath: session.transcriptPath ?? titles[session.sessionId]?.path,
+                                                sessionId: session.sessionId, stoppedAt: stoppedAt)
+        }
         let state = WorkStateRules.effective(state: session.state, at: at, seq: session.stateSeq,
-                                             transcriptModifiedAt: modified, seen: seen[session.sessionId])
-        return (WorkStatus(state: state, message: session.stateMessage), at, session.stateSeq)
+                                             transcriptModifiedAt: modified, seen: seen[session.sessionId],
+                                             background: background)
+        return (WorkStatus(state: state, message: session.stateMessage, background: background), at, session.stateSeq)
+    }
+
+    /// Codex: 부모가 턴을 마쳤는데 하위 에이전트(spawn)가 아직 일하면 "오케스트레이션 중"(하위 훑기 10초 주기의 결과로)
+    static func applyCodexOrchestration(_ rows: [PaneRow], agents: [SubagentActivity]) -> [PaneRow] {
+        rows.map { row in
+            guard let codex = row.codex, !row.dormant else { return row }
+            switch row.status {
+            case .done, .idle, .orchestrating: break
+            default: return row
+            }
+            let running = agents.filter { $0.sessionId == "codex:" + codex.id && $0.agentType == "codex" && $0.isRunning }.count
+            var row = row
+            if running > 0 { row.status = .orchestrating(agents: running, shells: 0) }
+            return row
+        }
     }
 
     /// 꺼진 화면 대화 파일에서 읽은 제목(세션당 한 번만 읽는다 — 매번 읽으면 2초마다 최대 16MB 를 읽게 된다). worker 전용.
@@ -608,6 +632,10 @@ final class TermModel: ObservableObject {
             guard notifyPrimed else { continue }
             let watching = NSApp.isActive && row.id == selectedId
             guard !watching, let label = row.status.label else { continue }
+            if AgentDeckEnv.isOn("DEBUG") { // 시험: 알림을 끈 채(NO_NOTIFY) 무엇을 알렸을지 찍는다
+                print("notify \(label) · \(row.name) pane=\(row.id.prefix(4)) key=\(key)")
+                fflush(stdout)
+            }
             notifier.post(title: "\(label) · \(row.name)", body: row.status.detail ?? row.cwd,
                           paneId: row.id, key: key)
         }
@@ -618,7 +646,10 @@ final class TermModel: ObservableObject {
     private func updateDockBadge() {
         let count = rows.filter { !$0.dormant && $0.status.needsAttention }.count
         let label = count > 0 ? "\(count)" : nil
-        if NSApp.dockTile.badgeLabel != label { NSApp.dockTile.badgeLabel = label }
+        if NSApp.dockTile.badgeLabel != label {
+            NSApp.dockTile.badgeLabel = label
+            if AgentDeckEnv.isOn("DEBUG") { print("dock-badge \(label ?? "-")"); fflush(stdout) }
+        }
     }
 
     /// 꺼진 화면의 목록 줄(worker 에서)

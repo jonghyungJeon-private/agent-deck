@@ -128,4 +128,16 @@ final class SpacesSummaryTests: XCTestCase {
         XCTAssertTrue(group.needsAttention)
         XCTAssertTrue(SpacesSummary().isEmpty)
     }
+
+    func testOrchestratingIsCountedButNotAttention() {
+        var summary = SpacesSummary()
+        summary.add(session: .orchestrating)
+        summary.add(session: .idle)
+        summary.add(session: .working)
+        summary.add(session: .orchestrating)
+        // 작업 중 다음, 쉬는 중 앞. 사람이 볼 일은 아니다
+        XCTAssertEqual(summary.entries.map(\.kind), [.working, .orchestrating, .idle])
+        XCTAssertEqual(summary.count(.orchestrating), 2)
+        XCTAssertFalse(summary.needsAttention)
+    }
 }

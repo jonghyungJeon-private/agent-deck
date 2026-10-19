@@ -1,4 +1,5 @@
 import Foundation
+import SessionCore
 
 /// claude 세션이 띄운 하위 에이전트(Agent 도구) 하나의 최근 활동
 struct SubagentActivity: Identifiable, Equatable {
@@ -15,7 +16,8 @@ struct SubagentActivity: Identifiable, Equatable {
     /// 마지막으로 남긴 글(펼쳐 볼 때)
     var lastText: String?
 
-    /// 최근 1분 안에 기록이 늘었으면 일하는 중으로 본다
+    /// 일하는 중인지(Codex 는 부모 DB 의 상태로 정한다). nil 이면 최근 1분 안에 기록이 늘었는지로 본다.
+    /// claude 하위 에이전트는 끝 표시(meta 의 finished·기록 끝의 end_turn)로 정한다 — 긴 명령을 기다리느라 조용해도 일하는 중.
     var running: Bool? = nil
     var isRunning: Bool { running ?? (Date().timeIntervalSince(lastActive) < 60) }
 }
@@ -31,10 +33,14 @@ final class SubagentScanner {
         var size: UInt64
         var worktree: String?
         var lastText: String?
+        /// 기록 끝으로 본 끝남(meta 에 finished 가 없는 예전 판용)
+        var endedTurn: Bool
     }
+    /// 끝나지 않았는데 이만큼 기록이 그대로면 멈춘 것으로 본다(claude 가 강제로 끝난 경우 등). Bash 시간 제한 10분 + 여유.
+    static let staleAfter: TimeInterval = 12 * 60
 
     private var cache: [String: Cached] = [:]
-    private var meta: [String: (description: String, type: String?)] = [:]
+    private var meta: [String: (description: String, type: String?, finished: Bool, modified: Date?)] = [:]
 
     /// sessions: (화면 ID, 세션 ID, 대화 파일 경로, 그 저장소의 작업 트리 경로들)
     func scan(_ sessions: [(paneId: String, sessionId: String, transcript: String, worktrees: [String])]) -> [SubagentActivity] {
@@ -55,20 +61,28 @@ final class SubagentScanner {
                 var entry = cache[path]
                 if entry?.size != size {
                     let tail = Self.readTail(path)
-                    entry = Cached(size: size, worktree: Self.mostMentioned(session.worktrees, in: tail), lastText: Self.lastText(in: tail))
+                    entry = Cached(size: size, worktree: Self.mostMentioned(session.worktrees, in: tail), lastText: Self.lastText(in: tail),
+                                   endedTurn: BackgroundWork.agentEnded(meta: nil, tail: tail))
                     cache[path] = entry
                 }
                 let name = file.deletingPathExtension().lastPathComponent
-                let info = meta[path] ?? {
-                    let metaURL = file.deletingPathExtension().appendingPathExtension("meta.json")
-                    let object = (try? Data(contentsOf: metaURL)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
-                    let value = ((object?["description"] as? String) ?? name, object?["agentType"] as? String)
-                    meta[path] = value
-                    return value
-                }()
+                // meta 는 끝날 때(finished)·다시 이어 시킬 때 고쳐 쓰이므로 수정 시각이 바뀌면 다시 읽는다(200바이트 남짓)
+                let metaURL = file.deletingPathExtension().appendingPathExtension("meta.json")
+                let metaModified = WorkStateRules.transcriptModifiedAt(metaURL.path)
+                var info = meta[path]
+                if info == nil || info?.modified != metaModified {
+                    let data = try? Data(contentsOf: metaURL)
+                    let object = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                    info = ((object?["description"] as? String) ?? name, object?["agentType"] as? String,
+                            BackgroundWork.agentEnded(meta: data, tail: Data()), metaModified)
+                    meta[path] = info
+                }
+                let ended = (info?.finished ?? false) || (entry?.endedTurn ?? false)
+                let running = !ended && Date().timeIntervalSince(modified) < Self.staleAfter
                 result.append(SubagentActivity(id: name, sessionId: session.sessionId, paneId: session.paneId,
-                                               description: info.description, agentType: info.type,
-                                               worktreePath: entry?.worktree, lastActive: modified, lastText: entry?.lastText))
+                                               description: info?.description ?? name, agentType: info?.type,
+                                               worktreePath: entry?.worktree, lastActive: modified, lastText: entry?.lastText,
+                                               running: running))
             }
         }
         // 창 밖으로 나간 파일의 캐시는 버린다

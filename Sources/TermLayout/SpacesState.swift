@@ -89,7 +89,7 @@ public enum SpacesOrder {
 public struct SpacesSummary: Equatable, Sendable {
     /// 먼저 볼 것부터(입력 대기·오류가 앞)
     public enum Kind: String, CaseIterable, Sendable {
-        case waiting, error, done, working, idle
+        case waiting, error, done, working, orchestrating, idle
     }
 
     /// 세션(화면) 수 — 상태가 없는 셸·꺼진 화면도 센다

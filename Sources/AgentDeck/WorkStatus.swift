@@ -1,4 +1,5 @@
 import AppKit
+import SessionCore
 import TermLayout
 
 /// claude 화면의 작업 상태(hook 기록에서). 색만으로 구분하지 않도록 글자도 함께 보인다.
@@ -13,12 +14,15 @@ enum WorkStatus: Equatable {
     case waiting(String?)
     /// 응답을 마쳤고 아직 안 봤다
     case done
+    /// 메인은 응답을 마쳤지만 맡긴 백그라운드 일(에이전트·셸)이 아직 돈다. 끝나야 "완료"로 알린다.
+    case orchestrating(agents: Int, shells: Int)
     case idle
     case error(String?)
 
-    init(state: String?, message: String?) {
+    init(state: String?, message: String?, background: WorkStateRules.Background? = nil) {
         switch state {
         case "working": self = .working
+        case "orchestrating": self = .orchestrating(agents: background?.agents ?? 0, shells: background?.shells ?? 0)
         case "waiting": self = .waiting(message)
         case "done": self = .done
         case "idle": self = .idle
@@ -33,6 +37,7 @@ enum WorkStatus: Equatable {
         case .working: return "작업 중"
         case .waiting: return "입력 대기"
         case .done: return "완료"
+        case .orchestrating: return "오케스트레이션 중"
         case .idle: return "쉬는 중"
         case .error: return "오류"
         }
@@ -41,6 +46,9 @@ enum WorkStatus: Equatable {
     var detail: String? {
         switch self {
         case .waiting(let message), .error(let message): return message
+        case .orchestrating(let agents, let shells):
+            let parts = (agents > 0 ? ["에이전트 \(agents)"] : []) + (shells > 0 ? ["백그라운드 \(shells)"] : [])
+            return parts.isEmpty ? "결과 받는 중" : parts.joined(separator: " · ")
         default: return nil
         }
     }
@@ -53,6 +61,7 @@ enum WorkStatus: Equatable {
         case .working: return TermAppearance.yellow
         case .waiting, .error: return TermAppearance.red
         case .done: return TermAppearance.cyan
+        case .orchestrating: return TermAppearance.purple
         case .idle: return TermAppearance.green
         }
     }
@@ -60,10 +69,11 @@ enum WorkStatus: Equatable {
     /// 묶음·탭에 대표로 보일 상태(먼저 볼 것부터)
     var rank: Int {
         switch self {
-        case .waiting: return 6
-        case .error: return 5
-        case .done: return 4
-        case .working: return 3
+        case .waiting: return 7
+        case .error: return 6
+        case .done: return 5
+        case .working: return 4
+        case .orchestrating: return 3
         case .idle: return 2
         case .unknown, .codexUnknown: return 1
         case .none: return 0
@@ -86,6 +96,7 @@ enum WorkStatus: Equatable {
         case .working: return "working"
         case .waiting(let message): return "waiting" + (message.map { "(\($0))" } ?? "")
         case .done: return "done"
+        case .orchestrating(let agents, let shells): return "orchestrating(agents:\(agents),shells:\(shells))"
         case .idle: return "idle"
         case .error(let message): return "error" + (message.map { "(\($0))" } ?? "")
         }
@@ -102,6 +113,7 @@ enum WorkStatus: Equatable {
         case .working: return .working
         case .waiting: return .waiting
         case .done: return .done
+        case .orchestrating: return .orchestrating
         case .idle: return .idle
         case .error: return .error
         }
@@ -113,6 +125,7 @@ enum WorkStatus: Equatable {
         case .working: self = .working
         case .waiting: self = .waiting(nil)
         case .done: self = .done
+        case .orchestrating: self = .orchestrating(agents: 0, shells: 0)
         case .idle: self = .idle
         case .error: self = .error(nil)
         }

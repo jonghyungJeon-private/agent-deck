@@ -179,7 +179,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
                   withAttributes: plusAttributes)
     }
 
-    /// 상태 점(사이드바와 같은 모양): 쉬는 중은 속 빈 점, 입력 대기는 테두리 두른 점, 나머지는 찬 점.
+    /// 상태 점(사이드바와 같은 모양): 쉬는 중은 속 빈 점, 입력 대기는 테두리 두른 점, 오케스트레이션 중은 점선 고리 + 가운데 점, 나머지는 찬 점.
     /// 강조색(지금 탭) 위에서는 바탕색 테두리를 둘러 점이 묻히지 않게 한다.
     private func drawDot(_ status: WorkStatus, at center: CGPoint, onAccent: Bool) {
         let size = Self.dotSize
@@ -202,6 +202,15 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             ring.stroke()
             color.setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
+        case .orchestrating:
+            // 점선 고리 + 가운데 작은 점(사이드바와 같은 모양)
+            color.setStroke()
+            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.6, dy: 0.6))
+            ring.lineWidth = 1.2
+            ring.setLineDash([1.8, 1.3], count: 2, phase: 0)
+            ring.stroke()
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: size * 0.32, dy: size * 0.32)).fill()
         default:
             color.setFill()
             NSBezierPath(ovalIn: rect).fill()
