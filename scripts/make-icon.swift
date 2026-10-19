@@ -1,10 +1,67 @@
 // 앱 아이콘(Resources/AppIcon.icns)을 그린다. 아이콘을 바꿀 때만 실행:
 //   swift scripts/make-icon.swift && iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
+// 어두운 바탕 위 흰 터미널 카드(› _ 와 초록 상태 점) 뒤로 보라 카드 두 장 — 여러 세션을 담은 덱
 import AppKit
 
 let out = URL(fileURLWithPath: "Resources/AppIcon.iconset", isDirectory: true)
 try? FileManager.default.removeItem(at: out)
 try! FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+
+func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> NSColor {
+    NSColor(srgbRed: CGFloat((hex >> 16) & 0xff) / 255, green: CGFloat((hex >> 8) & 0xff) / 255,
+            blue: CGFloat(hex & 0xff) / 255, alpha: a)
+}
+
+let purple = rgb(0xa78bfa), purpleDeep = rgb(0x7c5cff)
+let ink = rgb(0x14161c), paper = rgb(0xeef0f6)
+
+// macOS 아이콘 격자: 824/1024 크기 둥근 사각형 바탕
+func base(_ s: CGFloat, _ top: NSColor, _ bottom: NSColor) -> NSBezierPath {
+    let inset = s * 100 / 1024
+    let r = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
+    let p = NSBezierPath(roundedRect: r, xRadius: r.width * 0.225, yRadius: r.width * 0.225)
+    NSGradient(starting: bottom, ending: top)!.draw(in: p, angle: 90)
+    return p
+}
+
+func rounded(_ r: NSRect, _ rad: CGFloat) -> NSBezierPath { NSBezierPath(roundedRect: r, xRadius: rad, yRadius: rad) }
+
+// 그림자 흐림/오프셋/투명도는 모두 아이콘 크기(s)에 비례한다 (16px 에서도 같은 비율)
+func shadow(_ s: CGFloat, _ blur: CGFloat = 0.03, _ y: CGFloat = -0.012, _ a: CGFloat = 0.45) {
+    let sh = NSShadow(); sh.shadowBlurRadius = s * blur; sh.shadowOffset = NSSize(width: 0, height: s * y)
+    sh.shadowColor = NSColor.black.withAlphaComponent(a); sh.set()
+}
+
+func dot(_ c: NSPoint, _ r: CGFloat, _ color: NSColor) {
+    color.setFill(); NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)).fill()
+}
+
+func bar(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ color: NSColor) {
+    color.setFill(); rounded(NSRect(x: x, y: y, width: w, height: h), h / 2).fill()
+}
+
+// 보라 카드 두 장(뒤) + 흰 터미널 카드 한 장(앞): › 기호, 보라 커서 막대, 초록 상태 점
+func icon(_ s: CGFloat) {
+    _ = base(s, rgb(0x2a2e3a), rgb(0x14161d))
+    let w = s * 0.50, h = s * 0.38, x = s * 0.20, y = s * 0.24
+    for (k, c) in [(2, purple.withAlphaComponent(0.45)), (1, purple)] {
+        let o = CGFloat(k) * s * 0.055
+        shadow(s, 0.02, -0.006, 0.3)
+        c.setFill(); rounded(NSRect(x: x + o, y: y + o, width: w, height: h), s * 0.05).fill()
+        NSShadow().set()
+    }
+    let r = NSRect(x: x, y: y, width: w, height: h)
+    shadow(s, 0.03, -0.01, 0.4)
+    paper.setFill(); rounded(r, s * 0.05).fill()
+    NSShadow().set()
+    let chev = NSBezierPath(); chev.lineWidth = s * 0.042; chev.lineCapStyle = .round; chev.lineJoinStyle = .round
+    chev.move(to: NSPoint(x: r.minX + w * 0.17, y: r.midY + h * 0.16))
+    chev.line(to: NSPoint(x: r.minX + w * 0.31, y: r.midY - h * 0.02))
+    chev.line(to: NSPoint(x: r.minX + w * 0.17, y: r.midY - h * 0.20))
+    ink.setStroke(); chev.stroke()
+    bar(r.minX + w * 0.40, r.midY - h * 0.20 - s * 0.018, w * 0.22, s * 0.036, purpleDeep)
+    dot(NSPoint(x: r.maxX - w * 0.11, y: r.maxY - h * 0.15), s * 0.026, rgb(0x22c55e))
+}
 
 func draw(_ px: Int) -> Data {
     let s = CGFloat(px)
@@ -13,33 +70,7 @@ func draw(_ px: Int) -> Data {
                                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    // macOS 아이콘 격자: 824/1024 크기 둥근 사각형
-    let inset = s * 100 / 1024
-    let rect = NSRect(x: inset, y: inset, width: s - inset * 2, height: s - inset * 2)
-    let path = NSBezierPath(roundedRect: rect, xRadius: rect.width * 0.225, yRadius: rect.width * 0.225)
-    NSGradient(starting: NSColor(calibratedRed: 0.13, green: 0.12, blue: 0.11, alpha: 1),
-               ending: NSColor(calibratedRed: 0.24, green: 0.21, blue: 0.19, alpha: 1))!.draw(in: path, angle: -90)
-    // 프롬프트 기호 ›  와 커서 _
-    let accent = NSColor(calibratedRed: 0.85, green: 0.47, blue: 0.34, alpha: 1)
-    let chevron = NSBezierPath()
-    chevron.lineWidth = s * 0.075
-    chevron.lineCapStyle = .round
-    chevron.lineJoinStyle = .round
-    chevron.move(to: NSPoint(x: s * 0.30, y: s * 0.64))
-    chevron.line(to: NSPoint(x: s * 0.46, y: s * 0.50))
-    chevron.line(to: NSPoint(x: s * 0.30, y: s * 0.36))
-    accent.setStroke()
-    chevron.stroke()
-    NSColor(calibratedWhite: 0.93, alpha: 1).setFill()
-    NSBezierPath(roundedRect: NSRect(x: s * 0.52, y: s * 0.33, width: s * 0.20, height: s * 0.07),
-                 xRadius: s * 0.02, yRadius: s * 0.02).fill()
-    // 이어 열기(복원) 표시: 오른쪽 위 작은 원형 화살표
-    let arc = NSBezierPath()
-    arc.lineWidth = s * 0.035
-    arc.lineCapStyle = .round
-    arc.appendArc(withCenter: NSPoint(x: s * 0.68, y: s * 0.66), radius: s * 0.08, startAngle: 120, endAngle: 400)
-    NSColor(calibratedWhite: 0.93, alpha: 0.85).setStroke()
-    arc.stroke()
+    icon(s)
     NSGraphicsContext.restoreGraphicsState()
     return rep.representation(using: .png, properties: [:])!
 }
