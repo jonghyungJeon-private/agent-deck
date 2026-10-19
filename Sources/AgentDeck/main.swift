@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        model.openSettings = { [weak self] in self?.perform("settings") }
         let host = TerminalHostController(model: model)
         model.host = host
 
@@ -490,6 +491,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "settings":
             settingsWindow.show()
             print("settings window=\(settingsWindow.windowNumber ?? -1)")
+            fflush(stdout)
+        case "footer-settings":
+            // 도크 상태 줄 "설정" 버튼을 누른 것과 같음
+            print("footer-settings")
+            model.openSettings()
             fflush(stdout)
         case "settings-snap":
             settingsWindow.snapshot(to: URL(fileURLWithPath: argument))

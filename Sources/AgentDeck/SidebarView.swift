@@ -872,11 +872,13 @@ struct AgentRowView: View {
 struct StatusFooterView: View {
     @ObservedObject var model: TermModel
     @ObservedObject private var updates: UpdateNotifier
+    @ObservedObject private var launch: LaunchSettings
     @ObservedObject private var scaling = UIScaleModel.shared
     private var ui: UIScale { scaling.scale }
 
     init(model: TermModel) {
         _model = ObservedObject(wrappedValue: model)
+        _launch = ObservedObject(wrappedValue: model.launch)
         _updates = ObservedObject(wrappedValue: model.updates)
     }
 
@@ -902,8 +904,12 @@ struct StatusFooterView: View {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
             Text("앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))")
-            Text(Self.versionLabel)
-                .textSelection(.enabled)
+            HStack(alignment: .center, spacing: ui(6)) {
+                Text(Self.versionLabel)
+                    .textSelection(.enabled)
+                Spacer(minLength: ui(4))
+                SettingsButton(warning: launch.danger(.claude) ?? launch.danger(.codex)) { model.openSettings() }
+            }
             Text(model.connected ? "앱을 꺼도 세션은 계속 돕니다" : "데몬 연결 끊김")
         }
         .uiFont(10)
@@ -915,6 +921,36 @@ struct StatusFooterView: View {
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
         .environment(\.colorScheme, .dark)
         .environment(\.uiScale, ui)
+    }
+}
+
+/// 상태 줄 오른쪽 "⚙ 설정"(⌘,). 새 세션 기본 옵션이 위험하면 빨간 ⚠ 를 덧붙인다.
+private struct SettingsButton: View {
+    let warning: String?
+    let action: () -> Void
+    @State private var hovering = false
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: ui(4)) {
+                if warning != nil {
+                    Text("⚠").foregroundStyle(Color(TermAppearance.red))
+                }
+                Image(systemName: "gearshape")
+                Text("설정")
+            }
+            .uiFont(11, bold: hovering)
+            .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
+            .padding(.horizontal, ui(7))
+            .padding(.vertical, ui(3))
+            .background(RoundedRectangle(cornerRadius: 4)
+                .fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(warning.map { "설정 (⌘,)\n기본 옵션 주의: \($0)" } ?? "설정 (⌘,)")
     }
 }
 

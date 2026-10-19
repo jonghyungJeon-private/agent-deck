@@ -135,6 +135,8 @@ final class TermModel: ObservableObject {
     let spaces = SpacesStore()
     /// 새로 띄우는 claude·codex 의 기본 옵션(설정 창 ⌘,)
     let launch = LaunchSettings()
+    /// 도크 아래 상태 줄의 "설정" 버튼 → 앱 메뉴 "설정…"(perform "settings")과 같은 동작. AppDelegate 가 연결한다.
+    var openSettings: () -> Void = {}
     private let codexScanner = CodexScanner()
     /// 하위 에이전트 훑기(worker 전용). 10초에 한 번만.
     private let subagents = SubagentScanner()
