@@ -477,6 +477,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "location":
             print("location mode=\(DataLocation.mode.rawValue) root=\(DataLocation.root.path) term=\(TermPaths.home.path)"
                   + " legacyDaemon=\(model.legacyDaemon) connected=\(model.connected) relocating=\(model.relocating)"
+                  + " link=\(model.link.phase) limited=\(model.link.limited) failures=\(model.link.failures)"
+                  + " migrationPending=\(model.migrationPending.map(\.path))"
                   + " panes=\(model.workspace.allPanes.count) dormant=\(model.workspace.dormant.count)")
             fflush(stdout)
         case "launch-options":

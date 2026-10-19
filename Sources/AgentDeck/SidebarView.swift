@@ -41,7 +41,7 @@ struct SidebarView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if model.groups.isEmpty {
-                        Text(model.connected ? "열린 세션이 없습니다.\n위 + 버튼으로 시작하세요." : "데몬에 연결 중…")
+                        Text(model.connectionStatusText ?? "열린 세션이 없습니다.\n위 + 버튼으로 시작하세요.")
                             .uiFont(11)
                             .foregroundStyle(Color(TermAppearance.textDim))
                             .padding(ui(14))
@@ -900,6 +900,12 @@ struct StatusFooterView: View {
                 LegacyDaemonLine(relocating: model.relocating) { model.moveToNewLocation() }
                     .padding(.bottom, ui(3))
             }
+            if !model.migrationPending.isEmpty {
+                NoticeLine(color: TermAppearance.yellow, title: "데이터 옮기기 일부 실패", detail: "다음 실행 때 다시 시도합니다",
+                           help: DataLocation.pendingNoticeDetail(model.migrationPending, legacy: DataLocation.legacyRoot(),
+                                                                  logPath: Self.logPath))
+                    .padding(.bottom, ui(3))
+            }
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
@@ -910,7 +916,7 @@ struct StatusFooterView: View {
                 Spacer(minLength: ui(4))
                 SettingsButton(warning: launch.danger(.claude) ?? launch.danger(.codex)) { model.openSettings() }
             }
-            Text(model.connected ? "앱을 꺼도 세션은 계속 돕니다" : "데몬 연결 끊김")
+            daemonLine
         }
         .uiFont(10)
         .foregroundStyle(Color(TermAppearance.textDim))
@@ -921,6 +927,62 @@ struct StatusFooterView: View {
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
         .environment(\.colorScheme, .dark)
         .environment(\.uiScale, ui)
+    }
+
+    private static var logPath: String { TermPaths.home.appendingPathComponent("daemon.log").path }
+
+    /// 맨 아래 데몬 연결 줄: 평소엔 흐리게 한 줄, 붙는 중·실패·세션 유지 제한은 색 점과 함께 눈에 띄게
+    @ViewBuilder private var daemonLine: some View {
+        if model.connected {
+            if model.link.limited {
+                NoticeLine(color: TermAppearance.yellow, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있음",
+                           help: """
+                               세션 데몬이 launchd 작업이 아니라 예전 방식(posix_spawn)으로 떠서 앱과 같은 묶음(coalition)에 있습니다.
+                               앱을 ⌘Q 로 끄면 세션은 남지만, 강제 종료하거나 Dock 에서 강제 종료하면 셸·claude·codex 가 함께 끝날 수 있습니다.
+                               모든 화면을 닫고 데몬이 끝난 뒤(약 1분) 앱을 다시 켜면 launchd 작업으로 다시 띄웁니다.
+                               기록: \(Self.logPath)
+                               """)
+            } else {
+                Text("앱을 꺼도 세션은 계속 돕니다")
+            }
+        } else if case .failed(let message, _) = model.link.phase {
+            NoticeLine(color: TermAppearance.red, title: "세션 데몬에 연결하지 못함", detail: "잠시 뒤 다시 시도합니다",
+                       help: "\(message) (\(model.link.failures)번째 실패)\n새 화면을 열면 바로 다시 시도합니다.\n기록: \(Self.logPath)")
+        } else {
+            NoticeLine(color: TermAppearance.yellow, title: model.connectionStatusText ?? "세션 데몬 연결 중…", detail: nil,
+                       help: "세션 데몬에 연결하는 중입니다. 데몬이 없으면 띄웁니다(몇 초 걸릴 수 있음).\n기록: \(Self.logPath)")
+        }
+    }
+}
+
+/// 상태 줄의 알림: 색 점 + 밝은 제목 한 줄 + 설명 한 줄, 풍선 도움말에 자세한 내용.
+/// 줄마다 한 줄로 자른다(상태 줄 높이를 NSHostingView 가 줄 바꿈 전 폭으로 재서, 접힌 줄은 아래가 잘렸다).
+private struct NoticeLine: View {
+    let color: NSColor
+    let title: String
+    let detail: String?
+    let help: String
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: ui(6)) {
+            Circle().fill(Color(color)).frame(width: ui(6), height: ui(6))
+            VStack(alignment: .leading, spacing: ui(1)) {
+                Text(title)
+                    .uiFont(11, bold: true)
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                if let detail {
+                    Text(detail)
+                        .uiFont(10)
+                        .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
+                }
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .help(help)
     }
 }
 

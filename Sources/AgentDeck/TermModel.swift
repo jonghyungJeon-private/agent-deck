@@ -110,6 +110,10 @@ final class TermModel: ObservableObject {
     @Published private(set) var legacyDaemon = DataLocation.mode == .legacy
     /// "지금 옮기기" 중(그동안 다시 붙지 않는다)
     @Published private(set) var relocating = false
+    /// 데몬 연결 단계(붙는 중·실패와 다시 시도 시각·예전 방식으로 떠 세션 유지가 제한됨). 붙기는 메인 스레드 밖에서 한다.
+    @Published private(set) var link = DaemonLink()
+    /// 지난 데이터 옮기기에서 못 옮긴 항목(상태 줄 알림, 다음 실행 때 다시)
+    @Published private(set) var migrationPending: [DataLocation.Migration.Failure] = DataLocation.migrationPending
 
     enum HookState: Equatable {
         case unknown
@@ -127,6 +131,10 @@ final class TermModel: ObservableObject {
     /// 오른쪽 터미널이 붙을 곳(TerminalHostController)
     weak var host: TerminalHostController?
     private var timer: Timer?
+    /// 연결 실패 뒤 한 번만 도는 다시 시도 타이머(붙으면 없앤다)
+    private var retryTimer: Timer?
+    /// 붙는 중에 연 새 화면(붙으면 연다, 실패하면 버린다)
+    private var whenConnected: [() -> Void] = []
     private var titles: [String: (path: String, cursor: TranscriptCursor)] = [:]
     /// 세션별 첫 질문(찾으면 고정). 못 찾았으면 그때 파일 크기를 적어 두고 커질 때만 다시 본다.
     private var firstPrompts: [String: (prompt: String?, size: UInt64)] = [:]
@@ -275,6 +283,7 @@ final class TermModel: ObservableObject {
         client.onError = { [weak self] message in self?.lastError = message }
         client.onDisconnect = { [weak self] in
             self?.connected = false
+            self?.link.disconnected()
             self?.host?.render()
         }
         if let error = DataLocation.migrationError { lastError = "예전 데이터를 새 위치로 옮기지 못했습니다(다음에 켤 때 다시 시도): \(error)" }
@@ -284,20 +293,64 @@ final class TermModel: ObservableObject {
         self.timer = timer
     }
 
-    func reconnect() {
-        guard !relocating else { return }
+    /// 데몬에 붙는다(없으면 띄운다). 메인 스레드 밖에서 하고 끝나면 화면을 붙인다. 붙는 중이거나 실패 뒤 기다리는 동안은 넘어간다.
+    /// force: 사용자가 새 화면을 열 때처럼 기다리던 간격을 건너뛴다.
+    func reconnect(force: Bool = false) {
+        guard !relocating, !client.isConnected else { return }
+        if link.isConnected { link.disconnected() } // 끊김 알림보다 먼저 왔다
+        guard link.canAttempt(now: Date(), force: force) else { return }
         // 붙어 있던 예전 데몬이 끝났다(그 화면들도 함께) → 이제 옮길 수 있다
         if DataLocation.mode == .legacy, !DataLocation.daemonAlive(termDir: TermPaths.home) {
             relocate()
         }
+        link.begin(now: Date(), force: force)
+        retryTimer?.invalidate()
+        retryTimer = nil
+        connected = false
+        host?.render() // 터미널 자리에 "세션 데몬 연결 중…"
         // 예전 데몬에 붙는 동안은 새 데몬을 띄우지 않는다(같은 폴더에 데몬 둘)
-        connected = client.connect(launch: DataLocation.mode != .legacy)
-        if connected {
+        client.connect(launch: DataLocation.mode != .legacy) { [weak self] result in self?.finishConnect(result) }
+    }
+
+    private func finishConnect(_ result: DaemonConnector.Result) {
+        guard link.isConnecting else { return } // 그사이 지금 옮기기 등으로 끊었다
+        let delay = link.finish(result, now: Date())
+        switch result {
+        case .connected(_, let route):
+            connected = true
+            if route == .existingDirect {
+                DataLocation.log("이미 돌던 데몬이 launchd 작업이 아님(예전 방식으로 뜸) — 앱을 강제 종료하면 세션이 함께 끝날 수 있음")
+            }
             // 다시 붙었으면 배치가 그대로여도 화면을 새로 만들어 붙인다(끊길 때 화면을 모두 버렸으므로)
             reconciled = false
             client.list()
-        } else {
-            lastError = "데몬에 연결하지 못했습니다"
+            // 화면은 목록을 받은 뒤(show) 그린다 — 맞춰 보기 전에 저장된 배치로 붙지 않게
+            let pending = whenConnected
+            whenConnected = []
+            pending.forEach { $0() }
+        case .failed(let message):
+            connected = false
+            whenConnected = []
+            DataLocation.log("데몬에 연결하지 못함(\(link.failures)번째): \(message) — \(Int(delay ?? 0))초 뒤 다시 시도")
+            if let delay {
+                let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+                    self?.retryTimer = nil
+                    self?.reconnect()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                retryTimer = timer
+            }
+            host?.render()
+        }
+    }
+
+    /// 터미널 자리·목록에 보이는 연결 상태(붙어 있으면 nil)
+    var connectionStatusText: String? {
+        if connected { return nil }
+        if relocating { return "새 위치로 옮기는 중…" }
+        switch link.phase {
+        case .failed: return "세션 데몬에 연결하지 못했습니다 — 잠시 뒤 다시 시도합니다"
+        default: return "세션 데몬 연결 중…"
         }
     }
 
@@ -327,6 +380,10 @@ final class TermModel: ObservableObject {
         saveLayoutNow()
         // 끄는 동안 오는 목록(화면이 하나씩 끝남)으로 배치에서 화면이 빠지지 않게 먼저 끊는다
         client.disconnect()
+        link.reset()
+        whenConnected = []
+        retryTimer?.invalidate()
+        retryTimer = nil
         connected = false
         host?.render()
         let legacyTerm = TermPaths.home
@@ -354,6 +411,7 @@ final class TermModel: ObservableObject {
         saveLayoutNow() // 미뤄 둔 배치 저장을 옮기기 전 위치에 마저 쓴다
         DataLocation.prepareForApp()
         legacyDaemon = DataLocation.mode == .legacy
+        migrationPending = DataLocation.migrationPending
         if let error = DataLocation.migrationError { lastError = "예전 데이터를 새 위치로 옮기지 못했습니다(다음에 켤 때 다시 시도): \(error)" }
         saveLayoutNow()
     }
@@ -851,8 +909,12 @@ final class TermModel: ObservableObject {
 
     /// 새 화면. command 가 있으면 셸이 뜬 뒤 입력한다. split 이 있으면 지금 화면을 나눠 넣고, 없으면 새 탭.
     func newPane(cwd: String? = nil, command: String? = nil, split axis: SplitAxis? = nil) {
-        if !client.isConnected { reconnect() } // 예전 데몬이 끝났으면 여기서 옮기고 새 데몬을 띄운다
-        guard client.isConnected else { return }
+        if !client.isConnected {
+            // 붙은 뒤에 연다(예전 데몬이 끝났으면 옮기고 새 데몬을 띄운다 — 몇 초 걸릴 수 있어 기다리지 않는다)
+            whenConnected.append { [weak self] in self?.newPane(cwd: cwd, command: command, split: axis) }
+            reconnect(force: true)
+            return
+        }
         let cwd = cwd ?? focusedCwd ?? NSHomeDirectory()
         let size = host?.estimatedSize(splitting: axis) ?? (cols: 120, rows: 36)
         let id = UUID().uuidString

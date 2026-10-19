@@ -159,7 +159,7 @@ final class TerminalHostController: NSViewController {
         tabBarHeight.constant = tab == nil ? 0 : Self.tabBarHeight
         updateTabBar()
         placeholder.isHidden = tab != nil
-        placeholder.stringValue = model.connected ? "왼쪽 위 버튼이나 ⌘T 로 새 화면을 여세요" : "데몬에 연결되지 않았습니다"
+        placeholder.stringValue = model.connectionStatusText ?? "왼쪽 위 버튼이나 ⌘T 로 새 화면을 여세요"
         focusTerminal()
     }
 

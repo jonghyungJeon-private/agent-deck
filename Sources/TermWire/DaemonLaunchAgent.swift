@@ -140,6 +140,12 @@ public enum DaemonLaunchAgent {
         return parsePrint(result.output, exitStatus: result.status)
     }
 
+    /// status 와 같지만 launchctl 을 실행하지 못했거나 시간 안에 답하지 않았으면 nil(모름 — "올라가 있지 않음"과 다르다)
+    public static func statusIfKnown(label: String) -> ServiceStatus? {
+        let result = launchctl(["print", service(label)])
+        return result.status < 0 ? nil : parsePrint(result.output, exitStatus: result.status)
+    }
+
     /// 데몬을 launchd 작업으로 띄운다. 실패하면 .failed(앱이 예전 방식으로 띄운다).
     public static func launch(program: String, root: URL, termDir: URL,
                               environment: [String: String] = environmentSnapshot()) -> Outcome {
@@ -218,9 +224,17 @@ public enum DaemonLaunchAgent {
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    /// /bin/launchctl 을 셸 없이 실행하고 표준 출력·오류를 합쳐 돌려준다.
+    /// launchctl 한 번에 기다리는 최대 시간. 넘으면 띄운 그 launchctl 만 SIGKILL 하고 실패로 본다.
+    public static let launchctlTimeout: TimeInterval = 3
+
+    /// /bin/launchctl 을 셸 없이 실행하고 표준 출력·오류를 합쳐 돌려준다(timeout 이 지나면 status -2).
     /// Foundation Process 의 waitUntilExit 는 메인 실행 루프를 돌려(앱 이벤트가 끼어든다) posix_spawn + waitpid 로 한다.
-    static func launchctl(_ args: [String]) -> (status: Int32, output: String) {
+    static func launchctl(_ args: [String], timeout: TimeInterval = launchctlTimeout) -> (status: Int32, output: String) {
+        run(launchctlPath, args, timeout: timeout)
+    }
+
+    /// 실행 파일을 셸 없이 띄워 출력을 읽는다. timeout 이 지나면 그 자식만 SIGKILL(다른 프로세스는 건드리지 않는다).
+    static func run(_ path: String, _ args: [String], timeout: TimeInterval) -> (status: Int32, output: String) {
         var pipe: [Int32] = [-1, -1]
         guard Darwin.pipe(&pipe) == 0 else { return (-1, "pipe 실패") }
         var actions: posix_spawn_file_actions_t?
@@ -234,26 +248,38 @@ public enum DaemonLaunchAgent {
         defer { posix_spawnattr_destroy(&attr) }
         posix_spawnattr_setflags(&attr, Int16(POSIX_SPAWN_CLOEXEC_DEFAULT))
 
-        let argv: [UnsafeMutablePointer<CChar>?] = ([launchctlPath] + args).map { strdup($0) } + [nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = ([path] + args).map { strdup($0) } + [nil]
         defer { argv.forEach { free($0) } }
         var pid: pid_t = 0
-        let spawned = posix_spawn(&pid, launchctlPath, &actions, &attr, argv, environ)
+        let spawned = posix_spawn(&pid, path, &actions, &attr, argv, environ)
         close(pipe[1])
         guard spawned == 0 else {
             close(pipe[0])
-            return (-1, "launchctl 을 실행하지 못함: \(String(cString: strerror(spawned)))")
+            return (-1, "\((path as NSString).lastPathComponent) 을 실행하지 못함: \(String(cString: strerror(spawned)))")
         }
+        let deadline = Date().addingTimeInterval(timeout)
+        var timedOut = false
         var output = [UInt8]()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
+            let left = deadline.timeIntervalSinceNow
+            if left <= 0 { timedOut = true; break }
+            var poller = pollfd(fd: pipe[0], events: Int16(POLLIN), revents: 0)
+            let ready = poll(&poller, 1, Int32(min(left * 1000, 1000).rounded(.up)))
+            if ready < 0 { if errno == EINTR { continue } else { break } }
+            if ready == 0 { continue }
             let count = buffer.withUnsafeMutableBytes { read(pipe[0], $0.baseAddress, $0.count) }
             if count > 0 { output.append(contentsOf: buffer[0..<count]) }
             else if count < 0, errno == EINTR { continue }
             else { break }
         }
         close(pipe[0])
+        if timedOut { kill(pid, SIGKILL) }
         var status: Int32 = 0
         while waitpid(pid, &status, 0) < 0, errno == EINTR {}
+        if timedOut {
+            return (-2, "\((path as NSString).lastPathComponent) \(args.first ?? "") 이 \(timeout)초 안에 끝나지 않아 멈춤")
+        }
         let code: Int32 = (status & 0x7f) == 0 ? (status >> 8) & 0xff : -1
         return (code, String(decoding: output, as: UTF8.self))
     }

@@ -26,18 +26,19 @@ final class DataLocationTests: XCTestCase {
         }
     }
 
-    /// 32가지 모두: 규칙을 그대로 다시 적어 맞춰 보고, hook 은 앱이 지금(또는 곧) 읽는 곳에 적는지
+    /// 64가지 모두: 규칙을 그대로 다시 적어 맞춰 보고, hook 은 앱이 지금(또는 곧) 읽는 곳에 적는지
     func testAllCombinations() {
-        for bits in 0..<32 {
+        for bits in 0..<64 {
             let facts = Facts(standardDaemon: bits & 1 != 0, legacyDaemon: bits & 2 != 0, standardHasData: bits & 4 != 0,
-                              legacyHasData: bits & 8 != 0, legacyMigrated: bits & 16 != 0)
+                              legacyHasData: bits & 8 != 0, legacyMigrated: bits & 16 != 0, legacyPending: bits & 32 != 0)
             let plan = DataLocation.appPlan(facts)
-            let expected: DataLocation.Plan = facts.standardDaemon ? .standard
+            let expected: DataLocation.Plan = facts.standardDaemon ? (facts.legacyPending && !facts.legacyDaemon ? .retry : .standard)
                 : facts.legacyDaemon ? .legacy
+                : facts.legacyPending ? .retry
                 : (facts.legacyHasData && !facts.legacyMigrated) ? .migrate : .standard
             XCTAssertEqual(plan, expected, "\(facts)")
-            // hook: 앱이 예전 폴더를 쓰거나(legacy) 곧 옮길(migrate) 때만 예전 폴더에
-            XCTAssertEqual(DataLocation.helperUsesLegacy(facts), plan != .standard, "\(facts)")
+            // hook: 앱이 예전 폴더를 쓰거나(legacy) 곧 옮길(migrate) 때만 예전 폴더에. 옮기다 남은 것이 있으면(retry) 새 위치가 기준.
+            XCTAssertEqual(DataLocation.helperUsesLegacy(facts), plan == .legacy || plan == .migrate, "\(facts)")
             if facts.standardDaemon { XCTAssertFalse(DataLocation.helperUsesLegacy(facts)) }
         }
     }
@@ -187,5 +188,104 @@ final class DataLocationTests: XCTestCase {
         XCTAssertFalse(DataLocation.hasData(legacy))
         try write("{}", "sessions/a.json", in: legacy)
         XCTAssertTrue(DataLocation.hasData(legacy))
+    }
+
+    // MARK: 옮기기 일부 실패
+
+    /// 정한 이름의 항목은 옮기기가 실패하는 FileManager(권한 없음처럼)
+    final class FailingMoves: FileManager {
+        var failing: Set<String> = []
+
+        override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+            if failing.contains(srcURL.lastPathComponent) {
+                throw CocoaError(.fileWriteNoPermission, userInfo: [NSFilePathErrorKey: srcURL.path])
+            }
+            try super.moveItem(at: srcURL, to: dstURL)
+        }
+    }
+
+    /// 일부 실패 → 완료 표식 없음(남은 항목 표식) → 다시 부르면 남은 것만 옮김 → 완료 표식. 지우는 것은 없다.
+    func testPartialFailureIsRetriedThenMarkedComplete() throws {
+        try seedLegacy()
+        try write("new-ui", "term/ui.json", in: standard)
+        try write("old-ui", "term/ui.json", in: legacy)
+        let fm = FailingMoves()
+        fm.failing = ["sessions", "layout.json"]
+
+        let first = try DataLocation.migrate(from: legacy, to: standard, fileManager: fm)
+        XCTAssertFalse(first.complete)
+        XCTAssertEqual(Set(first.failed.map(\.path)), ["sessions", "term/layout.json"])
+        XCTAssertEqual(first.kept, ["term/ui.json"], "겹침은 실패가 아니다")
+        XCTAssertEqual(Set(first.moved), ["codex-sessions", "term/names.json"])
+        XCTAssertNil(read(DataLocation.markerName, in: legacy), "실패가 있으면 완료 표식을 남기지 않는다")
+        let pending = try XCTUnwrap(read(DataLocation.pendingMarkerName, in: legacy))
+        XCTAssertTrue(pending.contains("sessions\n") && pending.contains("term/layout.json\n"))
+        // 못 옮긴 것은 예전 폴더에 그대로
+        XCTAssertEqual(read("sessions/s1.json", in: legacy), #"{"sessionId":"s1"}"#)
+        XCTAssertEqual(read("term/layout.json", in: legacy), #"{"tabs":[]}"#)
+
+        let facts = DataLocation.probe(env)
+        XCTAssertTrue(facts.legacyPending)
+        XCTAssertFalse(facts.legacyMigrated)
+        XCTAssertEqual(DataLocation.appPlan(facts), .retry, "다음 실행 때 다시")
+        XCTAssertFalse(DataLocation.helperUsesLegacy(facts), "이미 새 위치가 기준(hook 이 예전 폴더에 적지 않게)")
+        XCTAssertTrue(first.summary.contains("실패 2개"))
+
+        let second = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertTrue(second.complete)
+        XCTAssertEqual(Set(second.moved), ["sessions", "term/layout.json"])
+        XCTAssertEqual(second.kept, ["term/ui.json"])
+        XCTAssertEqual(read("sessions/s1.json", in: standard), #"{"sessionId":"s1"}"#)
+        XCTAssertEqual(read("term/layout.json", in: standard), #"{"tabs":[]}"#)
+        XCTAssertEqual(read("term/ui.json", in: standard), "new-ui")
+        XCTAssertEqual(read("term/ui.json", in: legacy), "old-ui")
+        XCTAssertNotNil(read(DataLocation.markerName, in: legacy))
+        XCTAssertNil(read(DataLocation.pendingMarkerName, in: legacy), "다 옮기면 남은 항목 표식을 지운다")
+        XCTAssertEqual(DataLocation.appPlan(DataLocation.probe(env)), .standard)
+
+        // 다시 불러도 그대로(겹친 것만 남김)
+        let third = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertEqual(third.moved, [])
+        XCTAssertTrue(third.complete)
+    }
+
+    /// 실제 권한: 읽기 전용 폴더에서는 꺼내지 못해 실패로 남고, 권한이 돌아오면 다음에 옮긴다
+    func testReadOnlyFolderFailsThenRetries() throws {
+        try seedLegacy()
+        try write("{}", "sessions/other.json", in: standard) // 새 폴더에도 sessions 가 있어 안으로 들어가 합친다
+        let locked = legacy.appendingPathComponent("sessions")
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path) }
+
+        let first = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertEqual(first.failed.map(\.path), ["sessions/s1.json"])
+        XCTAssertNil(read(DataLocation.markerName, in: legacy))
+        XCTAssertEqual(read("sessions/s1.json", in: legacy), #"{"sessionId":"s1"}"#)
+        XCTAssertNil(read("sessions/s1.json", in: standard))
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+        let second = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertTrue(second.complete)
+        XCTAssertEqual(second.moved, ["sessions/s1.json"])
+        XCTAssertEqual(read("sessions/s1.json", in: standard), #"{"sessionId":"s1"}"#)
+        XCTAssertNotNil(read(DataLocation.markerName, in: legacy))
+    }
+
+    /// 앱이 켤 때: 일부 실패면 새 위치를 쓰고 남은 항목을 알린다. 다음 번에 다 옮기면 알림이 없어진다.
+    func testMigrateNowSurfacesPendingAndClearsOnRetry() throws {
+        try seedLegacy()
+        try write("new-ui", "term/ui.json", in: standard) // term 폴더가 있어 안으로 들어가 하나씩 옮긴다
+        let fm = FailingMoves()
+        fm.failing = ["names.json"]
+        XCTAssertTrue(DataLocation.migrateNow(env, fileManager: fm))
+        XCTAssertEqual(DataLocation.migrationPending.map(\.path), ["term/names.json"])
+        XCTAssertNil(DataLocation.migrationError)
+        let detail = DataLocation.pendingNoticeDetail(DataLocation.migrationPending, legacy: legacy, logPath: "/x/daemon.log")
+        XCTAssertTrue(detail.contains("term/names.json") && detail.contains(legacy.path) && detail.contains("/x/daemon.log"))
+
+        XCTAssertEqual(DataLocation.prepareForApp(env), .retry)
+        XCTAssertEqual(DataLocation.migrationPending, [])
+        XCTAssertEqual(read("term/names.json", in: standard), #"{"pane:a":{"title":"x"}}"#)
+        XCTAssertEqual(DataLocation.appPlan(DataLocation.probe(env)), .standard)
     }
 }
