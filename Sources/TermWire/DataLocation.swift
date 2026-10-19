@@ -52,6 +52,18 @@ public enum DataLocation {
     public static let markerName = "MIGRATED_TO"
     /// 옮기기를 시작했지만 일부를 못 옮김(새 위치가 기준, 남은 항목은 다음 실행 때 다시)
     public static let pendingMarkerName = "MIGRATION_PENDING"
+    /// 같은 기록을 새 위치(term 폴더)에도 둔다 — 예전 폴더가 읽기 전용이면 거기엔 못 쓰므로
+    public static let pendingRecordName = "migration-pending.json"
+
+    public static func pendingRecordURL(standard: URL) -> URL {
+        termDir(of: standard).appendingPathComponent(pendingRecordName)
+    }
+
+    /// 남은 항목 기록이 예전 폴더나 새 위치 어느 쪽에든 있으면 true
+    public static func hasPendingRecord(legacy: URL, standard: URL, fileManager fm: FileManager = .default) -> Bool {
+        fm.fileExists(atPath: legacy.appendingPathComponent(pendingMarkerName).path)
+            || fm.fileExists(atPath: pendingRecordURL(standard: standard).path)
+    }
 
     // MARK: 위치
 
@@ -129,7 +141,7 @@ public enum DataLocation {
         public var legacyHasData = false
         /// 예전 폴더에 표식(MIGRATED_TO)이 있음
         public var legacyMigrated = false
-        /// 예전 폴더에 MIGRATION_PENDING(지난 옮기기에서 남은 항목)이 있음
+        /// 지난 옮기기에서 남은 항목 기록이 있음(예전 폴더의 MIGRATION_PENDING 또는 새 위치의 term/migration-pending.json)
         public var legacyPending = false
 
         public init(standardDaemon: Bool = false, legacyDaemon: Bool = false, standardHasData: Bool = false,
@@ -181,7 +193,7 @@ public enum DataLocation {
                      standardHasData: hasData(standard),
                      legacyHasData: hasData(legacy),
                      legacyMigrated: FileManager.default.fileExists(atPath: legacy.appendingPathComponent(markerName).path),
-                     legacyPending: FileManager.default.fileExists(atPath: legacy.appendingPathComponent(pendingMarkerName).path))
+                     legacyPending: hasPendingRecord(legacy: legacy, standard: standard))
     }
 
     /// 폴더가 있고 표식·.DS_Store 말고 무엇이든 있으면 true
@@ -257,10 +269,14 @@ public enum DataLocation {
             for failure in result.failed {
                 log("옮기지 못함(다음 실행 때 다시 시도): \(failure.path): \(failure.reason)")
             }
+            if let error = result.pendingRecordError {
+                // 이번 실행 동안은 알림을 보인다. 다음 실행 때는 새 데몬이 떠 있으면 다시 시도하지 못할 수 있다.
+                log("남은 항목 기록을 어디에도 쓰지 못함(새 데몬이 떠 있는 동안은 다시 시도하지 못할 수 있음): \(error)")
+            }
             return true
         } catch {
             // 지난번에 이미 일부를 옮겼으면 새 위치가 기준이다
-            let started = fm.fileExists(atPath: legacy.appendingPathComponent(pendingMarkerName).path)
+            let started = hasPendingRecord(legacy: legacy, standard: standard, fileManager: fm)
             use(root: started ? standard : legacy, mode: .standard)
             migrationError = error.localizedDescription
             migrationPending = []
@@ -280,6 +296,8 @@ public enum DataLocation {
         public var kept: [String] = []
         /// 옮기려다 실패한 항목(예전 폴더에 그대로 — 다음 실행 때 다시)
         public var failed: [Failure] = []
+        /// 남은 항목 기록을 예전 폴더에도 새 위치에도 쓰지 못함(nil 이면 적어도 한 곳에 씀)
+        public var pendingRecordError: String?
 
         public struct Failure: Equatable {
             public var path: String
@@ -306,13 +324,19 @@ public enum DataLocation {
     /// 예전 폴더 내용을 새 폴더로 옮긴다(같은 볼륨이라 이름 바꾸기). 지우는 것은 없다:
     /// 새 폴더가 없으면 폴더째, 있으면 없는 항목만 옮기고(폴더는 안으로 들어가 합침) 겹치는 파일은 예전 폴더에 남긴다.
     /// 다 옮겼으면 예전 폴더에 표식(MIGRATED_TO, 새 위치)을 남긴다. 옮기다 실패한 항목이 있으면 표식 대신
-    /// MIGRATION_PENDING(남은 항목)을 남긴다 — 다음에 부르면 남은 것만 다시 옮긴다. 여러 번 불러도 된다.
+    /// 남은 항목 기록을 남긴다(예전 폴더의 MIGRATION_PENDING 과 새 위치의 term/migration-pending.json — 예전 폴더가 읽기 전용이어도
+    /// 다시 시도할 수 있게 둘 다). 다음에 부르면 남은 것만 다시 옮기고, 다 옮기면 두 기록을 지운다. 여러 번 불러도 된다.
     /// 던지는 것은 시작도 못 했을 때(새 폴더의 상위 폴더를 못 만듦·폴더째 이름 바꾸기 실패)뿐이다.
     public static func migrate(from legacy: URL, to standard: URL, now: Date = Date(),
                                fileManager fm: FileManager = .default) throws -> Migration {
         var result = Migration()
         var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: legacy.path, isDirectory: &isDir), isDir.boolValue else { return result }
+        guard fm.fileExists(atPath: legacy.path, isDirectory: &isDir), isDir.boolValue else {
+            // 예전 폴더가 없어졌으면 남은 항목도 없다
+            let record = pendingRecordURL(standard: standard)
+            if fm.fileExists(atPath: record.path) { try? fm.removeItem(at: record) }
+            return result
+        }
         try fm.createDirectory(at: standard.deletingLastPathComponent(), withIntermediateDirectories: true)
         let marker = Data("\(standard.path)\n\(ISO8601DateFormatter().string(from: now))\n".utf8)
         if !fm.fileExists(atPath: standard.path) {
@@ -327,18 +351,36 @@ public enum DataLocation {
         }
         merge(legacy, into: standard, relative: "", result: &result, fm: fm)
         let pendingURL = legacy.appendingPathComponent(pendingMarkerName)
+        let recordURL = pendingRecordURL(standard: standard)
         if result.failed.isEmpty {
             do {
                 try marker.write(to: legacy.appendingPathComponent(markerName), options: .atomic)
                 if fm.fileExists(atPath: pendingURL.path) { try fm.removeItem(at: pendingURL) }
+                if fm.fileExists(atPath: recordURL.path) { try? fm.removeItem(at: recordURL) }
             } catch {
                 result.failed.append(.init(path: markerName, reason: error.localizedDescription))
             }
         }
         if !result.failed.isEmpty {
-            let pending = "\(standard.path)\n\(ISO8601DateFormatter().string(from: now))\n"
-                + result.failed.map { $0.path + "\n" }.joined()
-            try? Data(pending.utf8).write(to: pendingURL, options: .atomic)
+            let at = ISO8601DateFormatter().string(from: now)
+            let paths = result.failed.map(\.path)
+            var errors: [String] = []
+            do {
+                let text = "\(standard.path)\n\(at)\n" + paths.map { $0 + "\n" }.joined()
+                try Data(text.utf8).write(to: pendingURL, options: .atomic)
+            } catch {
+                errors.append("\(pendingURL.path): \(error.localizedDescription)")
+            }
+            do {
+                let json: [String: Any] = ["legacy": legacy.path, "standard": standard.path, "at": at, "items": paths]
+                try fm.createDirectory(at: recordURL.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                       attributes: [.posixPermissions: 0o700])
+                try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+                    .write(to: recordURL, options: .atomic)
+            } catch {
+                errors.append("\(recordURL.path): \(error.localizedDescription)")
+            }
+            if errors.count == 2 { result.pendingRecordError = errors.joined(separator: "; ") }
         }
         return result
     }

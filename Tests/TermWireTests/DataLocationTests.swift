@@ -288,4 +288,66 @@ final class DataLocationTests: XCTestCase {
         XCTAssertEqual(read("term/names.json", in: standard), #"{"pane:a":{"title":"x"}}"#)
         XCTAssertEqual(DataLocation.appPlan(DataLocation.probe(env)), .standard)
     }
+
+    /// 예전 폴더 자체가 읽기 전용 + 새 폴더가 이미 있음: 꺼내지도, 예전 폴더에 기록을 쓰지도 못한다.
+    /// 기록은 새 위치(term/migration-pending.json)에 남아, 새 데몬이 떠 있는 다음 실행에도 다시 시도한다.
+    func testReadOnlyLegacyRootKeepsPendingInStandardAcrossRelaunch() throws {
+        try seedLegacy()
+        try write("new-ui", "term/ui.json", in: standard)
+        let fm = FileManager.default
+        try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: legacy.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: legacy.path) }
+
+        let first = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertFalse(first.complete)
+        XCTAssertTrue(first.failed.map(\.path).contains("sessions"), "\(first)")
+        XCTAssertNil(first.pendingRecordError, "새 위치에는 썼다")
+        XCTAssertNil(read(DataLocation.pendingMarkerName, in: legacy), "읽기 전용이라 예전 폴더엔 못 씀")
+        XCTAssertNil(read(DataLocation.markerName, in: legacy))
+        let record = try XCTUnwrap(read("term/\(DataLocation.pendingRecordName)", in: standard))
+        XCTAssertTrue(record.contains("sessions") && record.contains(legacy.path))
+        XCTAssertEqual(read("sessions/s1.json", in: legacy), #"{"sessionId":"s1"}"#, "지우지 않는다")
+
+        // 다시 켬: 새 데몬이 떠 있어도 남은 것을 다시 옮긴다(hook 은 새 위치에)
+        var facts = DataLocation.probe(env)
+        XCTAssertTrue(facts.legacyPending)
+        facts.standardDaemon = true
+        XCTAssertEqual(DataLocation.appPlan(facts), .retry)
+        XCTAssertFalse(DataLocation.helperUsesLegacy(facts))
+
+        // 아직 읽기 전용이면 그대로 남는다
+        let again = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertFalse(again.complete)
+        XCTAssertTrue(DataLocation.probe(env).legacyPending)
+
+        // 쓸 수 있게 되면 다 옮기고 완료 표식, 두 기록 모두 지움
+        try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: legacy.path)
+        let done = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertTrue(done.complete)
+        XCTAssertEqual(read("sessions/s1.json", in: standard), #"{"sessionId":"s1"}"#)
+        XCTAssertNotNil(read(DataLocation.markerName, in: legacy))
+        XCTAssertNil(read("term/\(DataLocation.pendingRecordName)", in: standard))
+        XCTAssertNil(read(DataLocation.pendingMarkerName, in: legacy))
+        var after = DataLocation.probe(env)
+        XCTAssertFalse(after.legacyPending)
+        after.standardDaemon = true
+        XCTAssertEqual(DataLocation.appPlan(after), .standard)
+    }
+
+    /// 기록을 어디에도 못 쓰면 결과에 남긴다(앱이 기록하고 이번 실행 동안 알림을 유지)
+    func testPendingRecordWriteFailureIsReported() throws {
+        try seedLegacy()
+        try write("new-ui", "term/ui.json", in: standard)
+        let fm = FileManager.default
+        let term = DataLocation.termDir(of: standard)
+        try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: legacy.path)
+        try fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: term.path)
+        defer {
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: legacy.path)
+            try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: term.path)
+        }
+        let result = try DataLocation.migrate(from: legacy, to: standard)
+        XCTAssertFalse(result.complete)
+        XCTAssertNotNil(result.pendingRecordError)
+    }
 }
