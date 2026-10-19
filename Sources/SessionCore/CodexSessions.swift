@@ -178,9 +178,9 @@ public enum CodexArguments {
         return args[resume + 1]
     }
     public static func keptArgs(_ args: [String]) -> [String] {
-        let values: Set<String> = ["-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval", "--add-dir", "-c", "--config", "--enable", "--disable"]
+        let values: Set<String> = ["-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval", "--add-dir", "-c", "--config", "--enable", "--disable", "--local-provider"]
         // 권한 관련 옵션은 그 세션에서 이미 지정된 것만 이어받는다.
-        let flags: Set<String> = ["--yolo", "--dangerously-bypass-approvals-and-sandbox", "--approve-for-me", "--search", "--no-alt-screen", "--no-daemon", "--oss"]
+        let flags: Set<String> = ["--yolo", "--dangerously-bypass-approvals-and-sandbox", "--approve-for-me", "--search", "--no-alt-screen", "--no-daemon", "--oss", "--strict-config"]
         var result: [String] = []; var i = 1
         while i < args.count {
             let arg = args[i]; i += 1

@@ -110,4 +110,16 @@ final class CodexTests: XCTestCase {
         XCTAssertNil(CodexArguments.sessionId(["codex", "resume", "--last"]))
         XCTAssertEqual(CodexArguments.keptArgs(["codex", "--yolo", "resume", sid, "do this", "--model=x", "-s", "workspace-write", "--worktree"]), ["--yolo", "--model=x", "-s", "workspace-write"])
     }
+    /// 설정 창의 기본 옵션(TermLayout CodexLaunch 가 만드는 긴 이름)과 짧은 이름이 모두 되살리기에 남는다
+    func testKeptArgsCoverLaunchOptionFlags() {
+        let launched = ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "--model", "gpt-5", "첫 질문"]
+        XCTAssertEqual(CodexArguments.keptArgs(launched), ["--ask-for-approval", "never", "--sandbox", "danger-full-access", "--model", "gpt-5"])
+        XCTAssertEqual(CodexArguments.keptArgs(["codex", "-a", "on-request", "-s", "read-only", "-m", "o3"]),
+                       ["-a", "on-request", "-s", "read-only", "-m", "o3"])
+        XCTAssertEqual(CodexArguments.keptArgs(["codex", "--ask-for-approval=never", "--sandbox=read-only"]),
+                       ["--ask-for-approval=never", "--sandbox=read-only"])
+        XCTAssertEqual(CodexArguments.keptArgs(["codex", "--dangerously-bypass-approvals-and-sandbox", "--oss", "--local-provider", "ollama", "--strict-config"]),
+                       ["--dangerously-bypass-approvals-and-sandbox", "--oss", "--local-provider", "ollama", "--strict-config"])
+        XCTAssertTrue(CodexArguments.isInteractive(["codex", "--ask-for-approval", "never", "--sandbox", "read-only", "--model", "m"]))
+    }
 }

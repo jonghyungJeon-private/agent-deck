@@ -180,9 +180,12 @@ final class TerminalHostController: NSViewController {
         let workspace = model.workspace
         // 탭마다 화면 상태를 찾으므로 줄을 한 번만 사전으로 만든다(탭·화면 수만큼 목록을 훑지 않게)
         let statuses = Dictionary(model.rows.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
+        let warnings = Dictionary(model.rows.compactMap { row in row.launchWarning.map { (row.id, $0) } },
+                                  uniquingKeysWith: { first, _ in first })
         tabBar.update(tabs: workspace.tabs.map { tab in
             TabBarView.Tab(title: model.tabTitle(tab), paneCount: tab.root.panes.count, zoomed: tab.zoomed,
-                           status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }))
+                           status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }),
+                           warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first)
         }, selected: workspace.selectedIndex)
     }
 

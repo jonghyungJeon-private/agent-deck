@@ -13,6 +13,8 @@ struct SidebarView: View {
     @ObservedObject var model: TermModel
     /// 접기·순서(term/spaces.json). 목록에 보이는 방식일 뿐 탭 순서와는 상관없다.
     @ObservedObject private var spaces: SpacesStore
+    /// 새 세션 기본 옵션(+ 버튼의 ⚠·풍선 도움말)
+    @ObservedObject private var launch: LaunchSettings
     /// 도크에 도구가 하나뿐이면 머리 줄에 "spaces" 를 보인다(둘이면 위 도구 버튼 줄이 보인다)
     var showsTitle = true
     /// 머리 줄 오른쪽 클릭: 왼쪽·오른쪽으로 옮기기, 숨기기
@@ -27,6 +29,7 @@ struct SidebarView: View {
     init(model: TermModel, showsTitle: Bool = true, onDock: ((DockSide) -> Void)? = nil, currentSide: DockSide = .left) {
         _model = ObservedObject(wrappedValue: model)
         _spaces = ObservedObject(wrappedValue: model.spaces)
+        _launch = ObservedObject(wrappedValue: model.launch)
         self.showsTitle = showsTitle
         self.onDock = onDock
         self.currentSide = currentSide
@@ -175,12 +178,8 @@ struct SidebarView: View {
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: ui(4)) {
-                    ChromeButton(label: "+ claude", help: "폴더를 골라 새 탭에서 claude 실행") {
-                        pickFolder { model.newPane(cwd: $0, command: "claude") }
-                    }
-                    ChromeButton(label: "+ codex", help: "폴더를 골라 새 탭에서 codex 실행") {
-                        pickFolder { model.newPane(cwd: $0, command: "codex") }
-                    }
+                    agentButton(.claude)
+                    agentButton(.codex)
                     ChromeButton(label: "+ 셸", help: "홈 폴더에서 새 셸 탭 (지금 화면 폴더는 ⌘T)") {
                         model.newPane(cwd: NSHomeDirectory())
                     }
@@ -208,8 +207,8 @@ struct SidebarView: View {
 
     @ViewBuilder
     private var newSessionItems: some View {
-        Button("Claude Code…") { pickFolder { model.newPane(cwd: $0, command: "claude") } }
-        Button("Codex…") { pickFolder { model.newPane(cwd: $0, command: "codex") } }
+        Button("Claude Code…") { pickFolder(.claude) { model.newAgent(.claude, cwd: $0) } }
+        Button("Codex…") { pickFolder(.codex) { model.newAgent(.codex, cwd: $0) } }
         Button("셸") { model.newPane(cwd: NSHomeDirectory()) }
     }
 
@@ -290,17 +289,27 @@ struct SidebarView: View {
     /// 폴더·작업 트리에서 새로 열기
     @ViewBuilder
     private func openMenu(_ path: String) -> some View {
-        Button("여기서 claude 열기(새 탭)") { model.newPane(cwd: path, command: "claude") }
-        Button("여기서 codex 열기(새 탭)") { model.newPane(cwd: path, command: "codex") }
+        Button("여기서 claude 열기(새 탭)") { model.newAgent(.claude, cwd: path) }
+        Button("여기서 codex 열기(새 탭)") { model.newAgent(.codex, cwd: path) }
         Button("여기서 셸 열기(새 탭)") { model.newPane(cwd: path) }
         Button("Finder 에서 보기") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path) }
     }
 
-    private func pickFolder(_ done: @escaping (String) -> Void) {
+    /// + claude·+ codex: 기본 옵션이 위험하면 ⚠ 를 붙이고, 풍선 도움말에 실제 명령을 보인다
+    private func agentButton(_ kind: AgentKind) -> some View {
+        let warning = launch.danger(kind)
+        return ChromeButton(label: "+ \(kind.rawValue)" + (warning == nil ? "" : " ⚠"),
+                            help: "폴더를 골라 새 탭에서 실행: \(launch.command(kind))"
+                                + (warning.map { "\n⚠ \($0)" } ?? "") + "\n기본 옵션은 설정(⌘,)에서 바꿉니다") {
+            pickFolder(kind) { model.newAgent(kind, cwd: $0) }
+        }
+    }
+
+    private func pickFolder(_ kind: AgentKind, _ done: @escaping (String) -> Void) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.prompt = "여기서 claude 실행"
+        panel.prompt = "여기서 \(kind.rawValue) 실행"
         panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
         guard panel.runModal() == .OK, let url = panel.url else { return }
         done(url.path)
@@ -567,9 +576,16 @@ struct SessionRowView: View {
             StatusDot(status: row.status, dormant: row.dormant)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
             VStack(alignment: .leading, spacing: ui(1)) {
-                Text(row.title)
-                    .uiFont(12, bold: selected)
-                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                HStack(spacing: ui(4)) {
+                    Text(row.title)
+                        .uiFont(12, bold: selected)
+                        .foregroundStyle(Color(TermAppearance.textPrimary))
+                    if row.launchWarning != nil {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: ui(9)))
+                            .foregroundStyle(Color(TermAppearance.red))
+                    }
+                }
                 if row.dormant {
                     Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program) 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
                         .uiFont(10)
@@ -609,7 +625,7 @@ struct SessionRowView: View {
         }
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help("\(row.name)\n\(row.cwd) · \(row.pane.tty ?? "")")
+        .help("\(row.name)\n\(row.cwd) · \(row.pane.tty ?? "")" + (row.launchWarning.map { "\n⚠ \($0)" } ?? ""))
     }
 }
 

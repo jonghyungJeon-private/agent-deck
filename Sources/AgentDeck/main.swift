@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     let model = TermModel()
     var window: NSWindow?
     var toolWindows: ToolWindowsController?
+    /// 설정 창(⌘,) — 처음 열 때 만든다
+    lazy var settingsWindow = SettingsWindowController(settings: model.launch)
     var snapshotTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -126,6 +128,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         appMenu.addItem(withTitle: "AgentDeck 정보", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
                         keyEquivalent: "")
         addAction(appMenu, "업데이트 확인…", "update-check", "")
+        appMenu.addItem(.separator())
+        addAction(appMenu, "설정…", "settings", ",")
         appMenu.addItem(.separator())
         // hook 빼기(넣기는 사이드바 아래 "연결하기"). Codex 것은 연결돼 있을 때만 보인다.
         addAction(appMenu, "Claude Code 연결 해제…", "hooks-disconnect", "")
@@ -274,6 +278,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ShortcutKey(29, .command): "font:reset",
             ShortcutKey(82, .command): "font:reset",
             ShortcutKey(1, [.command, .shift]): "tool-toggle:spaces",
+            // 설정(⌘,)
+            ShortcutKey(43, .command): "settings",
         ]
         for (code, direction) in [(123, "left"), (124, "right"), (125, "down"), (126, "up")] as [(UInt16, String)] {
             map[ShortcutKey(code, [.command, .option])] = "focus:\(direction)"
@@ -341,6 +347,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             TermAppearance.adjustFontSize(String(action.dropFirst(5)))
         } else if action.hasPrefix("tool-") {
             toolWindows?.perform(action)
+        } else if action == "settings" {
+            settingsWindow.show()
         } else {
             model.perform(action)
         }
@@ -362,7 +370,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     @objc private func menuAction(_ sender: NSMenuItem) {
-        if let action = sender.representedObject as? String { perform(action) }
+        guard let action = sender.representedObject as? String else { return }
+        // 설정 창 같은 다른 창이 앞에 있으면 ⌘W 는 그 창을 닫는다(터미널 화면을 닫지 않게)
+        if ["close", "close-tab"].contains(action), let key = NSApp.keyWindow, key !== window {
+            key.performClose(nil)
+            return
+        }
+        perform(action)
     }
 
     // MARK: - 시험용(AGENTDECK_SNAPSHOT 또는 AGENTDECK_DEBUG 가 있을 때만, 예전 이름 CLAUDE_TERM_* 도 읽는다)
@@ -461,6 +475,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                   + " legacyDaemon=\(model.legacyDaemon) connected=\(model.connected) relocating=\(model.relocating)"
                   + " panes=\(model.workspace.allPanes.count) dormant=\(model.workspace.dormant.count)")
             fflush(stdout)
+        case "launch-options":
+            // launch-options [<JSON>]: 새 세션 기본 옵션(JSON 을 주면 그것으로 바꾼다 — 설정 창에서 고친 것과 같음)
+            if !argument.isEmpty, let options = try? JSONDecoder().decode(LaunchOptions.self, from: Data(argument.utf8)) {
+                model.launch.options = options
+            }
+            print("launch-options claude=[\(model.launch.command(.claude))] codex=[\(model.launch.command(.codex))] file="
+                  + LaunchSettings.url.path)
+            fflush(stdout)
+        case "launch":
+            // launch <claude|codex> <폴더>: + claude·+ codex 에서 폴더를 고른 것과 같음
+            let v = argument.split(separator: " ", maxSplits: 1).map(String.init)
+            if v.count == 2, let kind = AgentKind(rawValue: v[0]) { model.newAgent(kind, cwd: v[1]) }
+        case "settings":
+            settingsWindow.show()
+            print("settings window=\(settingsWindow.windowNumber ?? -1)")
+            fflush(stdout)
+        case "settings-snap":
+            settingsWindow.snapshot(to: URL(fileURLWithPath: argument))
         case "hooks-state":
             print("hooks-state claude=\(model.hookState) codex=\(model.codexHookState)")
             fflush(stdout)
@@ -897,7 +929,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         case "rows":
             for row in model.rows {
-                print("row \(row.id.prefix(4)) name=\(row.name) program=\(row.program) session=\(row.codex?.id.prefix(8) ?? row.session?.sessionId.prefix(8) ?? "-") fg=\(row.pane.foreground ?? "-") cwd=\(row.folder) status=\(row.status.debugName) seq=\(row.statusSeq.map(String.init) ?? "-")")
+                print("row \(row.id.prefix(4)) name=\(row.name) program=\(row.program) session=\(row.codex?.id.prefix(8) ?? row.session?.sessionId.prefix(8) ?? "-") fg=\(row.pane.foreground ?? "-") cwd=\(row.folder) status=\(row.status.debugName) seq=\(row.statusSeq.map(String.init) ?? "-")"
+                      + " args=\((row.isCodex ? row.codexArgs : row.claudeArgs)?.joined(separator: " ") ?? "-") warn=\(row.launchWarning ?? "-")")
             }
             fflush(stdout)
         case "snap-panes":

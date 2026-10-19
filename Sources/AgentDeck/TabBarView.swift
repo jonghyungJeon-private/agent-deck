@@ -1,13 +1,15 @@
 import AppKit
 
 /// 터미널 위 탭 줄(herdr 처럼 납작하게, 지금 탭은 강조색으로 칠한다). AppKit 으로 직접 그린다.
-final class TabBarView: NSView {
+final class TabBarView: NSView, NSViewToolTipOwner {
     struct Tab: Equatable {
         var title: String
         var paneCount: Int
         var zoomed: Bool
         /// 탭 안 화면들의 대표 상태(WorkStatus.top). claude 가 없으면 .none 이라 점을 안 그린다.
         var status: WorkStatus = .none
+        /// 탭 안 화면 중 권한·승인·샌드박스를 건너뛰는 옵션으로 띄운 것의 설명(풍선 도움말에 ⚠ 로)
+        var warning: String?
     }
 
     /// 상태 점 지름과 제목까지 간격
@@ -95,6 +97,15 @@ final class TabBarView: NSView {
             x = rect.maxX
         }
         plusRect = CGRect(x: x, y: 0, width: ui(30), height: height)
+        // 풍선 도움말: 줄이지 않은 제목(+ 위험한 실행 옵션)
+        removeAllToolTips()
+        for rect in tabRects { addToolTip(rect, owner: self, userData: nil) }
+    }
+
+    func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        guard let index = tabRects.firstIndex(where: { $0.contains(point) }), tabs.indices.contains(index) else { return "" }
+        let tab = tabs[index]
+        return tab.title + (tab.warning.map { "\n⚠ " + $0 } ?? "")
     }
 
     override func setFrameSize(_ newSize: NSSize) {

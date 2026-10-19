@@ -20,7 +20,7 @@ AgentDeck.app/Contents/MacOS/
   안전한 저장·글자 색 훑기·선언 찾기·이름 맞추기·이동 기록), `Sources/SessionCore`(hook 처리·hook 설치/제거·세션 기록·대화 파일 읽기·프로세스 정보·업데이트 확인),
   `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
 - 데이터(`~/Library/Application Support/AgentDeck/`, `AGENTDECK_HOME` 으로 바꿈): `sessions/`(Claude 세션 기록), `codex-sessions/`,
-  `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`codex-bindings.json`·`update-check.json`, `AGENTDECK_TERM_HOME` 으로 바꿈).
+  `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`launch.json`·`codex-bindings.json`·`update-check.json`, `AGENTDECK_TERM_HOME` 으로 바꿈).
 - 새 버전 확인: 켤 때·앞으로 나올 때, 마지막 확인(`term/update-check.json`)에서 24시간이 지났을 때만 백그라운드에서
   `gh release view --repo <저장소> --json tagName,url`(저장소는 `UpdateCheck.repository`). gh 가 없거나 로그인·권한이 없거나 오프라인이면 조용히 넘어간다.
 
@@ -114,6 +114,12 @@ AgentDeck.app/Contents/MacOS/
   연결이 안 됐거나 예전 것이면 사이드바 아래에 안내와 "연결하기/갱신하기" 버튼이 뜬다.
   누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 이름 hook 은 같이 뺀다. hook 이 적는 위치는 위 "이름과 예전 판 이어받기".
 - 되살릴 때 이어받는 claude 옵션은 허용 목록(권한·모델·effort·add-dir·MCP·허용 도구 등)만. 처음 질문·`--worktree`·세션 지정은 뺀다.
+- 새 세션 기본 옵션(설정 창 ⌘,, `term/launch.json`, `TermLayout/LaunchOptions`): + claude·+ codex·폴더 메뉴 "여기서 … 열기"가
+  `TermModel.newAgent` 로 `claude <옵션>`·`codex <옵션>` 을 셸에 넣는다. 인자는 화면 짝짓기 때 프로세스 인자에서 다시 읽어
+  되살리기 정보(`claudeArgs`·`codexArgs`)에 남으므로, 되살릴 때는 그 세션을 띄운 옵션을 쓰고 지금 기본값은 넣지 않는다(허용 목록에 없는 추가 인자는 빠짐).
+  권한 확인 건너뛰기가 켜지면 `--permission-mode` 를, yolo(`--dangerously-bypass-approvals-and-sandbox`)가 켜지면 승인·샌드박스를 넣지 않는다.
+  값 목록은 claude 2.1.303·codex-cli 0.162.1 의 `--help` 기준(codex `-a` 는 on-request·never 만 받는다). 파일에 빠진·모르는 칸은 기본값으로 읽는다.
+  권한·승인·샌드박스를 건너뛰는 인자(`LaunchDanger`)로 뜬 화면은 spaces 줄에 ⚠, 탭 풍선 도움말에 ⚠ 설명, + 버튼도 기본값이 그러면 ⚠.
 - 지난 출력을 다시 그리는 동안 터미널이 내는 응답·클립보드 쓰기는 버린다(예전 질의의 답이 지금 claude 입력으로 새지 않게).
 - 지난 출력은 앞에서부터 잘리므로 긴 claude 세션은 맨 앞의 대체 화면 켜기(`ESC[?1049h`)가 사라진다. 그대로 다시 그리면
   claude 화면이 보통 화면에 남고 `/exit` 뒤 "Resume this session with:" 가 그 위에 겹쳐 보였다.
@@ -266,7 +272,8 @@ AgentDeck.app/Contents/MacOS/
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
-  `update-state`·`update-open`·`hooks-state`·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
+  `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호)·`settings-snap <png>`·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
+  `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
   `location`(데이터 위치·모드 standard/legacy/custom·연결·화면 수·꺼진 화면 수; 옮기기는 `alert-answer 0` 뒤 `action relocate-data`). `AGENTDECK_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
   `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex` 를 건드리지 않게).
   `AGENTDECK_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).

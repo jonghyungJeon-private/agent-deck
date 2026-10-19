@@ -60,6 +60,11 @@ struct PaneRow: Identifiable, Equatable {
     }
 
     var folder: String { (cwd as NSString).lastPathComponent }
+
+    /// 권한·승인·샌드박스를 건너뛰는 옵션으로 띄웠으면 그 설명(목록 ⚠·탭 풍선 도움말)
+    var launchWarning: String? {
+        isCodex ? codexArgs.flatMap(LaunchDanger.codex) : claudeArgs.flatMap(LaunchDanger.claude)
+    }
 }
 
 /// 목록의 작업 트리 칸(git 이 아니면 폴더 하나)
@@ -128,6 +133,8 @@ final class TermModel: ObservableObject {
     let names = SessionNames()
     /// spaces 의 접기·보이는 순서(탭 순서와 따로)
     let spaces = SpacesStore()
+    /// 새로 띄우는 claude·codex 의 기본 옵션(설정 창 ⌘,)
+    let launch = LaunchSettings()
     private let codexScanner = CodexScanner()
     /// 하위 에이전트 훑기(worker 전용). 10초에 한 번만.
     private let subagents = SubagentScanner()
@@ -833,6 +840,12 @@ final class TermModel: ObservableObject {
         }
         setWorkspace(next, render: true)
         client.list()
+    }
+
+    /// claude·codex 를 새 탭에서 설정 창의 기본 옵션으로 띄운다.
+    /// 되살리기(`revive`)는 여기를 거치지 않고 처음 실행한 인자(PaneRecipe)를 그대로 쓴다.
+    func newAgent(_ kind: AgentKind, cwd: String) {
+        newPane(cwd: cwd, command: launch.command(kind))
     }
 
     var focusedRow: PaneRow? { selectedId.flatMap(row) }
