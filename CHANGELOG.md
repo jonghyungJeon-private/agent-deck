@@ -1,5 +1,21 @@
 # 변경 기록
 
+## 0.4.0 — 2026-10-19
+
+### 안쪽 이름도 AgentDeck 으로
+- 실행 파일 `AgentDeck`·`AgentDeckDaemon`, 묶음 ID `dev.agentdeck.app`, 데이터 폴더 `~/Library/Application Support/AgentDeck`,
+  환경 변수 `AGENTDECK_*`(예전 `CLAUDE_TERM_*`·`CLAUDE_SESSIONS_HOME`·`CLAUDE_SESSIONS_PANE` 도 계속 읽음), 셸의 `TERM_PROGRAM=AgentDeck`·`AGENTDECK_PANE`.
+- 묶음 ID 가 바뀌어 macOS 가 **알림 권한을 다시 묻고**, 창 위치·크기는 처음 값으로 돌아간다.
+- hook 명령은 `…/AgentDeckDaemon" hook`. 예전 이름(`ClaudeTermDaemon`·`ClaudeSessions`) hook 은 사이드바 **갱신하기** 로 바뀌고, 연결 해제·삭제 때 함께 빠진다.
+  이미 떠 있던 claude 세션이 부르는 예전 경로를 위해 앱 안에 `ClaudeTermDaemon`(→ `AgentDeckDaemon`) 링크를 남겼다. 백업 이름은 `*.agentdeck-backup-<시각>`.
+
+### 예전 데이터·세션 이어받기
+- 예전 판의 세션 데몬이 돌고 있으면 새 앱은 그 데몬에 붙어 예전 데이터 폴더(`ClaudeSessions`)를 그대로 쓴다 — 열린 셸·claude 가 끊기지 않는다.
+  상태 줄에 "이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다"와 **지금 옮기기…**(경고 후 예전 데몬을 끄고 바로 옮김).
+- 데몬이 없을 때 앱이 `ClaudeSessions` 를 `AgentDeck` 으로 옮긴다(이름 바꾸기, 지우는 것 없음, 예전 폴더에 `MIGRATED_TO` 표식). 탭 배치·이름·spaces 는 그대로이고
+  화면은 "꺼짐"으로 남아 탭을 열면 `claude --resume` 으로 되살아난다. hook 은 앱이 지금 읽는 곳에 적는다.
+- 설치 스크립트: 예전·새 묶음 ID 의 앱을 모두 끄고, `ClaudeTerm.app` 을 바꿔 끼우며, 삭제 때 새·예전 데이터 폴더와 두 묶음 ID 의 설정을 정리한다.
+
 ## 0.3.0 — 2026-10-19
 
 - files 에서 파일을 열어도 트리가 보던 자리(펼친 폴더·스크롤·고른 줄)를 지키고 연 파일을 드러낸다. 상위 폴더를 둘러보다 하위 저장소 파일을 열면

@@ -1,6 +1,7 @@
 import EditorCore
 import Foundation
 import TermLayout
+import TermWire
 
 /// 프로젝트 하나의 선언 색인(LSP 아님 — 이름 → 파일·줄·종류만).
 /// 처음 이동 요청 때 낮은 우선순위로 만들고, 편집기에서 저장한 파일은 바로, 그 밖의 디스크 변경은
@@ -64,8 +65,8 @@ final class ProjectIndex {
     init(root: String, isGit: Bool) {
         self.root = root
         self.isGit = isGit
-        queue = DispatchQueue(label: "ClaudeTerm.index", qos: .utility)
-        searchQueue = DispatchQueue(label: "ClaudeTerm.index.usages", qos: .userInitiated)
+        queue = DispatchQueue(label: "AgentDeck.index", qos: .utility)
+        searchQueue = DispatchQueue(label: "AgentDeck.index.usages", qos: .userInitiated)
     }
 
     var isReady: Bool { state == .ready }
@@ -325,9 +326,9 @@ struct FileBuffer {
         }
     }
 
-    /// 시험용: CLAUDE_TERM_INDEX_IO=standard 면 색인 스레드의 디스크 읽기를 늦추지 않는다(CPU 우선순위는 그대로 낮게)
+    /// 시험용: AGENTDECK_INDEX_IO=standard 면 색인 스레드의 디스크 읽기를 늦추지 않는다(CPU 우선순위는 그대로 낮게)
     static func applyIOPolicy() {
-        if ProcessInfo.processInfo.environment["CLAUDE_TERM_INDEX_IO"] == "standard" {
+        if AgentDeckEnv.value("INDEX_IO") == "standard" {
             setiopolicy_np(IOPOL_TYPE_DISK, IOPOL_SCOPE_THREAD, IOPOL_STANDARD)
         }
     }

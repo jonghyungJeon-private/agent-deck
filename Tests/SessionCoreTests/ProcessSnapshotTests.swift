@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionCore
+import TermWire
 
 final class ProcessSnapshotTests: XCTestCase {
     let sid1 = "01a13e6f-d93c-78d1-99ca-4e2a62355053"
@@ -95,9 +96,9 @@ final class ProcessSnapshotTests: XCTestCase {
 
     func testFindsCodexAndEvidenceAndCaches() {
         let fake = FakeReader()
-        fake.data[11] = (["/opt/codex", "--yolo"], ["CODEX_HOME": "/h", "CLAUDE_SESSIONS_PANE": "pane-a"])
-        fake.data[12] = (["zsh"], ["CLAUDE_SESSIONS_PANE": "pane-a", "CODEX_THREAD_ID": sid1])
-        fake.data[13] = (["node"], ["CLAUDE_SESSIONS_PANE": "pane-a", "CODEX_THREAD_ID": sid2])
+        fake.data[11] = (["/opt/codex", "--yolo"], ["CODEX_HOME": "/h", "AGENTDECK_PANE": "pane-a"])
+        fake.data[12] = (["zsh"], ["AGENTDECK_PANE": "pane-a", "CODEX_THREAD_ID": sid1])
+        fake.data[13] = (["node"], ["AGENTDECK_PANE": "pane-a", "CODEX_THREAD_ID": sid2])
         fake.data[30] = (["codex"], [:])
         let finder = CodexProcessFinder(reader: fake.read)
         let snapshot = ProcessSnapshot(tree)
@@ -122,6 +123,7 @@ final class ProcessSnapshotTests: XCTestCase {
         // 13 이 끝나고 같은 PID 가 다른 시작 시각으로 재사용되면 다시 읽는다
         var list = tree
         list[list.firstIndex { $0.pid == 13 }!] = proc(13, 12, "node", start: 230)
+        // (예전 데몬이 띄운 셸은 예전 이름 CLAUDE_SESSIONS_PANE 을 들고 있다 — 그것도 읽는다)
         fake.data[13] = (["node"], ["CLAUDE_SESSIONS_PANE": "pane-a", "CODEX_THREAD_ID": sid1])
         fake.reads = []
         let third = finder.find(snapshot: ProcessSnapshot(list), shells: shells, paneIds: ["pane-a", "pane-b"])
@@ -154,7 +156,7 @@ final class ProcessSnapshotTests: XCTestCase {
         for i in 0..<10 {
             let pid = pid_t(100 + i)
             list.append(proc(pid, 11, "sh", start: 101 + Double(i)))
-            fake.data[pid] = (["sh"], ["CLAUDE_SESSIONS_PANE": "pane-a", "CODEX_THREAD_ID": i == 0 ? sid1 : "not-a-uuid"])
+            fake.data[pid] = (["sh"], ["AGENTDECK_PANE": "pane-a", "CODEX_THREAD_ID": i == 0 ? sid1 : "not-a-uuid"])
         }
         let finder = CodexProcessFinder(maxEnvReads: 4, reader: fake.read)
         let snapshot = ProcessSnapshot(list)
@@ -177,7 +179,7 @@ final class ProcessSnapshotTests: XCTestCase {
             var list = [proc(1, 0, "launchd", start: 0), proc(2, 1, "daemon", start: 1)]
             var data: [pid_t: ([String], [String: String])] = [:]
             let panes: [(pid_t, String)] = [(10, "p1"), (11, "p2"), (12, "p3")]
-            for (pid, id) in panes { list.append(proc(pid, 2, "zsh", start: 5)); data[pid] = (["zsh"], ["CLAUDE_SESSIONS_PANE": id]) }
+            for (pid, id) in panes { list.append(proc(pid, 2, "zsh", start: 5)); data[pid] = (["zsh"], ["AGENTDECK_PANE": id]) }
             var next: pid_t = 100
             for _ in 0..<Int.random(in: 5...60, using: &rng) {
                 let parent = list.randomElement(using: &rng)!
@@ -213,7 +215,7 @@ final class ProcessSnapshotTests: XCTestCase {
         var evidence: [String: CodexProcessFinder.Evidence] = [:]
         for info in s.processes where !info.isZombie {
             let env = data[info.pid]?.1 ?? [:]
-            if let pane = env["CLAUDE_SESSIONS_PANE"], paneIds.contains(pane),
+            if let pane = AgentDeckEnv.value("PANE", in: env), paneIds.contains(pane),
                let id = env["CODEX_THREAD_ID"], UUID(uuidString: id) != nil,
                info.startTime > (evidence[pane]?.startTime ?? 0) { evidence[pane] = .init(sessionId: id, startTime: info.startTime) }
             guard info.command == "codex", info.hasTTY, let args = data[info.pid]?.0, CodexArguments.isInteractive(args) else { continue }

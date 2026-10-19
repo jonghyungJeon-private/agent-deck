@@ -1,9 +1,10 @@
 import XCTest
 import SessionCore
+import TermWire
 
 /// 프로세스 훑기 전후 비교(읽기 전용). 평소엔 건너뛴다.
 ///   SCANBENCH=1 swift test -c release -Xswiftc -enable-testing --filter ScanBench
-/// 화면 셸은 실제 ClaudeTerm 화면(환경에 CLAUDE_SESSIONS_PANE 이 있고 부모엔 없는 프로세스)을 쓴다.
+/// 화면 셸은 실제 AgentDeck 화면(환경에 AGENTDECK_PANE — 예전 데몬은 CLAUDE_SESSIONS_PANE — 이 있고 부모엔 없는 프로세스)을 쓴다.
 final class ScanBenchTests: XCTestCase {
     struct Legacy { var candidates: [String]; var evidence: [String: CodexProcessFinder.Evidence]; var reads: Int }
 
@@ -15,7 +16,7 @@ final class ScanBenchTests: XCTestCase {
         for pid in ProcessUtil.allPids() {
             guard let info = legacyInfo(pid), !info.isZombie else { continue }
             let env = ProcessUtil.environment(pid) ?? [:]; reads += 1
-            if let pane = env["CLAUDE_SESSIONS_PANE"], paneIds.contains(pane),
+            if let pane = AgentDeckEnv.value("PANE", in: env), paneIds.contains(pane),
                let id = env["CODEX_THREAD_ID"], UUID(uuidString: id) != nil,
                info.startTime > (evidence[pane]?.startTime ?? 0) { evidence[pane] = .init(sessionId: id, startTime: info.startTime) }
             guard info.command == "codex", info.hasTTY else { continue }
@@ -72,7 +73,7 @@ final class ScanBenchTests: XCTestCase {
         var envs: [pid_t: String] = [:]
         let all = ProcessUtil.snapshot()
         for p in all.processes where !p.isZombie {
-            if let pane = ProcessUtil.environment(p.pid)?["CLAUDE_SESSIONS_PANE"] { envs[p.pid] = pane }
+            if let pane = AgentDeckEnv.value("PANE", in: ProcessUtil.environment(p.pid) ?? [:]) { envs[p.pid] = pane }
         }
         var shells: [pid_t: String] = [:]
         for (pid, pane) in envs where envs[all[pid]?.ppid ?? 0] == nil { shells[pid] = pane }

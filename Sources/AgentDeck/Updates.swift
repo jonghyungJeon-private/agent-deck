@@ -4,15 +4,15 @@ import TermWire
 
 /// 새 버전 알림. 앱을 켤 때와 앞으로 나올 때, 마지막 확인에서 24시간이 지났을 때만 gh 로 최신 릴리스를 본다(그 밖의 주기 확인 없음).
 /// 새 버전이 있으면 상태 줄에 한 줄로 알리고, 누르면 업데이트 명령을 보여 준다.
-/// 시험용: CLAUDE_TERM_FAKE_LATEST=v0.3.0 이면 gh 대신 그 태그를 최신으로 본다.
+/// 시험용: AGENTDECK_FAKE_LATEST=v0.3.0 이면 gh 대신 그 태그를 최신으로 본다.
 final class UpdateNotifier: ObservableObject {
     @Published private(set) var available: UpdateCheck.Release?
 
     /// 앱 버전(Info.plist). 묶음 없이 띄운 개발 빌드는 nil — 자동 확인을 하지 않는다.
     let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-    private let stampURL = TermPaths.home.appendingPathComponent("update-check.json")
-    private let fakeLatest = ProcessInfo.processInfo.environment["CLAUDE_TERM_FAKE_LATEST"].flatMap { $0.isEmpty ? nil : $0 }
-    private let queue = DispatchQueue(label: "ClaudeTerm.updates", qos: .utility)
+    private var stampURL: URL { TermPaths.home.appendingPathComponent("update-check.json") }
+    private let fakeLatest = AgentDeckEnv.nonEmpty("FAKE_LATEST")
+    private let queue = DispatchQueue(label: "AgentDeck.updates", qos: .utility)
     private var checking = false
 
     func start() {
@@ -63,7 +63,7 @@ final class UpdateNotifier: ObservableObject {
         switch result {
         case .success(let release):
             available = UpdateCheck.isNewer(release.tag, than: current) ? release : nil
-            if ProcessInfo.processInfo.environment["CLAUDE_TERM_DEBUG"] == "1" {
+            if AgentDeckEnv.isOn("DEBUG") {
                 print("update latest=\(release.tag) current=\(current) available=\(available?.tag ?? "-")")
                 fflush(stdout)
             }
@@ -126,13 +126,13 @@ final class UpdateNotifier: ObservableObject {
     static func display(_ tag: String) -> String { tag.hasPrefix("v") ? tag : "v" + tag }
 }
 
-/// 확인 창. 시험(CLAUDE_TERM_DEBUG=1)에서는 창을 띄우지 않고 내용을 찍은 뒤, 미리 받은 답(alert-answer)을 쓴다
+/// 확인 창. 시험(AGENTDECK_DEBUG=1)에서는 창을 띄우지 않고 내용을 찍은 뒤, 미리 받은 답(alert-answer)을 쓴다
 /// (없으면 마지막 버튼 = 취소·닫기). 시험 앱이 창에 막혀 디버그 명령을 못 받는 일을 막는다.
 enum AppAlert {
     static var pendingAnswers: [Int] = []
 
     static func run(_ alert: NSAlert) -> NSApplication.ModalResponse {
-        guard ProcessInfo.processInfo.environment["CLAUDE_TERM_DEBUG"] == "1" else { return alert.runModal() }
+        guard AgentDeckEnv.isOn("DEBUG") else { return alert.runModal() }
         let buttons = alert.buttons.map(\.title)
         let index = pendingAnswers.isEmpty ? max(buttons.count - 1, 0) : pendingAnswers.removeFirst()
         let accessory = (alert.accessoryView as? NSTextField)?.stringValue

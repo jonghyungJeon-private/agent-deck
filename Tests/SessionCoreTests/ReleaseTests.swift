@@ -26,35 +26,69 @@ final class GuardedHookTests: XCTestCase {
     }
 
     func testGuardedCommandFormat() {
-        let installer = HookInstaller.claude(daemonPath: "/Applications/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon",
+        let installer = HookInstaller.claude(daemonPath: "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon",
                                              settingsURL: settings)
         XCTAssertEqual(installer.command,
-                       #"[ -x "/Applications/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon" ] || exit 0; "#
-                       + #"exec "/Applications/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon" hook"#)
-        let codex = HookInstaller.codex(daemonPath: "/a b/ClaudeTermDaemon", hooksURL: settings)
-        XCTAssertEqual(codex.command, #"[ -x "/a b/ClaudeTermDaemon" ] || exit 0; exec "/a b/ClaudeTermDaemon" codex-hook"#)
+                       #"[ -x "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon" ] || exit 0; "#
+                       + #"exec "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon" hook"#)
+        let codex = HookInstaller.codex(daemonPath: "/a b/AgentDeckDaemon", hooksURL: settings)
+        XCTAssertEqual(codex.command, #"[ -x "/a b/AgentDeckDaemon" ] || exit 0; exec "/a b/AgentDeckDaemon" codex-hook"#)
     }
 
     func testEscapingAppliesToBothOccurrences() {
-        let path = #"/x/we"ird $HOME `id` \b/ClaudeTermDaemon"#
+        let path = #"/x/we"ird $HOME `id` \b/AgentDeckDaemon"#
         let command = HookInstaller.claude(daemonPath: path, settingsURL: settings).command
-        let quoted = #""/x/we\"ird \$HOME \`id\` \\b/ClaudeTermDaemon""#
+        let quoted = #""/x/we\"ird \$HOME \`id\` \\b/AgentDeckDaemon""#
         XCTAssertEqual(command, "[ -x \(quoted) ] || exit 0; exec \(quoted) hook")
         XCTAssertEqual(HookInstaller.executablePath(in: command), path)
         XCTAssertEqual(HookInstaller.executablePath(in: HookInstaller.unguardedCommand(path, "hook")), path)
     }
 
-    func testIsOursForNewOldAndLegacy() {
-        let term = HookInstaller.claude(daemonPath: "/A/ClaudeTermDaemon", settingsURL: settings)
-        XCTAssertTrue(term.isOurs(term.command))
-        XCTAssertTrue(term.isOurs(HookInstaller.unguardedCommand("/old place/ClaudeTerm.app/Contents/MacOS/ClaudeTermDaemon", "hook")))
-        XCTAssertTrue(term.isOurs(HookInstaller.guardedCommand("/elsewhere/ClaudeTermDaemon", "hook")))
-        XCTAssertFalse(term.isOurs(HookInstaller.guardedCommand("/A/ClaudeTermDaemon", "codex-hook")), "Codex 것은 다른 하위 명령")
-        XCTAssertFalse(term.isOurs(#""/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions" hook"#))
-        XCTAssertFalse(term.isOurs("rtk hook claude"))
-        let legacy = HookInstaller(settingsURL: settings, executablePath: "/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions")
-        XCTAssertTrue(legacy.isOurs(#""/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions" hook"#))
-        XCTAssertTrue(legacy.isOurs(legacy.command))
+    /// 지금 이름(AgentDeckDaemon)과 예전 이름(ClaudeTermDaemon·ClaudeSessions)을 가드 있는·없는 형태 모두 이 앱 것으로 본다
+    func testIsOursForCurrentAndOldNames() {
+        let deck = HookInstaller.claude(daemonPath: "/A/AgentDeckDaemon", settingsURL: settings)
+        XCTAssertTrue(deck.isOurs(deck.command))
+        for name in ["AgentDeckDaemon", "ClaudeTermDaemon"] {
+            XCTAssertTrue(deck.isOurs(HookInstaller.guardedCommand("/elsewhere/\(name)", "hook")), name)
+            XCTAssertTrue(deck.isOurs(HookInstaller.unguardedCommand("/old place/ClaudeTerm.app/Contents/MacOS/\(name)", "hook")), name)
+            XCTAssertFalse(deck.isOurs(HookInstaller.guardedCommand("/A/\(name)", "codex-hook")), "Codex 것은 다른 하위 명령")
+        }
+        XCTAssertTrue(deck.isOurs(#""/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions" hook"#), "그 전 앱도 갱신 대상")
+        XCTAssertFalse(deck.isOurs("rtk hook claude"))
+        XCTAssertFalse(deck.isOurs(#""/x/OtherDaemon" hook"#))
+
+        let codex = HookInstaller.codex(daemonPath: "/A/AgentDeckDaemon", hooksURL: settings)
+        XCTAssertTrue(codex.isOurs(HookInstaller.guardedCommand("/old/ClaudeTermDaemon", "codex-hook")))
+        XCTAssertTrue(codex.isOurs(HookInstaller.unguardedCommand("/old/ClaudeTermDaemon", "codex-hook")))
+        XCTAssertFalse(codex.isOurs(HookInstaller.guardedCommand("/A/AgentDeckDaemon", "hook")))
+    }
+
+    /// 0.3 까지 넣은 ClaudeTermDaemon(가드 있음)·그 전 ClaudeSessions hook → outdated(갱신하기) → 갱신하면 AgentDeckDaemon 하나만 남는다
+    func testOldNamesAreOutdatedAndReplaced() throws {
+        let old = "/Users/me/claude-sessions/dist/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon"
+        var hooks: [String: Any] = [:]
+        for event in HookInstaller.events {
+            hooks[event] = [["hooks": [["type": "command", "command": HookInstaller.guardedCommand(old, "hook"), "timeout": 10]]]]
+        }
+        hooks["SessionStart"] = (hooks["SessionStart"] as! [Any])
+            + [["hooks": [["type": "command", "command": #""/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions" hook"#]]]]
+        hooks["Stop"] = (hooks["Stop"] as! [Any]) + [["hooks": [["type": "command", "command": "say done"]]]]
+        try JSONSerialization.data(withJSONObject: ["hooks": hooks]).write(to: settings)
+
+        let deck = HookInstaller.claude(daemonPath: "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon", settingsURL: settings)
+        XCTAssertEqual(try deck.status(), .outdated)
+        let backup = try deck.install()
+        XCTAssertTrue(backup!.lastPathComponent.hasPrefix("settings.json.agentdeck-backup-"))
+        XCTAssertEqual(try deck.status(), .installed)
+        for event in HookInstaller.events {
+            XCTAssertEqual(try commands(event).filter(deck.isOurs), [deck.command], event)
+        }
+        XCTAssertEqual(try commands("Stop").filter { !deck.isOurs($0) }, ["say done"])
+
+        // 연결 해제는 이름과 상관없이 모두 뺀다
+        try JSONSerialization.data(withJSONObject: ["hooks": hooks]).write(to: settings)
+        XCTAssertEqual(try deck.uninstall().removed, HookInstaller.events.count + 1)
+        XCTAssertEqual(try commands("Stop"), ["say done"])
     }
 
     /// 0.1 이 넣은 가드 없는 hook → outdated(갱신하기) → 갱신하면 가드 형태로 바뀌고 다른 hook 은 그대로
@@ -68,16 +102,16 @@ final class GuardedHookTests: XCTestCase {
         hooks["PreToolUse"] = [["matcher": "Bash", "hooks": [["type": "command", "command": "rtk hook claude"]]]]
         try JSONSerialization.data(withJSONObject: ["model": "opus", "hooks": hooks]).write(to: settings)
 
-        let moved = HookInstaller.claude(daemonPath: "/Applications/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon", settingsURL: settings)
+        let moved = HookInstaller.claude(daemonPath: "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon", settingsURL: settings)
         XCTAssertEqual(try moved.status(), .outdated, "가드 없는 예전 형태·다른 경로는 갱신 대상")
-        let same = HookInstaller.claude(daemonPath: daemon, settingsURL: settings)
+        let same = HookInstaller(settingsURL: settings, executablePath: daemon)
         XCTAssertEqual(try same.status(), .outdated, "같은 경로라도 가드가 없으면 갱신 대상")
         XCTAssertEqual(try moved.installedExecutablePaths(), Array(repeating: daemon, count: HookInstaller.events.count))
         XCTAssertTrue(try moved.needsRepair(), "예전 경로 파일이 없으면 고칠 대상")
 
         let backup = try moved.install()
         XCTAssertNotNil(backup)
-        XCTAssertTrue(backup!.lastPathComponent.hasPrefix("settings.json.claudeterm-backup-"))
+        XCTAssertTrue(backup!.lastPathComponent.hasPrefix("settings.json.agentdeck-backup-"))
         XCTAssertEqual(try moved.status(), .installed)
         for event in HookInstaller.events {
             XCTAssertEqual(try commands(event).filter(moved.isOurs), [moved.command], event)
@@ -91,7 +125,7 @@ final class GuardedHookTests: XCTestCase {
         let original = #"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"say done"}]}],"#
             + #""PostToolUse":[{"hooks":[{"type":"command","command":"\"/old/ClaudeTermDaemon\" hook"}]}]},"model":"opus"}"#
         try Data(original.utf8).write(to: settings)
-        let installer = HookInstaller.claude(daemonPath: "/new/ClaudeTermDaemon", settingsURL: settings)
+        let installer = HookInstaller.claude(daemonPath: "/new/AgentDeckDaemon", settingsURL: settings)
         XCTAssertEqual(try installer.uninstall().removed, 1, "지금 목록에 없는 이벤트(PostToolUse)의 예전 hook 도 뺀다")
         XCTAssertNil((try json()["hooks"] as? [String: Any])?["PostToolUse"])
         try installer.install()
@@ -109,13 +143,13 @@ final class GuardedHookTests: XCTestCase {
 
     func testUnhookCommandCleansBothFiles() throws {
         let codexURL = dir.appendingPathComponent("hooks.json")
-        try HookInstaller.claude(daemonPath: "/x/ClaudeTermDaemon", settingsURL: settings).install()
-        try HookInstaller.codex(daemonPath: "/x/ClaudeTermDaemon", hooksURL: codexURL).install()
+        try HookInstaller.claude(daemonPath: "/x/AgentDeckDaemon", settingsURL: settings).install()
+        try HookInstaller.codex(daemonPath: "/x/AgentDeckDaemon", hooksURL: codexURL).install()
         var lines: [String] = []
         XCTAssertEqual(Unhook.run(["--claude-settings", settings.path, "--codex-hooks", codexURL.path]) { lines.append($0) }, 0)
         XCTAssertEqual(lines.count, 2)
-        XCTAssertEqual(try HookInstaller.claude(daemonPath: "/x/ClaudeTermDaemon", settingsURL: settings).status(), .notInstalled)
-        XCTAssertEqual(try HookInstaller.codex(daemonPath: "/x/ClaudeTermDaemon", hooksURL: codexURL).status(), .notInstalled)
+        XCTAssertEqual(try HookInstaller.claude(daemonPath: "/x/AgentDeckDaemon", settingsURL: settings).status(), .notInstalled)
+        XCTAssertEqual(try HookInstaller.codex(daemonPath: "/x/AgentDeckDaemon", hooksURL: codexURL).status(), .notInstalled)
 
         try Data("{ broken".utf8).write(to: settings)
         XCTAssertEqual(Unhook.run(["--claude-settings", settings.path, "--codex-hooks", codexURL.path]) { _ in }, 1)
@@ -143,18 +177,18 @@ final class GuardedHookTests: XCTestCase {
     }
 
     func testMissingBinaryIsSilentNoOp() throws {
-        let command = HookInstaller.guardedCommand(dir.appendingPathComponent("gone/ClaudeTermDaemon").path, "hook")
+        let command = HookInstaller.guardedCommand(dir.appendingPathComponent("gone/AgentDeckDaemon").path, "hook")
         let result = try run(command, stdin: #"{"session_id":"x"}"#)
         XCTAssertEqual(result.status, 0)
         XCTAssertEqual(result.out, "")
         XCTAssertEqual(result.err, "")
         // 예전 형태는 같은 상황에서 오류를 낸다(바꾼 이유)
-        XCTAssertNotEqual(try run(HookInstaller.unguardedCommand(dir.appendingPathComponent("gone/ClaudeTermDaemon").path, "hook"),
+        XCTAssertNotEqual(try run(HookInstaller.unguardedCommand(dir.appendingPathComponent("gone/AgentDeckDaemon").path, "hook"),
                                   stdin: "").status, 0)
     }
 
     func testExistingBinaryGetsStdinArgumentsAndExitCode() throws {
-        let script = dir.appendingPathComponent("we\"ird $dir/ClaudeTermDaemon")
+        let script = dir.appendingPathComponent("we\"ird $dir/AgentDeckDaemon")
         try FileManager.default.createDirectory(at: script.deletingLastPathComponent(), withIntermediateDirectories: true)
         try "#!/bin/sh\nprintf '%s:' \"$1\"; cat; exit 7\n".write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)

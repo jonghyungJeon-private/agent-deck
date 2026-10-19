@@ -6,11 +6,12 @@ import TermWire
 
 // 내장 터미널의 세션을 붙잡고 있는 데몬. 앱을 끄거나 업데이트해도 셸·claude 가 계속 돌게 한다.
 // 화면을 그리지 않고, 화면마다 지난 출력만 상한을 두고 보관한다(앱이 다시 붙을 때 되살리는 용도).
-//   ClaudeTermDaemon            : 데몬(이미 떠 있으면 바로 끝남)
-//   ClaudeTermDaemon hook       : Claude Code hook(세션 기록)
-//   ClaudeTermDaemon codex-hook : Codex hook(작업 상태)
-//   ClaudeTermDaemon unhook     : 이 앱의 hook 을 Claude Code·Codex 설정에서 뺀다(삭제할 때)
-//   ClaudeTermDaemon ctl ...    : 시험·진단용 클라이언트 (list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>)
+//   AgentDeckDaemon [--root <폴더>] : 데몬(이미 떠 있으면 바로 끝남). 앱이 정한 데이터 위치를 --root 로 받는다
+//   AgentDeckDaemon hook            : Claude Code hook(세션 기록)
+//   AgentDeckDaemon codex-hook      : Codex hook(작업 상태)
+//   AgentDeckDaemon unhook          : 이 앱의 hook 을 Claude Code·Codex 설정에서 뺀다(삭제할 때)
+//   AgentDeckDaemon ctl ...         : 시험·진단용 클라이언트 (list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>)
+// hook·ctl 은 쓸 데이터 위치를 스스로 고른다(DataLocation: 새 데몬 → 예전 데몬 → 안 옮긴 예전 데이터 → 새 위치).
 
 if CommandLine.arguments.dropFirst().first == "ctl" {
     exit(Ctl.run(Array(CommandLine.arguments.dropFirst(2))))
@@ -27,6 +28,11 @@ if CommandLine.arguments.dropFirst().first == "unhook" {
     exit(Unhook.run(Array(CommandLine.arguments.dropFirst(2))))
 }
 
+// 앱이 정한 위치(앱은 예전 데이터를 옮긴 뒤에만 새 위치로 띄운다). 셸에는 넘기지 않으려고 환경 변수 대신 인자로 받는다.
+if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--root" {
+    DataLocation.use(root: URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true), mode: .standard)
+}
+
 signal(SIGPIPE, SIG_IGN)
 signal(SIGHUP, SIG_IGN)
 InheritedEnvironment.scrub()
@@ -34,18 +40,7 @@ Daemon.shared.start()
 dispatchMain()
 
 enum Log {
-    static let url = TermPaths.home.appendingPathComponent("daemon.log")
-
-    static func write(_ message: String) {
-        let line = "\(ISO8601DateFormatter().string(from: Date())) [\(getpid())] \(message)\n"
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
-            try? handle.close()
-        } else {
-            try? Data(line.utf8).write(to: url)
-        }
-    }
+    static func write(_ message: String) { DataLocation.log(message) }
 }
 
 /// 지난 출력. 상한을 넘으면 앞에서부터 버린다(줄 경계에서 자르려고 노력한다).
@@ -54,7 +49,7 @@ enum Log {
 struct OutputBuffer {
     static let defaultCapacity = 2 << 20
     /// 시험용: 1 이면 앞 모드를 붙이지 않는다(예전 데몬 흉내 — 앱 쪽 대비책 확인용)
-    static let modePrefixDisabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_MODE_PREFIX"] == "1"
+    static let modePrefixDisabled = AgentDeckEnv.isOn("NO_MODE_PREFIX")
 
     let capacity: Int
     private(set) var bytes: [UInt8] = []
@@ -274,8 +269,10 @@ final class Daemon {
         var env = ProcessInfo.processInfo.environment
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
-        env["TERM_PROGRAM"] = "ClaudeTerm"
-        env["CLAUDE_SESSIONS_PANE"] = id
+        env["TERM_PROGRAM"] = "AgentDeck"
+        env[AgentDeckEnv.name("PANE")] = id
+        // 예전 이름(앱을 예전 화면 안에서 띄웠으면 남아 있다)은 빼서 다른 화면 ID 로 읽히지 않게
+        env.removeValue(forKey: AgentDeckEnv.legacyName("PANE"))
         // Finder 로 띄운 앱에는 LANG 이 없다. 없으면 한글이 깨지므로 지금 언어 설정으로 채운다.
         if (env["LANG"] ?? "").isEmpty, (env["LC_ALL"] ?? "").isEmpty, (env["LC_CTYPE"] ?? "").isEmpty {
             let locale = Locale.current.identifier.replacingOccurrences(of: "-", with: "_")

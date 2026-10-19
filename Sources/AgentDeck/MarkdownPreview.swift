@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import EditorCore
+import TermWire
 import WebKit
 
 /// Markdown 미리보기(편집기 화면 안에서 편집 ↔ 미리보기를 바꾼다). 보일 때만 만들고 편집으로 돌아가면 버린다.
@@ -30,7 +31,7 @@ final class MarkdownPreviewView: NSView, WKNavigationDelegate {
     /// 시험용: 다 그렸을 때
     var onRendered: (() -> Void)?
 
-    private static let queue = DispatchQueue(label: "ClaudeTerm.markdown", qos: .userInitiated)
+    private static let queue = DispatchQueue(label: "AgentDeck.markdown", qos: .userInitiated)
 
     init(path: String, scroll: Double, frame: NSRect) {
         let path = (path as NSString).standardizingPath
@@ -258,7 +259,7 @@ final class MarkdownPreviewView: NSView, WKNavigationDelegate {
         Self.debugLinks.append("\(scheme):\(url.host ?? "")\(url.path)")
         switch scheme {
         case "http", "https", "mailto":
-            if ProcessInfo.processInfo.environment["CLAUDE_TERM_DEBUG"] == "1" {
+            if AgentDeckEnv.isOn("DEBUG") {
                 print("markdown-link external \(url.absoluteString)")
                 fflush(stdout)
                 return

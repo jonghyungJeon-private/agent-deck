@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import TermLayout
+import TermWire
 
 /// 파일 트리의 한 줄(폴더·파일). NSOutlineView 는 항목을 객체 정체성으로 기억하므로 클래스.
 final class FileNode {
@@ -128,11 +129,11 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     /// 펼침을 되살리는 중(펼침 기록·지연 읽기를 건너뛴다)
     private var restoring = false
     private var subscriptions: Set<AnyCancellable> = []
-    private let io = DispatchQueue(label: "ClaudeTerm.files.io", qos: .userInitiated)
-    /// 시험용(CLAUDE_TERM_SNAPSHOT·CLAUDE_TERM_NO_ACTIVATE): 창을 뒤에 두고 시험하므로 가려져도 감시를 멈추지 않는다
+    private let io = DispatchQueue(label: "AgentDeck.files.io", qos: .userInitiated)
+    /// 시험용(AGENTDECK_SNAPSHOT·AGENTDECK_NO_ACTIVATE): 창을 뒤에 두고 시험하므로 가려져도 감시를 멈추지 않는다
     private let ignoreOcclusion: Bool = {
         let env = ProcessInfo.processInfo.environment
-        return !(env["CLAUDE_TERM_SNAPSHOT"] ?? "").isEmpty || env["CLAUDE_TERM_NO_ACTIVATE"] == "1"
+        return AgentDeckEnv.nonEmpty("SNAPSHOT", in: env) != nil || AgentDeckEnv.isOn("NO_ACTIVATE", in: env)
     }()
 
     init(model: TermModel) {

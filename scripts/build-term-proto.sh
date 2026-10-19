@@ -4,24 +4,27 @@
 #   VERSION=0.3.0 scripts/build-term-proto.sh
 #   CONFIG=debug scripts/build-term-proto.sh
 # 동료 설치: scripts/install.sh dist/AgentDeck-<버전>.zip (릴리스에 올린 뒤에는 인자 없이 — README 참고)
-# 표시 이름만 AgentDeck 이고 안쪽 이름은 그대로 둔다: 실행 파일 ClaudeTerm·ClaudeTermDaemon(hook 이 이 이름으로 알아본다),
-# 묶음 ID dev.claude-sessions.term(알림 권한·창 위치), 데이터 ~/Library/Application Support/ClaudeSessions.
+# 실행 파일 AgentDeck·AgentDeckDaemon, 묶음 ID dev.agentdeck.app, 데이터 ~/Library/Application Support/AgentDeck
+# (0.3 까지는 ClaudeTerm·ClaudeTermDaemon·dev.claude-sessions.term·ClaudeSessions — 앱이 예전 데몬·데이터를 이어받는다).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${CONFIG:-release}"
-VERSION="${VERSION:-0.3.0}"
+VERSION="${VERSION:-0.4.0}"
 [[ "$(uname -m)" == arm64 ]] || { echo "Apple Silicon(arm64) 에서 빌드하세요" >&2; exit 1; }
-BUNDLE_ID="${BUNDLE_ID:-dev.claude-sessions.term}"
-swift build -c "$CONFIG" --product ClaudeTermDaemon
-swift build -c "$CONFIG" --product ClaudeTerm
+BUNDLE_ID="${BUNDLE_ID:-dev.agentdeck.app}"
+swift build -c "$CONFIG" --product AgentDeckDaemon
+swift build -c "$CONFIG" --product AgentDeck
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 
 APP=dist/AgentDeck.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/ClaudeTerm" "$BIN_DIR/ClaudeTermDaemon" "$APP/Contents/MacOS/"
-for bin in ClaudeTerm ClaudeTermDaemon; do
+cp "$BIN_DIR/AgentDeck" "$BIN_DIR/AgentDeckDaemon" "$APP/Contents/MacOS/"
+# 예전 이름 → 새 데몬. 이미 떠 있던 claude 세션은 시작할 때 읽은 hook 명령(…/ClaudeTermDaemon hook)을 계속 쓰므로,
+# 업데이트 뒤에도 그 세션들의 상태 기록이 끊기지 않게 둔다(새 hook 은 AgentDeckDaemon 을 가리킨다). 나중 판에서 뺀다.
+ln -s AgentDeckDaemon "$APP/Contents/MacOS/ClaudeTermDaemon"
+for bin in AgentDeck AgentDeckDaemon; do
   [[ "$(lipo -archs "$APP/Contents/MacOS/$bin")" == arm64 ]] || { echo "$bin 이 arm64 가 아닙니다" >&2; exit 1; }
 done
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -30,7 +33,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>ko</string>
-	<key>CFBundleExecutable</key><string>ClaudeTerm</string>
+	<key>CFBundleExecutable</key><string>AgentDeck</string>
 	<key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
 	<key>CFBundleName</key><string>AgentDeck</string>
 	<key>CFBundleDisplayName</key><string>AgentDeck</string>
@@ -51,7 +54,7 @@ cp -R Resources/Fonts "$APP/Contents/Resources/Fonts"
 # Markdown 미리보기 변환기(marked, MIT) — 앱 안에서만 쓰고 실행 중에 네트워크에서 받지 않는다
 mkdir -p "$APP/Contents/Resources/Markdown"
 cp Resources/Markdown/marked.umd.js Resources/Markdown/LICENSE "$APP/Contents/Resources/Markdown/"
-codesign --force --sign - "$APP/Contents/MacOS/ClaudeTermDaemon"
+codesign --force --sign - "$APP/Contents/MacOS/AgentDeckDaemon"
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
 ZIP="dist/AgentDeck-$VERSION.zip"
 rm -f "$ZIP"

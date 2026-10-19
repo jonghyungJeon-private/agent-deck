@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import TermWire
 
 /// 한 시점의 프로세스 목록(ProcessUtil.snapshot() 으로 sysctl 한 번에 읽는다).
 /// 갱신마다 한 번 찍어 Codex 훑기·claude 계보·감싼 셸 찾기가 같이 쓴다.
@@ -98,7 +99,7 @@ public struct ProcessValueCache<Value> {
 
 /// 화면 안에서 도는 Codex CLI 와 그 세션 단서를 찾는다(인자·환경 읽기를 최소로).
 /// - 화면 셸 아래(계보 40단계 안)의 "codex" 만 후보로 보고, 그 인자·환경만 읽는다.
-/// - 단서(CLAUDE_SESSIONS_PANE + CODEX_THREAD_ID 환경)는 후보가 있을 때만, 화면 셸의 자손에서
+/// - 단서(AGENTDECK_PANE — 예전 CLAUDE_SESSIONS_PANE — + CODEX_THREAD_ID 환경)는 후보가 있을 때만, 화면 셸의 자손에서
 ///   (Codex 의 자손 먼저, 최근 것 먼저) 찾는다. 한 번 읽은 프로세스는 (pid, 시작 시각) 으로 기억한다.
 /// - 한 번에 새로 읽는 환경 수는 maxEnvReads 로 막고, 못 읽은 것은 다음 훑기에서 읽는다.
 public final class CodexProcessFinder {
@@ -189,7 +190,7 @@ public final class CodexProcessFinder {
     }
 
     static func mark(_ env: [String: String]) -> Mark? {
-        guard let pane = env["CLAUDE_SESSIONS_PANE"], let id = env["CODEX_THREAD_ID"], UUID(uuidString: id) != nil else { return nil }
+        guard let pane = AgentDeckEnv.value("PANE", in: env), let id = env["CODEX_THREAD_ID"], UUID(uuidString: id) != nil else { return nil }
         return Mark(pane: pane, sessionId: id)
     }
 }

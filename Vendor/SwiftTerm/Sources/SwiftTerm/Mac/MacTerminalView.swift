@@ -168,7 +168,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             self.boldItalic = Self.convert(baseFont, toHaveTrait: [.italicFontMask, .boldFontMask])
         }
 
-        /// ClaudeTerm patch: also give the cascade (fallback) fonts the trait, so bold
+        /// AgentDeck patch: also give the cascade (fallback) fonts the trait, so bold
         /// Hangul is drawn with the fallback font's bold face (as Ghostty does).
         static func convert(_ font: NSFont, toHaveTrait trait: NSFontTraitMask) -> NSFont {
             let manager = NSFontManager.shared
@@ -322,7 +322,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Marked (uncommitted) text from an input source (IME, dictation, etc.).
     private var markedTextStorage: NSAttributedString?
     private var markedSelectedRange: NSRange = NSRange(location: NSNotFound, length: 0)
-    private var markedTextOverlay: MarkedTextGridView? // ClaudeTerm patch: grid-aligned preview
+    private var markedTextOverlay: MarkedTextGridView? // AgentDeck patch: grid-aligned preview
     private var progressBarView: TerminalProgressBarView?
     private var progressReportTimer: Timer?
     private var lastProgressValue: UInt8?
@@ -336,14 +336,15 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     // of attributes for an NSAttributedString
     var attributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
     var urlAttributes: [Attribute: [NSAttributedString.Key:Any]] = [:]
-    /// ClaudeTerm patch: 줄별 글자 묶음 캐시(cachedLineInfo)
+    /// AgentDeck patch: 줄별 글자 묶음 캐시(cachedLineInfo)
     var lineInfoCache: [ObjectIdentifier: LineInfoCacheEntry] = [:]
     var lineCacheTick: UInt64 = 0
     /// 진단용 캐시 적중·실패 수
     public static var lineCacheHits = 0
     public static var lineCacheMisses = 0
-    /// 비교 측정용으로 끌 수 있다
-    public static var lineCacheEnabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_LINE_CACHE"] == nil
+    /// 비교 측정용으로 끌 수 있다(AGENTDECK_NO_LINE_CACHE, 예전 이름 CLAUDE_TERM_NO_LINE_CACHE)
+    public static var lineCacheEnabled = ProcessInfo.processInfo.environment["AGENTDECK_NO_LINE_CACHE"] == nil
+        && ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_LINE_CACHE"] == nil
     
     
     // Cache for the colors in the 0..255 range
@@ -1282,7 +1283,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         perf(Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000, dirtyRect)
     }
 
-    /// ClaudeTerm patch: 그리기 한 번에 걸린 시간(ms)과 다시 그린 영역(성능 진단용, 평소엔 nil)
+    /// AgentDeck patch: 그리기 한 번에 걸린 시간(ms)과 다시 그린 영역(성능 진단용, 평소엔 nil)
     public static var drawTrace: ((Double, CGRect) -> Void)?
     
     public override func cursorUpdate(with event: NSEvent)
@@ -1906,7 +1907,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         insertText(string, replacementRange: replacementRange, isPaste: false)
     }
     
-    /// ClaudeTerm patch: IME tracing hook (input method calls + cursor cell).
+    /// AgentDeck patch: IME tracing hook (input method calls + cursor cell).
     public static var imeTrace: ((String) -> Void)?
 
     func traceIME(_ event: String) {
@@ -2010,7 +2011,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Shows or hides a floating overlay that previews in-progress marked text
     /// (e.g. dictation hypotheses or IME composition) at the current cursor position.
     ///
-    /// ClaudeTerm patch: the preview is drawn on the terminal grid like committed
+    /// AgentDeck patch: the preview is drawn on the terminal grid like committed
     /// text (wide characters fill two cells, same glyph scaling as the renderer),
     /// underlined, with a block caret after it, so the caret sits exactly where
     /// it will be once the syllable is committed. Only the cells it covers are
@@ -2074,7 +2075,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         overlay.needsDisplay = true
     }
 
-    /// ClaudeTerm patch: keep the composition preview on the cursor when the
+    /// AgentDeck patch: keep the composition preview on the cursor when the
     /// application moves it (it echoes the previous syllable and redraws).
     func markedTextCursorMoved() {
         if markedTextStorage != nil { traceIME("cursorMoved") }
@@ -2516,7 +2517,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     open func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         actualRange?.pointee = range
         
-        // ClaudeTerm patch: use the cursor cell even when the caret view is hidden.
+        // AgentDeck patch: use the cursor cell even when the caret view is hidden.
         let buffer = terminal.displayBuffer
         let row = buffer.y - (buffer.yDisp - buffer.yBase)
         let cell = NSRect(x: cellDimension.width * CGFloat(buffer.x),
@@ -3651,7 +3652,7 @@ extension TerminalViewDelegate {
 /// portion occupied by pre-existing terminal text (e.g. the prompt), so this
 /// drawing strategy leaves that area untouched while still covering wrapped
 /// lines below.
-/// ClaudeTerm patch: IME / dictation preview drawn on the terminal grid.
+/// AgentDeck patch: IME / dictation preview drawn on the terminal grid.
 final class MarkedTextGridView: NSView {
     var cells: [(character: Character, column: Int, row: Int, width: Int)] = []
     var caret: (column: Int, row: Int) = (0, 0)

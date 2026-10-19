@@ -104,7 +104,7 @@ private let strikethroughStyleKeyNS = NSAttributedString.Key.strikethroughStyle.
 /// Values the draw passes need from a CTRun, extracted once per run so both
 /// passes share them and the full attribute dictionary is never bridged on
 /// undecorated runs.
-/// ClaudeTerm patch: 한 줄 조각의 CTLine 과 실행 정보(줄 캐시에 함께 담는다)
+/// AgentDeck patch: 한 줄 조각의 CTLine 과 실행 정보(줄 캐시에 함께 담는다)
 typealias PreparedSegment = (segment: ViewLineSegment, ctLine: CTLine, runs: [PreparedRun])
 
 struct PreparedRun {
@@ -198,7 +198,7 @@ private func cachedCTLine(_ text: NSAttributedString) -> CTLine {
 }
 
 // Holds the information used to render a line
-/// ClaudeTerm patch: cachedLineInfo 가 담아 두는 한 줄
+/// AgentDeck patch: cachedLineInfo 가 담아 두는 한 줄
 final class LineInfoCacheEntry {
     weak var line: BufferLine?
     let generation: UInt64
@@ -477,7 +477,7 @@ extension TerminalView {
     /// ordinary single-cell glyphs, so Latin text in a monospace font is rendered
     /// exactly as before and the hot path stays untouched. Shared by the
     /// CoreGraphics and Metal glyph renderers so they stay pixel-consistent.
-    /// ClaudeTerm patch: scaled copies of fallback fonts. With enlarged Hangul
+    /// AgentDeck patch: scaled copies of fallback fonts. With enlarged Hangul
     /// every wide glyph takes the scaled path, so creating a CTFont per glyph per
     /// frame would dominate drawing.
     private static var scaledFontCache: [ScaledFontKey: CTFont] = [:]
@@ -497,7 +497,7 @@ extension TerminalView {
         return scaled
     }
 
-    /// ClaudeTerm patch: per fallback font with Hangul (or CJK) glyphs, the scale
+    /// AgentDeck patch: per fallback font with Hangul (or CJK) glyphs, the scale
     /// that gives it the primary font's x-height — what Ghostty does for fallback
     /// fonts. nil for the primary font and for fonts without such glyphs (emoji,
     /// symbols), which stay unscaled.
@@ -548,7 +548,7 @@ extension TerminalView {
         if ink.width > slotWidth || ink.height > cellHeight, ink.width > 0, ink.height > 0 {
             scale = max(0.1, min(min(slotWidth / ink.width, cellHeight / ink.height), 1))
         } else if let ratio = fallbackWideScale(font), abs(ratio - 1) > 0.01 {
-            // ClaudeTerm patch: size fallback CJK glyphs like Ghostty does (match
+            // AgentDeck patch: size fallback CJK glyphs like Ghostty does (match
             // the primary font's x-height), keep the baseline and centre the
             // glyph in its two-cell slot.
             let scaled = min(ratio, slotWidth / max(advance.width, 1))
@@ -605,7 +605,7 @@ extension TerminalView {
             if useBrightColors {
                 midx = ansi < 7 ? (Int (ansi) + (isBold ? 8 : 0)) : Int (ansi)
             } else {
-                // ClaudeTerm patch: the original mapped every index above 7 down by 8,
+                // AgentDeck patch: the original mapped every index above 7 down by 8,
                 // which also shifted the 256-color range (117 sky blue became 109
                 // grey-teal). Without bold-is-bright the index is used as is.
                 midx = Int(ansi)
@@ -968,7 +968,7 @@ extension TerminalView {
             }
         }
         
-        // ClaudeTerm patch: the original switched to the bold font for every index
+        // AgentDeck patch: the original switched to the bold font for every index
         // above 7 when bold-is-bright was off. Like Ghostty, colors keep their weight.
         let useBoldForBrightColor = false
         var tf: TTFont
@@ -1383,7 +1383,7 @@ extension TerminalView {
                             powerlineGlyphs: powerlineGlyphs)
     }
 
-    /// ClaudeTerm patch: 줄 내용이 그대로면 지난번에 만든 글자 묶음을 다시 쓴다.
+    /// AgentDeck patch: 줄 내용이 그대로면 지난번에 만든 글자 묶음을 다시 쓴다.
     /// 스크롤은 줄 내용이 아니라 보이는 위치만 바꾸므로, 화면 전체를 다시 그려도 대부분 다시 만들 필요가 없다.
     /// 줄 객체·세대 번호·열 수·선택 영역·깜박임·링크 밑줄이 같을 때만 쓰고, 오른쪽→왼쪽 글자·그림이 있는 줄은 담지 않는다.
     func cachedLineInfo(row: Int, line: BufferLine, cols: Int) -> (info: ViewLineInfo, entry: LineInfoCacheEntry?) {
@@ -1416,7 +1416,7 @@ extension TerminalView {
         return (info, entry)
     }
 
-    /// ClaudeTerm patch(시험용): 보이는 줄마다 캐시에 담긴 글자와 지금 버퍼로 새로 만든 글자가 같은지 센다.
+    /// AgentDeck patch(시험용): 보이는 줄마다 캐시에 담긴 글자와 지금 버퍼로 새로 만든 글자가 같은지 센다.
     /// (같은 줄 수, 다른 줄 수, 캐시에 있던 줄 수)
     public func verifyLineCache() -> (same: Int, different: Int, cached: Int) {
         let buffer = terminal.displayBuffer
@@ -1857,7 +1857,7 @@ extension TerminalView {
             let cellWidth = CGFloat(cellWidthPx) / scale
             let cellOrigin = CGPoint(x: (lineOriginPxX + CGFloat(item.column * baseCellWidthPx)) / scale,
                                      y: lineOriginPxY / scale)
-            // ClaudeTerm patch: 색 변환은 캐시에서(칸마다 만들면 스크롤 때 그리기 시간의 1/3 이 여기 들었다)
+            // AgentDeck patch: 색 변환은 캐시에서(칸마다 만들면 스크롤 때 그리기 시간의 1/3 이 여기 들었다)
             BoxDrawingRenderer.draw(codePoint: item.codePoint,
                                     in: context,
                                     cellOrigin: cellOrigin,
@@ -1900,7 +1900,7 @@ extension TerminalView {
     // TODO: this should not render any lines outside the dirtyRect
     func drawTerminalContents (dirtyRect: TTRect, context: CGContext, bufferOffset: Int)
     {
-        lineCacheTick &+= 1 // ClaudeTerm patch: 줄 캐시 정리 기준
+        lineCacheTick &+= 1 // AgentDeck patch: 줄 캐시 정리 기준
         let lineDescent = CTFontGetDescent(fontSet.normal)
         let lineLeading = CTFontGetLeading(fontSet.normal)
         let yOffset = ceil(lineDescent+lineLeading)
@@ -2044,7 +2044,7 @@ extension TerminalView {
             // creation, and extract the attribute values both draw passes need
             // once per run: bridging the whole attribute dictionary per pass is
             // far more expensive than these keyed lookups.
-            // ClaudeTerm patch: 줄 캐시에 담긴 결과가 있으면 다시 모양을 잡지 않는다
+            // AgentDeck patch: 줄 캐시에 담긴 결과가 있으면 다시 모양을 잡지 않는다
             let preparedSegments: [PreparedSegment] = cacheEntry?.prepared ??
                 lineInfo.segments.compactMap { segment in
                     guard segment.attributedString.length > 0 else { return nil }
@@ -2638,7 +2638,7 @@ extension TerminalView {
         caretView.frame.origin = CGPoint(x: lineOrigin.x + (cellDimension.width * doublePosition * CGFloat(caretCol)), y: lineOrigin.y)
         caretView.frame.size.width = cellDimension.width * doublePosition * CGFloat(cursorColumnWidth)
         #if os(macOS)
-        markedTextCursorMoved() // ClaudeTerm patch
+        markedTextCursorMoved() // AgentDeck patch
         #endif
         caretView.setText (ch: charUnderCursor)
     }

@@ -1,9 +1,9 @@
-# SwiftTerm 사본 (ClaudeTerm 용)
+# SwiftTerm 사본 (AgentDeck 용)
 
 원본: https://github.com/migueldeicaza/SwiftTerm v1.20.0 (5d14406, MIT — LICENSE)
 `Sources/SwiftTerm` 만 가져왔다(iOS·문서·예제·테스트·빌드 정보 플러그인 제외, `SwiftTermBuildInfo.swift` 는 고정 파일).
 
-고친 곳은 코드에 `ClaudeTerm patch` 로 표시했다.
+고친 곳은 코드에 `AgentDeck patch` 로 표시했다.
 
 1. 넓은 글자 크기 (`Apple/AppleTerminalView.swift` `glyphSlotFit`, `fallbackWideScale`, `scaledFont`)
    - 한글은 대체 글꼴(설치돼 있으면 D2Coding, 없으면 Apple SD Gothic Neo)로 그려진다. Ghostty 처럼
@@ -43,9 +43,9 @@
 상자 선(─ │ 등)은 칸마다 NSColor → CGColor 변환을 하던 것을 기존 CGColor 캐시로 바꿨다.
 측정(321×89칸, 한글·색·상자 선 섞인 출력): 한 번 그리기 15.7ms → 4.4ms.
 `TerminalView.drawTrace`(그리기 시간), `verifyLineCache()`(캐시와 새로 만든 결과 비교)는 진단용이다.
-`CLAUDE_TERM_NO_LINE_CACHE=1` 이면 캐시를 끈다(비교 측정용).
+`AGENTDECK_NO_LINE_CACHE=1`(예전 이름 `CLAUDE_TERM_NO_LINE_CACHE`)이면 캐시를 끈다(비교 측정용).
 
-## 대체 화면 상태를 모를 때의 끄기 (Terminal.swift `altScreenStateUnknown`, DECRST 47/1047/1049) — ClaudeTerm patch
+## 대체 화면 상태를 모를 때의 끄기 (Terminal.swift `altScreenStateUnknown`, DECRST 47/1047/1049) — AgentDeck patch
 
 데몬은 화면당 약 2MB 의 지난 출력만 보관해서, 긴 claude 세션은 맨 앞의 `ESC[?1049h`(대체 화면 켜기)가 잘린다.
 그 출력을 먹이면 claude 화면이 보통 화면에 그려지고, `/exit` 의 `ESC[?1049l` 은 대체 화면이 아니라 아무 일도 하지 않아

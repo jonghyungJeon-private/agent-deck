@@ -1,6 +1,7 @@
 import Foundation
+import TermWire
 
-/// Claude Code hook 으로 실행되는 부분(`ClaudeTermDaemon hook`). 어떤 경우에도 Claude 쪽에 오류를 내지 않고,
+/// Claude Code hook 으로 실행되는 부분(`AgentDeckDaemon hook`). 어떤 경우에도 Claude 쪽에 오류를 내지 않고,
 /// 아무것도 출력하지 않는다(UserPromptSubmit 의 출력은 claude 문맥에 붙으므로).
 /// - SessionStart / SessionEnd: 세션 기록(되살리기·짝짓기)
 /// - UserPromptSubmit / Stop / StopFailure / Notification / PermissionRequest: 작업 상태(목록 표시·알림)
@@ -90,7 +91,7 @@ public enum HookHandler {
         record.activeSince = context.now
         record.tty = proc.tty ?? record.tty
         record.termProgram = context.environment["TERM_PROGRAM"] ?? record.termProgram
-        record.pane = context.environment["CLAUDE_SESSIONS_PANE"] ?? record.pane
+        record.pane = AgentDeckEnv.value("PANE", in: context.environment) ?? record.pane
         record.state = "idle"
         record.stateAt = context.now
         record.stateMessage = nil
@@ -141,7 +142,7 @@ public enum HookHandler {
         record.stateAt = context.now
         record.stateMessage = message.map { String($0.prefix(200)) }
         record.stateSeq = (record.stateSeq ?? 0) + 1
-        record.pane = context.environment["CLAUDE_SESSIONS_PANE"] ?? record.pane
+        record.pane = AgentDeckEnv.value("PANE", in: context.environment) ?? record.pane
         try store.save(record)
     }
 

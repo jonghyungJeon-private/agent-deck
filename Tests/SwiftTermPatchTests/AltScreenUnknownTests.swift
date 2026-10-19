@@ -1,7 +1,7 @@
 import SwiftTerm
 import XCTest
 
-/// Vendor/SwiftTerm 의 ClaudeTerm patch(`Terminal.altScreenStateUnknown`) 시험. 화면 없이 Terminal 만 돌린다.
+/// Vendor/SwiftTerm 의 AgentDeck patch(`Terminal.altScreenStateUnknown`) 시험. 화면 없이 Terminal 만 돌린다.
 final class AltScreenUnknownTests: XCTestCase {
     private final class Delegate: TerminalDelegate {
         func showCursor(source: Terminal) {}

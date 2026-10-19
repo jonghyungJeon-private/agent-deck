@@ -131,7 +131,7 @@ public enum TextFile {
         let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         let directory = (target as NSString).deletingLastPathComponent
         let name = (target as NSString).lastPathComponent
-        let temp = (directory as NSString).appendingPathComponent(".\(name).claudeterm-\(UUID().uuidString.prefix(8))")
+        let temp = (directory as NSString).appendingPathComponent(".\(name).agentdeck-\(UUID().uuidString.prefix(8))")
         var mode: mode_t = 0o644
         var info = stat()
         let existed = stat(target, &info) == 0

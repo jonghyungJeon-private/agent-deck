@@ -1,31 +1,30 @@
 import Foundation
 
 /// ~/.claude/settings.json(Codex 는 ~/.codex/hooks.json)에 이 앱의 hook 을 넣고 뺀다.
-/// 사용자의 다른 설정·hook 은 그대로 두고, 바꾸기 전에 백업(<파일>.claudeterm-backup-<시각>)을 남긴다.
+/// 사용자의 다른 설정·hook 은 그대로 두고, 바꾸기 전에 백업(<파일>.agentdeck-backup-<시각>)을 남긴다.
 public struct HookInstaller {
     /// 세션 기록(SessionStart/End)과 작업 상태(나머지) hook
     public static let events = ["SessionStart", "SessionEnd", "UserPromptSubmit", "Stop", "StopFailure", "Notification",
                                 "PermissionRequest"]
-    /// 같은 세션 기록(SessionStore)을 남기는 hook 의 실행 파일 이름들. ClaudeSessions 앱은 이 앱(AgentDeck)으로 바뀌어 정리 대상이다.
-    public static let legacyMarkers = ["ClaudeSessions"]
+    /// 이 앱 hook 으로 알아보는 실행 파일 이름. 첫 것이 지금 이름이고, 나머지는 예전 이름
+    /// (ClaudeTermDaemon = 0.3 까지의 AgentDeck/ClaudeTerm, ClaudeSessions = 그 전 앱) — 찾으면 "갱신하기" 대상, 연결 해제 때 함께 뺀다.
+    public static let knownMarkers = ["AgentDeckDaemon", "ClaudeTermDaemon", "ClaudeSessions"]
 
     public let eventNames: [String]
     public let subcommand: String
     public let settingsURL: URL
     public let executablePath: String
-    /// 이 앱이 넣은 hook 인지 알아보는 표식(실행 파일 이름). 경로가 바뀌어도(앱 이동) 찾을 수 있게 끝부분만 본다.
-    public let marker: String
+    /// 이 앱이 넣은 hook 인지 알아보는 표식(실행 파일 이름들). 경로가 바뀌어도(앱 이동) 찾을 수 있게 끝부분만 본다.
+    public let markers: [String]
 
-    public init(settingsURL: URL = Paths.claudeSettings, executablePath: String, marker: String = "ClaudeSessions",
+    public init(settingsURL: URL = Paths.claudeSettings, executablePath: String, markers: [String] = HookInstaller.knownMarkers,
                 events: [String] = HookInstaller.events, subcommand: String = "hook") {
         self.eventNames = events
         self.subcommand = subcommand
         self.settingsURL = settingsURL
         self.executablePath = executablePath
-        self.marker = marker
+        self.markers = markers
     }
-
-    static func suffix(_ marker: String) -> String { "\(marker)\" hook" }
 
     public enum Status: Equatable {
         case notInstalled
@@ -68,7 +67,8 @@ public struct HookInstaller {
     }
 
     /// 표식(실행 파일 이름)으로 끝나는 명령이면 이 앱 것: 지금 형태·예전 형태(가드 없음) 모두 `…/<표식>" <하위 명령>` 으로 끝난다.
-    func isOurs(_ command: String) -> Bool { command.hasSuffix("\(marker)\" \(subcommand)") }
+    /// 예전 이름(ClaudeTermDaemon·ClaudeSessions)도 이 앱 것으로 보되, 지금 명령과 다르니 status 는 outdated 가 된다.
+    func isOurs(_ command: String) -> Bool { markers.contains { command.hasSuffix("\($0)\" \(subcommand)") } }
 
     /// 명령이 실행하는 파일 경로(마지막 큰따옴표 묶음을 풀어서)
     static func executablePath(in command: String) -> String? {
@@ -120,21 +120,12 @@ public struct HookInstaller {
         return current == eventNames.count && found == current ? .installed : .outdated
     }
 
-    /// 같은 기록을 남기는 다른(예전) 앱의 hook 이 남아 있는지
-    public func hasLegacyHooks() throws -> Bool {
-        let hooks = try loadSettings()["hooks"] as? [String: Any] ?? [:]
-        return eventNames.flatMap { commands(in: hooks[$0]) }.contains { command in
-            Self.legacyMarkers.filter { $0 != marker }.contains { command.hasSuffix(Self.suffix($0)) }
-        }
-    }
-
-    /// 이미 있던 이 앱의 hook 은 지우고 현재 경로로 다시 넣는다. replacingLegacy 면 예전 앱(ClaudeSessions)의 hook 도 뺀다
-    /// (같은 기록을 두 번 남기지 않게, 그 앱을 지워도 hook 이 깨지지 않게). 백업 경로를 돌려준다(원본이 없었으면 nil).
+    /// 이미 있던 이 앱의 hook(예전 이름 포함)은 지우고 현재 경로로 다시 넣는다
+    /// (같은 기록을 두 번 남기지 않게, 예전 앱을 지워도 hook 이 깨지지 않게). 백업 경로를 돌려준다(원본이 없었으면 nil).
     @discardableResult
-    public func install(replacingLegacy: Bool = false) throws -> URL? {
+    public func install() throws -> URL? {
         var settings = try loadSettings()
-        var hooks = removingOurs(from: settings["hooks"] as? [String: Any] ?? [:],
-                                 also: replacingLegacy ? Self.legacyMarkers.filter { $0 != marker } : [])
+        var hooks = removingOurs(from: settings["hooks"] as? [String: Any] ?? [:])
         for event in eventNames {
             var groups = hooks[event] as? [Any] ?? []
             groups.append(["hooks": [["type": "command", "command": command, "timeout": 10]]])
@@ -150,7 +141,7 @@ public struct HookInstaller {
         public var backup: URL?
     }
 
-    /// 이 앱의 hook 만 뺀다(경로와 상관없이 표식으로 찾는다 — 다른 위치의 이 앱 것도). 지울 것이 없으면 파일을 그대로 둔다.
+    /// 이 앱의 hook 만 뺀다(경로와 상관없이 표식으로 찾는다 — 다른 위치·예전 이름의 이 앱 것도). 지울 것이 없으면 파일을 그대로 둔다.
     @discardableResult
     public func uninstall() throws -> Removal {
         var settings = try loadSettings()
@@ -188,11 +179,11 @@ public struct HookInstaller {
             let stamp = Self.stampFormatter.string(from: Date())
             let dir = settingsURL.deletingLastPathComponent()
             // 같은 초에 여러 번 바꿔도 처음 백업을 지우지 않는다
-            var url = dir.appendingPathComponent("\(settingsURL.lastPathComponent).claudeterm-backup-\(stamp)")
+            var url = dir.appendingPathComponent("\(settingsURL.lastPathComponent).agentdeck-backup-\(stamp)")
             var n = 1
             while fm.fileExists(atPath: url.path) {
                 n += 1
-                url = dir.appendingPathComponent("\(settingsURL.lastPathComponent).claudeterm-backup-\(stamp)-\(n)")
+                url = dir.appendingPathComponent("\(settingsURL.lastPathComponent).agentdeck-backup-\(stamp)-\(n)")
             }
             try fm.copyItem(at: settingsURL, to: url)
             backup = url
@@ -218,9 +209,8 @@ public struct HookInstaller {
         }
     }
 
-    /// 이 앱의 hook 항목만 지운다(also 의 표식도 함께). 비게 된 그룹·이벤트도 정리한다.
-    private func removingOurs(from hooks: [String: Any], also: [String] = []) -> [String: Any] {
-        let suffixes = ([marker] + also).map { "\($0)\" \(subcommand)" }
+    /// 이 앱의 hook 항목만 지운다. 비게 된 그룹·이벤트도 정리한다.
+    private func removingOurs(from hooks: [String: Any]) -> [String: Any] {
         var result = hooks
         // 모든 이벤트를 본다(예전 판이 넣은, 지금 목록에 없는 이벤트의 hook 도 지우게)
         for (event, value) in hooks {
@@ -229,7 +219,7 @@ public struct HookInstaller {
                 guard var dict = group as? [String: Any], let inner = dict["hooks"] as? [Any] else { return group }
                 let kept = inner.filter { item in
                     guard let command = (item as? [String: Any])?["command"] as? String else { return true }
-                    return !suffixes.contains { command.hasSuffix($0) }
+                    return !isOurs(command)
                 }
                 if kept.isEmpty { return nil }
                 dict["hooks"] = kept
@@ -243,20 +233,19 @@ public struct HookInstaller {
 
 public extension HookInstaller {
     /// hook 은 데몬 실행 파일이 맡는다(AppKit 을 띄우지 않아 가볍다). 표식은 앱 안 실행 파일 이름이라
-    /// 앱 표시 이름(AgentDeck)·묶음 이름이 바뀌어도 같은 hook 으로 알아본다.
-    static let daemonMarker = "ClaudeTermDaemon"
+    /// 앱이 놓인 곳·묶음 이름과 상관없이 같은 hook 으로 알아본다.
+    static let daemonExecutable = "AgentDeckDaemon"
 
     static func claude(daemonPath: String, settingsURL: URL = Paths.claudeSettings) -> HookInstaller {
-        HookInstaller(settingsURL: settingsURL, executablePath: daemonPath, marker: daemonMarker)
+        HookInstaller(settingsURL: settingsURL, executablePath: daemonPath)
     }
 
     static func codex(daemonPath: String, hooksURL: URL = CodexSessions.defaultHome.appendingPathComponent("hooks.json")) -> HookInstaller {
-        HookInstaller(settingsURL: hooksURL, executablePath: daemonPath, marker: daemonMarker,
-                      events: CodexHook.events, subcommand: "codex-hook")
+        HookInstaller(settingsURL: hooksURL, executablePath: daemonPath, events: CodexHook.events, subcommand: "codex-hook")
     }
 }
 
-/// `ClaudeTermDaemon unhook [--claude-settings <파일>] [--codex-hooks <파일>]`: 이 앱의 hook 만 뺀다(삭제 스크립트가 쓴다).
+/// `AgentDeckDaemon unhook [--claude-settings <파일>] [--codex-hooks <파일>]`: 이 앱의 hook 만 뺀다(삭제 스크립트가 쓴다).
 /// 다른 hook·설정은 그대로, 바꾸기 전 백업. 설정 파일을 읽지 못하면 고치지 않고 1 로 끝난다.
 public enum Unhook {
     public static func run(_ arguments: [String], output: (String) -> Void = { print($0) }) -> Int32 {
@@ -265,7 +254,7 @@ public enum Unhook {
         var rest = arguments[...]
         while let flag = rest.popFirst() {
             guard let value = rest.popFirst(), ["--claude-settings", "--codex-hooks"].contains(flag) else {
-                output("사용: ClaudeTermDaemon unhook [--claude-settings <파일>] [--codex-hooks <파일>]")
+                output("사용: AgentDeckDaemon unhook [--claude-settings <파일>] [--codex-hooks <파일>]")
                 return 2
             }
             let url = URL(fileURLWithPath: (value as NSString).expandingTildeInPath)

@@ -58,7 +58,7 @@ final class CodexTests: XCTestCase {
     }
     func testHooksObserveWithoutMixingClaudeRecordsOrSubagents() throws {
         let store = SessionStore(dir: dir.appendingPathComponent("records"))
-        let env = ["CLAUDE_SESSIONS_PANE": "pane-1"]
+        let env = ["AGENTDECK_PANE": "pane-1"]
         func event(_ name: String, extra: String = "") -> Data {
             Data("{\"session_id\":\"\(sid)\",\"cwd\":\"/work\",\"hook_event_name\":\"\(name)\"\(extra)}".utf8)
         }
@@ -77,12 +77,18 @@ final class CodexTests: XCTestCase {
         XCTAssertNotNil(store.load(sid)?.endedAt)
         try CodexHook.handle(event("SessionStart"), environment: env, store: store)
         XCTAssertNil(store.load(sid)?.endedAt)
+        // 예전 데몬이 띄운 셸(예전 이름 CLAUDE_SESSIONS_PANE)도 화면 ID 로 읽는다
+        try CodexHook.handle(event("UserPromptSubmit"), environment: ["CLAUDE_SESSIONS_PANE": "pane-old"], store: store)
+        XCTAssertEqual(store.load(sid)?.pane, "pane-old")
+        // 화면 ID 가 없으면(이 앱 밖의 codex) 적지 않는다
+        try CodexHook.handle(event("Stop"), environment: [:], store: store)
+        XCTAssertEqual(store.load(sid)?.state, "working")
     }
     func testCodexInstallerPreservesOtherHooksAndBacksUp() throws {
         let url = dir.appendingPathComponent("hooks.json")
         let original = Data(#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo mine"}]}]},"other":true}"#.utf8)
         try original.write(to: url)
-        let installer = HookInstaller(settingsURL: url, executablePath: "/a b/ClaudeTermDaemon", marker: "ClaudeTermDaemon", events: CodexHook.events, subcommand: "codex-hook")
+        let installer = HookInstaller.codex(daemonPath: "/a b/AgentDeckDaemon", hooksURL: url)
         let backup = try XCTUnwrap(installer.install())
         XCTAssertEqual(try Data(contentsOf: backup), original)
         XCTAssertEqual(try installer.status(), .installed)

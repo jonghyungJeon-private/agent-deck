@@ -5,7 +5,7 @@ import TermWire
 /// 직접 바꾼 이름과, 첫 질문으로 지은 제목을 term/names.json 에 둔다(앱을 다시 켜도 다시 짓지 않게).
 ///
 /// 제목 짓기는 `claude -p`(sonnet, 도구·MCP·설정·대화 저장 없이)를 세션마다 한 번 부른다. 그동안은 첫 질문 앞부분을 보여 준다.
-/// `CLAUDE_TERM_AUTO_TITLE=0` 이면 부르지 않고 첫 질문 앞부분만 쓴다.
+/// `AGENTDECK_AUTO_TITLE=0` 이면 부르지 않고 첫 질문 앞부분만 쓴다.
 final class SessionNames {
     struct Entry: Codable, Equatable {
         var title: String
@@ -16,13 +16,14 @@ final class SessionNames {
     /// 제목을 새로 지었을 때(목록을 다시 그리게)
     var onChange: (() -> Void)?
 
-    private let url = TermPaths.home.appendingPathComponent("names.json")
+    /// 데이터 위치를 옮기면 따라가도록 매번 계산한다
+    private var url: URL { TermPaths.home.appendingPathComponent("names.json") }
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
     private var pending: Set<String> = []
     private var failed: Set<String> = []
-    private let queue = DispatchQueue(label: "ClaudeTerm.titles", qos: .utility)
-    private let enabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_AUTO_TITLE"] != "0"
+    private let queue = DispatchQueue(label: "AgentDeck.titles", qos: .utility)
+    private let enabled = AgentDeckEnv.value("AUTO_TITLE") != "0"
 
     init() {
         if let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode([String: Entry].self, from: data) {

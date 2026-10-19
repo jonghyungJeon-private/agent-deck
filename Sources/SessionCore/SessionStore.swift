@@ -19,7 +19,7 @@ public struct SessionRecord: Codable, Equatable, Identifiable {
     public var termProgram: String?
     /// claude 의 제어 터미널(예: /dev/ttys015)
     public var tty: String?
-    /// ClaudeTerm 화면 ID(셸 환경 CLAUDE_SESSIONS_PANE). 있으면 화면과 정확히 짝짓는다.
+    /// AgentDeck 화면 ID(셸 환경 AGENTDECK_PANE, 예전 데몬의 셸은 CLAUDE_SESSIONS_PANE). 있으면 화면과 정확히 짝짓는다.
     public var pane: String?
     /// 작업 상태(hook 이 적는다): working | waiting | done | idle | error
     public var state: String?
@@ -145,7 +145,7 @@ public struct SessionStore {
     /// 앱·CLI·여러 hook 이 기록을 동시에 읽고 고칠 때 서로 덮어쓰지 않도록 프로세스 사이 잠금을 건다.
     /// 같은 스레드에서 다시 불러도 된다(안쪽 호출은 잠금을 다시 잡지 않는다).
     public func withLock<T>(_ body: () throws -> T) rethrows -> T {
-        let key = "ClaudeSessions.storeLock." + dir.path
+        let key = "AgentDeck.storeLock." + dir.path
         let thread = Thread.current.threadDictionary
         let depth = thread[key] as? Int ?? 0
         if depth > 0 {

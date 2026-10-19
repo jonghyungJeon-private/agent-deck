@@ -11,7 +11,7 @@ enum TermAppearance {
     static let defaultFontSize: CGFloat = 13
     static let fontSizeRange: ClosedRange<CGFloat> = 8...32
     /// 글꼴 크기가 바뀌었다(터미널·편집기 화면이 받아 글꼴을 바꾼다). `ui.json` 저장도 이 알림을 받아 한다.
-    static let fontSizeChanged = Notification.Name("ClaudeTerm.fontSizeChanged")
+    static let fontSizeChanged = Notification.Name("AgentDeck.fontSizeChanged")
 
     /// 앱 전체 글꼴 크기(터미널·편집기 내용, 앱 테두리는 `uiScale` 로 따라간다). 처음 읽을 때 `ui.json` 에서 가져온다.
     private(set) static var fontSize: CGFloat = {

@@ -194,18 +194,8 @@ public struct DaemonState: Codable, Equatable {
 }
 
 public enum TermPaths {
-    /// 데몬 소켓·로그 위치. 개발·시험용으로 CLAUDE_TERM_HOME 으로 바꿀 수 있다.
-    public static var home: URL {
-        let env = ProcessInfo.processInfo.environment
-        if let override = env["CLAUDE_TERM_HOME"], !override.isEmpty {
-            return URL(fileURLWithPath: override, isDirectory: true)
-        }
-        if let sessions = env["CLAUDE_SESSIONS_HOME"], !sessions.isEmpty {
-            return URL(fileURLWithPath: sessions, isDirectory: true).appendingPathComponent("term", isDirectory: true)
-        }
-        return FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/ClaudeSessions/term", isDirectory: true)
-    }
+    /// 데몬 소켓·로그·배치 위치(DataLocation.termDir). 개발·시험용으로 AGENTDECK_TERM_HOME·AGENTDECK_HOME 으로 바꿀 수 있다.
+    public static var home: URL { DataLocation.termDir }
 
     public static let socketName = "daemon.sock"
 }
@@ -226,7 +216,7 @@ public enum Memory {
 }
 
 /// 유닉스 소켓. sockaddr_un 경로는 104바이트까지라, 넘으면(긴 시험용 폴더) 그 폴더로 이동해 상대 경로로 연다.
-/// 보통 위치(~/Library/Application Support/ClaudeSessions/term)는 짧아서 절대 경로를 쓴다.
+/// 보통 위치(~/Library/Application Support/AgentDeck/term)는 짧아서 절대 경로를 쓴다.
 public enum UnixSocket {
     private static func address(for path: String) -> sockaddr_un? {
         var addr = sockaddr_un()

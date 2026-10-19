@@ -8,15 +8,20 @@
 #   gh api repos/<REPO>/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw' | bash -s -- --uninstall
 # 시험용 환경 변수(실제 /Applications·설정을 건드리지 않게):
 #   AGENTDECK_APPS_DIR=<폴더>  설치·삭제할 앱 폴더  |  AGENTDECK_NO_OPEN=1  설치 뒤 열지 않음
-#   HOME·CLAUDE_CONFIG_DIR·CODEX_HOME·CLAUDE_SESSIONS_HOME·CLAUDE_TERM_HOME 은 앱과 같은 뜻으로 따른다
+#   HOME·CLAUDE_CONFIG_DIR·CODEX_HOME·AGENTDECK_HOME·AGENTDECK_TERM_HOME(예전 이름 CLAUDE_SESSIONS_HOME·CLAUDE_TERM_HOME)은
+#   앱과 같은 뜻으로 따른다
 set -euo pipefail
 
 # 릴리스를 올리는 저장소(owner/repo). 바꾸면 Sources/SessionCore/UpdateCheck.swift 의 repository 와 README 도 같이.
 REPO="jonghyungJeon-private/agent-deck"
-# 표시 이름은 AgentDeck, 안쪽 이름(실행 파일·묶음 ID)은 예전 그대로다(hook·데이터·알림 권한을 옮기지 않으려고).
+# 0.4 부터 안쪽 이름도 AgentDeck(실행 파일 AgentDeck·AgentDeckDaemon, 묶음 ID dev.agentdeck.app, 데이터 폴더 AgentDeck).
+# 예전 이름(ClaudeTerm.app, 실행 파일 ClaudeTerm·ClaudeTermDaemon, dev.claude-sessions.term, 데이터 ClaudeSessions)도 찾아서 다룬다.
 APP_NAME="AgentDeck.app"
 OLD_APP_NAME="ClaudeTerm.app"
-BUNDLE_ID="dev.claude-sessions.term"
+BUNDLE_ID="dev.agentdeck.app"
+OLD_BUNDLE_ID="dev.claude-sessions.term"
+APP_EXES="AgentDeck|ClaudeTerm"
+DAEMON_EXES="AgentDeckDaemon|ClaudeTermDaemon"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '✗ %s\n' "$*" >&2; exit 1; }
@@ -58,20 +63,24 @@ installed_apps() {
 
 regex_escape() { printf '%s' "$1" | sed 's/[][\.*^$(){}?+|/]/\\&/g'; }
 
-# 이 폴더들의 앱에서 뜬 프로세스(앱 또는 데몬). 다른 곳(개발 빌드 등)에서 뜬 것은 건드리지 않는다.
+# 이 폴더들의 앱에서 뜬 프로세스(앱 또는 데몬, 새·예전 이름). 다른 곳(개발 빌드 등)에서 뜬 것은 건드리지 않는다.
+# $1 은 실행 파일 이름 정규식(예: "$APP_EXES"). 데몬은 앱이 띄울 때 붙인 인자(--root <폴더>)가 있을 수 있다.
 pids_of() {
   local exe="$1" dirs="" dir
   for dir in "${APP_DIRS[@]}"; do dirs+="${dirs:+|}$(regex_escape "$dir")"; done
-  pgrep -f "^($dirs)/(AgentDeck|ClaudeTerm)\\.app/Contents/MacOS/$exe\$" 2>/dev/null || true
+  pgrep -f "^($dirs)/(AgentDeck|ClaudeTerm)\\.app/Contents/MacOS/($exe)( --root .*)?\$" 2>/dev/null || true
 }
 
 # 앱만 끈다(저장 안 한 편집기가 있으면 앱이 묻는다). 셸·claude 는 데몬이 붙잡고 있어 끊기지 않는다.
 quit_app() {
-  [[ -n "$(pids_of ClaudeTerm)" ]] || return 0
-  osascript -e "tell application id \"$BUNDLE_ID\" to quit" >/dev/null 2>&1 || true
+  [[ -n "$(pids_of "$APP_EXES")" ]] || return 0
+  local id
+  for id in "$BUNDLE_ID" "$OLD_BUNDLE_ID"; do
+    osascript -e "tell application id \"$id\" to quit" >/dev/null 2>&1 || true
+  done
   local i
   for i in $(seq 1 20); do
-    [[ -z "$(pids_of ClaudeTerm)" ]] && return 0
+    [[ -z "$(pids_of "$APP_EXES")" ]] && return 0
     sleep 0.5
   done
   die "앱이 종료되지 않았습니다. AgentDeck 을 직접 종료한 뒤 다시 실행하세요."
@@ -145,7 +154,7 @@ install_app() {
   rm -rf "$stage"
   ditto "$app" "$stage"
   xattr -dr com.apple.quarantine "$stage" 2>/dev/null || true
-  [[ -x "$stage/Contents/MacOS/ClaudeTerm" ]] || { rm -rf "$stage"; die "복사한 앱이 올바르지 않습니다."; }
+  [[ -x "$stage/Contents/MacOS/AgentDeck" || -x "$stage/Contents/MacOS/ClaudeTerm" ]] || { rm -rf "$stage"; die "복사한 앱이 올바르지 않습니다."; }
   local version
   version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$stage/Contents/Info.plist" 2>/dev/null || echo '?')"
 
@@ -162,7 +171,8 @@ install_app() {
     mv "$stage" "$dest"
   fi
 
-  # 예전 이름(ClaudeTerm.app)으로 깔린 것은 지운다. 데이터·세션은 그대로 이어진다(같은 데몬·데이터 폴더).
+  # 예전 이름(ClaudeTerm.app)으로 깔린 것은 지운다. 이미 떠 있는 예전 데몬·세션은 그대로 돌고,
+  # 새 앱이 그 데몬에 붙어 예전 데이터 폴더를 쓴다(그 데몬이 끝나면 앱이 데이터를 새 폴더로 옮긴다).
   local migrated="" previous
   while IFS= read -r previous; do
     [[ "$previous" == */"$OLD_APP_NAME" ]] || continue
@@ -174,6 +184,9 @@ install_app() {
   if [[ -n "$migrated" ]]; then
     say "  예전 ClaudeTerm($migrated)을 AgentDeck 으로 바꿨습니다. 열린 세션은 그대로입니다."
     say "  사이드바 아래 '갱신하기' 를 누르면 Claude Code hook 이 새 위치를 가리킵니다(누르기 전까지 claude 에 hook 오류가 보일 수 있습니다)."
+  elif [[ -n "$(pids_of ClaudeTermDaemon)" ]]; then
+    say "  예전 판의 세션 데몬이 돌고 있어 열린 세션은 그대로 이어집니다(상태 줄에 '이전 데몬에서 실행 중')."
+    say "  사이드바 아래 '갱신하기' 를 눌러 Claude Code hook 을 새 이름(AgentDeckDaemon)으로 바꾸세요."
   else
     say "  처음이면 사이드바 아래 '연결하기' 를 눌러 Claude Code hook 을 넣으세요(세션 이름·되살리기·상태 표시·알림에 필요)."
   fi
@@ -204,7 +217,8 @@ for path, sub in zip(args[0::2], args[1::2]):
         assert isinstance(data, dict)
     except Exception as e:
         print(f"{label}: {path} 를 읽지 못해 그대로 둡니다 — {e}"); failed = True; continue
-    suffix = f'ClaudeTermDaemon" {sub}'
+    names = ["AgentDeckDaemon", "ClaudeTermDaemon"] + (["ClaudeSessions"] if sub == "hook" else [])
+    suffixes = tuple(f'{n}" {sub}' for n in names)
     hooks = data.get("hooks") if isinstance(data.get("hooks"), dict) else {}
     removed = 0
     for event in list(hooks):
@@ -215,7 +229,7 @@ for path, sub in zip(args[0::2], args[1::2]):
             inner = group.get("hooks") if isinstance(group, dict) else None
             if not isinstance(inner, list):
                 kept_groups.append(group); continue
-            kept = [h for h in inner if not (isinstance(h, dict) and str(h.get("command", "")).endswith(suffix))]
+            kept = [h for h in inner if not (isinstance(h, dict) and str(h.get("command", "")).endswith(suffixes))]
             removed += len(inner) - len(kept)
             if kept:
                 group["hooks"] = kept; kept_groups.append(group)
@@ -225,12 +239,12 @@ for path, sub in zip(args[0::2], args[1::2]):
         print(f"{label}: {path} 에 이 앱의 hook 이 없습니다"); continue
     if hooks: data["hooks"] = hooks
     else: data.pop("hooks", None)
-    backup = f"{path}.claudeterm-backup-{time.strftime('%Y%m%d-%H%M%S')}"
+    backup = f"{path}.agentdeck-backup-{time.strftime('%Y%m%d-%H%M%S')}"
     n = 1
     while os.path.exists(backup):
-        n += 1; backup = f"{path}.claudeterm-backup-{time.strftime('%Y%m%d-%H%M%S')}-{n}"
+        n += 1; backup = f"{path}.agentdeck-backup-{time.strftime('%Y%m%d-%H%M%S')}-{n}"
     shutil.copy2(path, backup)
-    tmp = path + ".claudeterm-tmp"
+    tmp = path + ".agentdeck-tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False, sort_keys=True); f.write("\n")
     os.replace(tmp, path)
@@ -242,7 +256,8 @@ PY
 unhook() {
   local app daemon rc
   while IFS= read -r app; do
-    daemon="$app/Contents/MacOS/ClaudeTermDaemon"
+    daemon="$app/Contents/MacOS/AgentDeckDaemon"
+    [[ -x "$daemon" ]] || daemon="$app/Contents/MacOS/ClaudeTermDaemon" # 예전 판(예전 이름만 뺀다)
     [[ -x "$daemon" ]] || continue
     "$daemon" unhook --claude-settings "$(claude_settings)" --codex-hooks "$(codex_hooks)" && rc=0 || rc=$?
     (( rc == 0 )) && return 0
@@ -251,7 +266,7 @@ unhook() {
   if [[ "${rc:-}" != 1 ]]; then
     unhook_with_python && return 0
   fi
-  say "! hook 을 자동으로 빼지 못했습니다. 아래 파일에서 command 가 'ClaudeTermDaemon\" hook'(Codex 는 'codex-hook')으로 끝나는 항목을 지우세요:"
+  say "! hook 을 자동으로 빼지 못했습니다. 아래 파일에서 command 가 'AgentDeckDaemon\" hook'·'ClaudeTermDaemon\" hook'(Codex 는 'codex-hook')으로 끝나는 항목을 지우세요:"
   say "    $(claude_settings)"
   say "    $(codex_hooks)"
   say "  (앱을 지운 뒤에도 0.2 이후 hook 은 아무것도 하지 않고 끝나므로 급하지 않습니다)"
@@ -261,12 +276,20 @@ uninstall_app() {
   local apps=() app
   while IFS= read -r app; do apps+=("$app"); done < <(installed_apps)
   local daemons
-  daemons="$(pids_of ClaudeTermDaemon | tr '\n' ' ')"
-  local data="${CLAUDE_SESSIONS_HOME:-$HOME/Library/Application Support/ClaudeSessions}"
+  daemons="$(pids_of "$DAEMON_EXES" | tr '\n' ' ')"
+  # 데이터 폴더: 지정(AGENTDECK_HOME, 예전 CLAUDE_SESSIONS_HOME)이 있으면 그것만, 아니면 새 폴더와 예전 폴더 둘 다
+  local datas=() data
+  if [[ -n "${AGENTDECK_HOME:-${CLAUDE_SESSIONS_HOME:-}}" ]]; then
+    datas=("${AGENTDECK_HOME:-$CLAUDE_SESSIONS_HOME}")
+  else
+    local base="${AGENTDECK_APP_SUPPORT:-$HOME/Library/Application Support}"
+    datas=("$base/AgentDeck" "$base/ClaudeSessions")
+  fi
+  local term_home="${AGENTDECK_TERM_HOME:-${CLAUDE_TERM_HOME:-}}"
 
   say "AgentDeck 을 삭제합니다."
   if ((${#apps[@]})); then for app in "${apps[@]}"; do say "  - 앱: $app"; done; else say "  - 설치된 앱 없음(hook 만 정리)"; fi
-  say "  - Claude Code·Codex 설정에서 이 앱의 hook(ClaudeTermDaemon)만 뺍니다(다른 hook 은 그대로, 백업을 남김)"
+  say "  - Claude Code·Codex 설정에서 이 앱의 hook(AgentDeckDaemon, 예전 이름 ClaudeTermDaemon 포함)만 뺍니다(다른 hook 은 그대로, 백업을 남김)"
   ask "계속할까요?" || { say "취소했습니다."; exit 0; }
 
   if [[ -n "${daemons// /}" ]]; then
@@ -289,23 +312,30 @@ uninstall_app() {
     for app in "${apps[@]}"; do rm -rf "$app" && say "✔ 지움: $app"; done
   fi
 
-  if [[ -d "$data" ]]; then
+  for data in "${datas[@]}"; do
+    [[ -d "$data" ]] || continue
     say ""
     say "데이터 폴더: $data"
-    say "  (세션 기록·이름·탭 배치·spaces 순서. 예전 ClaudeSessions 앱과 같은 폴더입니다)"
-    [[ -d /Applications/ClaudeSessions.app ]] && say "  ! 예전 ClaudeSessions 앱이 아직 있습니다 — 그 앱의 기록도 함께 지워집니다."
-    if ask "데이터 폴더도 지울까요?"; then
-      rm -rf "$data"
-      [[ -n "${CLAUDE_TERM_HOME:-}" && -d "$CLAUDE_TERM_HOME" ]] && rm -rf "$CLAUDE_TERM_HOME"
-      rm -f "$HOME/Library/Preferences/$BUNDLE_ID.plist"
-      rm -rf "$HOME/Library/Saved Application State/$BUNDLE_ID.savedState"
-      say "✔ 데이터를 지웠습니다"
-    else
-      say "  데이터는 남겨 두었습니다(다시 설치하면 이어서 씁니다)."
+    say "  (세션 기록·이름·탭 배치·spaces 순서)"
+    if [[ "$(basename "$data")" == ClaudeSessions ]]; then
+      say "  (예전 이름의 폴더입니다. 옮긴 뒤면 표식 파일만 남아 있을 수 있습니다)"
+      [[ -d /Applications/ClaudeSessions.app ]] && say "  ! 예전 ClaudeSessions 앱이 아직 있습니다 — 그 앱의 기록도 함께 지워집니다."
     fi
-  fi
+    if ask "이 데이터 폴더를 지울까요?"; then
+      rm -rf "$data"
+      say "✔ 지움: $data"
+    else
+      say "  남겨 두었습니다(다시 설치하면 이어서 씁니다)."
+    fi
+  done
+  [[ -n "$term_home" && -d "$term_home" ]] && ask "데몬 폴더($term_home)도 지울까요?" && rm -rf "$term_home"
+  local id
+  for id in "$BUNDLE_ID" "$OLD_BUNDLE_ID"; do
+    rm -f "$HOME/Library/Preferences/$id.plist"
+    rm -rf "$HOME/Library/Saved Application State/$id.savedState"
+  done
   say ""
-  say "✔ 삭제 완료. settings.json 백업(*.claudeterm-backup-*)은 남겨 두었습니다. 필요 없으면 지워도 됩니다."
+  say "✔ 삭제 완료. settings.json 백업(*.agentdeck-backup-*, 예전 *.claudeterm-backup-*)은 남겨 두었습니다. 필요 없으면 지워도 됩니다."
 }
 
 case "${1:-}" in

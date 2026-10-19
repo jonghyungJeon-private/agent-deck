@@ -24,7 +24,7 @@ final class FilesWatcher {
     private var _aliases: [(real: String, shown: String)] = []
     private var isGit = false
     private var stream: FSEventStreamRef?
-    private let queue = DispatchQueue(label: "ClaudeTerm.files", qos: .utility)
+    private let queue = DispatchQueue(label: "AgentDeck.files", qos: .utility)
     private let lock = NSLock()
     private var _loaded: Set<String> = []
     /// 루트가 바뀔 때마다 올라간다(늦게 온 옛 결과를 버린다)

@@ -1,11 +1,12 @@
 import AppKit
+import TermWire
 import UserNotifications
 
-/// macOS 알림. 누르면 그 화면으로 간다. `CLAUDE_TERM_NO_NOTIFY=1` 이면 보내지 않는다(시험용).
+/// macOS 알림. 누르면 그 화면으로 간다. `AGENTDECK_NO_NOTIFY=1` 이면 보내지 않는다(시험용).
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// 알림을 눌렀을 때(화면 ID)
     var onOpen: ((String) -> Void)?
-    private let enabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_NOTIFY"] != "1"
+    private let enabled = !AgentDeckEnv.isOn("NO_NOTIFY")
     private var authorized = false
 
     func start() {

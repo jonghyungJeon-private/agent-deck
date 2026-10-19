@@ -79,7 +79,7 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
     /// - 처음 만나는 대체 화면 켜기·끄기가 끄기면: 대체 화면 안에서 시작한 것이니 먼저 켠다.
     /// - 켜기·끄기가 전혀 없으면: 상태를 모른다고 표시한다(대체 화면이 아닌데 끄기가 오면 엔진이 화면을 지우고 시작한다).
     /// 시험용: 1 이면 이 대비책을 끈다(고치기 전 동작 재현용)
-    private static let altFallbackDisabled = ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_ALT_FALLBACK"] == "1"
+    private static let altFallbackDisabled = AgentDeckEnv.isOn("NO_ALT_FALLBACK")
 
     private func prepareAltScreen(for bytes: ArraySlice<UInt8>) {
         guard !Self.altFallbackDisabled else { return }

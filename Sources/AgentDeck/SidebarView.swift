@@ -219,8 +219,7 @@ struct SidebarView: View {
         let message: String? = {
             switch model.hookState {
             case .missing: return "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다."
-            case .legacy: return "예전 ClaudeSessions 앱으로 연결돼 있습니다. AgentDeck 으로 옮기면 작업 상태(작업 중·입력 대기·완료)도 보이고 그 앱을 지워도 됩니다."
-            case .update: return "Claude Code 연결이 예전 판이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다."
+            case .update: return "Claude Code 연결이 예전 판(예전 이름 ClaudeTerm·ClaudeSessions 포함)이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다."
             case .error(let detail): return "Claude Code 설정을 읽지 못했습니다: \(detail)"
             default: return nil
             }
@@ -239,7 +238,7 @@ struct SidebarView: View {
                     Button {
                         model.connectHooks()
                     } label: {
-                        Text(model.hookState == .legacy ? "AgentDeck 으로 옮기기" : model.hookState == .update ? "갱신하기" : "연결하기")
+                        Text(model.hookState == .update ? "갱신하기" : "연결하기")
                             .uiFont(11, bold: true)
                             .foregroundStyle(Color(TermAppearance.chrome))
                             .padding(.horizontal, ui(10))
@@ -864,6 +863,10 @@ struct StatusFooterView: View {
                 UpdateLine(tag: UpdateNotifier.display(release.tag)) { updates.presentUpdate() }
                     .padding(.bottom, ui(3))
             }
+            if model.legacyDaemon || model.relocating {
+                LegacyDaemonLine(relocating: model.relocating) { model.moveToNewLocation() }
+                    .padding(.bottom, ui(3))
+            }
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
@@ -881,6 +884,40 @@ struct StatusFooterView: View {
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
         .environment(\.colorScheme, .dark)
         .environment(\.uiScale, ui)
+    }
+}
+
+/// 예전 데몬(예전 데이터 폴더)에서 실행 중일 때: 무엇이 언제 바뀌는지와 "지금 옮기기…"(경고 후 옮김)
+private struct LegacyDaemonLine: View {
+    let relocating: Bool
+    let action: () -> Void
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ui(5)) {
+            HStack(alignment: .firstTextBaseline, spacing: ui(6)) {
+                Circle().fill(Color(TermAppearance.yellow)).frame(width: ui(6), height: ui(6))
+                Text(relocating ? "새 위치로 옮기는 중…" : "이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다")
+                    .uiFont(11)
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !relocating {
+                Button(action: action) {
+                    Text("지금 옮기기…")
+                        .uiFont(11, bold: true)
+                        .foregroundStyle(Color(TermAppearance.chrome))
+                        .padding(.horizontal, ui(10))
+                        .padding(.vertical, ui(3))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.yellow)))
+                }
+                .buttonStyle(.plain)
+                .help("예전 데몬을 끄고 데이터를 새 위치로 옮깁니다. 열린 셸·claude 가 멈추고, claude·codex 화면은 탭을 열면 되살아납니다.")
+            }
+        }
+        .padding(ui(8))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(TermAppearance.yellow).opacity(0.6), lineWidth: 1))
     }
 }
 

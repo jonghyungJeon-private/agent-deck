@@ -18,10 +18,12 @@
 - [ ] `CHANGELOG.md` 에 버전·날짜·바뀐 점, `scripts/build-term-proto.sh` 의 `VERSION` 기본값을 올린다(또는 `VERSION=x.y.z` 로 빌드).
 - [ ] `swift build && swift test`(최소 `swift test --filter SessionCoreTests`) 통과.
 - [ ] `scripts/build-term-proto.sh` → `dist/AgentDeck-x.y.z.zip`. 확인:
-  - `lipo -archs dist/AgentDeck.app/Contents/MacOS/ClaudeTerm` 이 `arm64`
-  - `plutil -p dist/AgentDeck.app/Contents/Info.plist` 의 `CFBundleShortVersionString`·`CFBundleName`(AgentDeck)·`CFBundleIdentifier`(dev.claude-sessions.term — 바꾸지 않는다)
+  - `lipo -archs` 로 `dist/AgentDeck.app/Contents/MacOS/AgentDeck`·`AgentDeckDaemon` 둘 다 `arm64`(`ClaudeTermDaemon` 은 `AgentDeckDaemon` 링크)
+  - `plutil -p dist/AgentDeck.app/Contents/Info.plist` 의 `CFBundleShortVersionString`·`CFBundleName`(AgentDeck)·`CFBundleExecutable`(AgentDeck)·
+    `CFBundleIdentifier`(dev.agentdeck.app — 다시 바꾸면 알림 권한·창 위치가 또 초기화된다)
   - `ls dist/AgentDeck.app/Contents/Resources/Fonts` 에 JetBrains Mono·Nerd Font·D2Coding 과 라이선스
-- [ ] 격리 시험으로 hook 연결/해제·새 버전 줄을 본다(README "개발자용", `CLAUDE_TERM_FAKE_LATEST=vx.y.z`). 실제 `~/.claude`·`~/.codex` 로 시험하지 않는다.
+- [ ] 격리 시험으로 hook 연결/해제·새 버전 줄을 본다(README "개발자용", `AGENTDECK_FAKE_LATEST=vx.y.z`). 실제 `~/.claude`·`~/.codex` 로 시험하지 않는다.
+- [ ] 데이터 위치를 건드렸으면 가짜 홈에서 처음 설치·예전 폴더 옮기기·예전 데몬에 붙기·지금 옮기기를 본다(docs/ARCHITECTURE.md "이름과 예전 판 이어받기").
 - [ ] 태그와 릴리스(zip 이름은 `AgentDeck-*.zip` 이어야 설치 스크립트가 찾는다):
   ```bash
   git tag vX.Y.Z && git push origin vX.Y.Z

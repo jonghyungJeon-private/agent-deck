@@ -2,6 +2,7 @@ import AppKit
 import CoreText
 import EditorCore
 import TermLayout
+import TermWire
 
 /// 편집기 화면 하나의 문서(파일 내용·저장 상태·git 변경 표시). 뷰는 보이는 동안만 있고, 문서는 화면을 닫을 때까지 남는다.
 /// 숨은 문서가 저장된 상태(깨끗함)면 글을 놓고(메모리 반납) 다시 보일 때 디스크에서 읽는다. 바뀐 문서는 글을 그대로 쥐고 있다.
@@ -40,7 +41,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
     /// 이보다 크면 글자 색을 칠하지 않는다(UTF-16 길이)
     static let highlightLimit = 500_000
     /// 저장했다(선언 색인이 그 파일을 바로 다시 읽는다). object = 문서
-    static let didSave = Notification.Name("ClaudeTerm.editorDidSave")
+    static let didSave = Notification.Name("AgentDeck.editorDidSave")
 
     let id: String
     let path: String
@@ -95,7 +96,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
     private var watcher: DispatchSourceFileSystemObject?
     private var checkWork: DispatchWorkItem?
     private(set) var isVisible = false
-    private static let queue = DispatchQueue(label: "ClaudeTerm.editor", qos: .utility)
+    private static let queue = DispatchQueue(label: "AgentDeck.editor", qos: .utility)
 
     init(id: String, path: String, cursor: Int?) {
         self.id = id
@@ -542,7 +543,7 @@ final class EditorManager {
             let alert = NSAlert()
             alert.messageText = message
             alert.alertStyle = .warning
-            if ProcessInfo.processInfo.environment["CLAUDE_TERM_DEBUG"] == "1" {
+            if AgentDeckEnv.isOn("DEBUG") {
                 print("editor-error \(message.replacingOccurrences(of: "\n", with: " | "))")
                 fflush(stdout)
                 return

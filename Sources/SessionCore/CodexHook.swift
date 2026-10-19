@@ -1,4 +1,5 @@
 import Foundation
+import TermWire
 import Darwin
 
 /// Codex 훅은 관찰만 한다. 승인 결정이나 문맥을 stdout 에 반환하지 않는다.
@@ -12,7 +13,7 @@ public enum CodexHook {
               let id = input["session_id"] as? String, UUID(uuidString: id) != nil,
               let event = input["hook_event_name"] as? String, events.contains(event),
               input["agent_id"] == nil,
-              let pane = environment["CLAUDE_SESSIONS_PANE"], !pane.isEmpty else { return }
+              let pane = AgentDeckEnv.value("PANE", in: environment), !pane.isEmpty else { return }
         try store.withLock {
             var record = store.load(id) ?? SessionRecord(sessionId: id, cwd: input["cwd"] as? String ?? "",
                 transcriptPath: input["transcript_path"] as? String, pid: 0, pidStartedAt: 0, startedAt: now)

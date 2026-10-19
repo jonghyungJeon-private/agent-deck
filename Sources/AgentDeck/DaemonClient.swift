@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import SessionCore
 import TermWire
 
 /// 앱 쪽 데몬 연결. 데몬이 없으면 띄운다. 모든 콜백은 메인 스레드에서 불린다.
@@ -14,12 +15,12 @@ final class DaemonClient {
     private var connection: Connection?
     var isConnected: Bool { connection.map { !$0.isClosed } ?? false }
 
-    /// 연결한다. 데몬이 없으면 띄우고 최대 3초 기다린다.
+    /// 연결한다. 데몬이 없으면 띄우고 최대 3초 기다린다(launch 가 false 면 띄우지 않는다 — 예전 데몬에 붙는 동안).
     @discardableResult
-    func connect() -> Bool {
+    func connect(launch: Bool = true) -> Bool {
         if isConnected { return true }
         var fd = UnixSocket.connect(in: TermPaths.home)
-        if fd == nil {
+        if fd == nil, launch {
             launchDaemon()
             for _ in 0..<60 where fd == nil {
                 usleep(50_000)
@@ -53,6 +54,15 @@ final class DaemonClient {
         }
     }
 
+    /// 연결을 끊는다(onDisconnect 는 부르지 않는다 — 데이터 위치를 옮기는 동안)
+    func disconnect() {
+        guard let connection else { return }
+        connection.onClose = nil
+        connection.onFrame = nil
+        connection.close()
+        self.connection = nil
+    }
+
     func send(_ frame: Frame) {
         connection?.send(frame)
     }
@@ -68,9 +78,10 @@ final class DaemonClient {
     }
 
     /// 데몬을 앱과 다른 세션(setsid)으로 띄운다. 앱이 끝나도 데몬과 그 안의 셸은 남는다.
+    /// 앱이 정한 데이터 위치를 인자로 넘긴다(데몬이 따로 고르다 예전 폴더로 가지 않게, 셸 환경에는 남지 않게).
     private func launchDaemon() {
         let path = Bundle.main.executableURL!.deletingLastPathComponent()
-            .appendingPathComponent("ClaudeTermDaemon").path
+            .appendingPathComponent(HookInstaller.daemonExecutable).path
         try? FileManager.default.createDirectory(at: TermPaths.home, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         let errorLog = TermPaths.home.appendingPathComponent("daemon-stderr.log").path
@@ -91,7 +102,7 @@ final class DaemonClient {
         posix_spawn_file_actions_addopen(&actions, 2, errorLog, O_WRONLY | O_CREAT | O_APPEND, 0o600)
 
         var pid: pid_t = 0
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), nil]
+        let argv: [UnsafeMutablePointer<CChar>?] = [strdup(path), strdup("--root"), strdup(DataLocation.root.path), nil]
         defer { argv.forEach { free($0) } }
         guard posix_spawn(&pid, path, &actions, &attr, argv, environ) == 0 else { return }
         // 데몬이 앱보다 먼저 끝나면 좀비가 남지 않게 거둔다

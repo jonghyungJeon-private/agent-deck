@@ -35,12 +35,14 @@ final class SessionNamingTests: XCTestCase {
 }
 
 final class HookInstallerMarkerTests: XCTestCase {
-    func testClaudeTermReplacesLegacyHooks() throws {
+    /// 그 전 앱(ClaudeSessions)의 hook 만 있으면 "갱신하기"(outdated) → 갱신하면 AgentDeckDaemon 으로 바뀌고 다른 hook 은 그대로
+    func testAgentDeckReplacesLegacyHooks() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("hk-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let settings = dir.appendingPathComponent("settings.json")
-        let legacy = HookInstaller(settingsURL: settings, executablePath: "/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions")
+        let legacy = HookInstaller(settingsURL: settings, executablePath: "/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions",
+                                   markers: ["ClaudeSessions"])
         try legacy.install()
         // 사용자의 다른 hook 은 그대로 남아야 한다
         var object = try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as! [String: Any]
@@ -49,13 +51,10 @@ final class HookInstallerMarkerTests: XCTestCase {
         object["hooks"] = hooks
         try JSONSerialization.data(withJSONObject: object).write(to: settings)
 
-        let term = HookInstaller(settingsURL: settings, executablePath: "/x/ClaudeTerm.app/Contents/MacOS/ClaudeTermDaemon",
-                                 marker: "ClaudeTermDaemon")
-        XCTAssertEqual(try term.status(), .notInstalled)
-        XCTAssertTrue(try term.hasLegacyHooks())
-        try term.install(replacingLegacy: true)
-        XCTAssertEqual(try term.status(), .installed)
-        XCTAssertFalse(try term.hasLegacyHooks())
+        let deck = HookInstaller.claude(daemonPath: "/x/AgentDeck.app/Contents/MacOS/AgentDeckDaemon", settingsURL: settings)
+        XCTAssertEqual(try deck.status(), .outdated)
+        try deck.install()
+        XCTAssertEqual(try deck.status(), .installed)
         XCTAssertEqual(try legacy.status(), .notInstalled)
         let after = try JSONSerialization.jsonObject(with: Data(contentsOf: settings)) as! [String: Any]
         XCTAssertNotNil((after["hooks"] as! [String: Any])["Stop"])
@@ -71,7 +70,7 @@ final class HookStatusTests: XCTestCase {
         let proc = ProcInfo(pid: me.pid, ppid: me.ppid, startTime: me.startTime, hasTTY: true, tty: "/dev/ttys099",
                             command: "claude", isZombie: false)
         let context = HookHandler.Context(claudePid: proc.pid, claudeProcess: proc, claudeArgs: ["claude"],
-                                          environment: ["CLAUDE_SESSIONS_PANE": "PANE-1", "TERM_PROGRAM": "ClaudeTerm"])
+                                          environment: ["AGENTDECK_PANE": "PANE-1", "TERM_PROGRAM": "AgentDeck"])
         let id = "11111111-2222-3333-4444-555555555555"
         func send(_ json: [String: Any]) throws {
             var body = json
@@ -110,7 +109,7 @@ final class WorkStateRulesTests: XCTestCase {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("wsr-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         store = SessionStore(dir: dir)
-        setenv("CLAUDE_SESSIONS_HOME", dir.path, 1) // 실제 앱 데이터(launching.json 등)를 건드리지 않게
+        setenv("AGENTDECK_HOME", dir.path, 1) // 실제 앱 데이터(launching.json 등)를 건드리지 않게
     }
 
     override func tearDownWithError() throws {
@@ -123,7 +122,7 @@ final class WorkStateRulesTests: XCTestCase {
         let proc = ProcInfo(pid: me.pid, ppid: me.ppid, startTime: me.startTime, hasTTY: true, tty: "/dev/ttys099",
                             command: "claude", isZombie: false)
         let context = HookHandler.Context(claudePid: proc.pid, claudeProcess: proc, claudeArgs: ["claude"],
-                                          environment: ["CLAUDE_SESSIONS_PANE": "PANE-1"], now: now)
+                                          environment: ["CLAUDE_SESSIONS_PANE": "PANE-1"], now: now) // 예전 데몬의 셸(예전 이름)
         var body = json
         body["session_id"] = sid
         body["cwd"] = "/tmp"

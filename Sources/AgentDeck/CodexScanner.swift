@@ -17,7 +17,8 @@ final class CodexScanner {
     }
     private var bindings: [String: Binding] = [:]
     private var readers: [URL: CodexSessions] = [:]
-    private let url = TermPaths.home.appendingPathComponent("codex-bindings.json")
+    /// 데이터 위치를 옮기면(예전 폴더 → 새 폴더) 따라가도록 매번 계산한다
+    private var url: URL { TermPaths.home.appendingPathComponent("codex-bindings.json") }
     init() {
         if let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode([String: Binding].self, from: data) { bindings = saved }
     }

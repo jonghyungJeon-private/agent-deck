@@ -6,29 +6,73 @@ README 는 쓰는 사람용 요약이고, 여기는 만드는 사람용 자세�
 
 ```
 AgentDeck.app/Contents/MacOS/
-  ClaudeTerm          화면 앱(AppKit + SwiftUI). 목록·탭·분할·도구 창·편집기
-  ClaudeTermDaemon    세션 데몬(PTY 를 붙잡음) + hook 처리(hook / codex-hook / unhook) + 진단(ctl)
+  AgentDeck           화면 앱(AppKit + SwiftUI). 목록·탭·분할·도구 창·편집기
+  AgentDeckDaemon     세션 데몬(PTY 를 붙잡음) + hook 처리(hook / codex-hook / unhook) + 진단(ctl)
+  ClaudeTermDaemon    → AgentDeckDaemon 심볼릭 링크(예전 이름 — 이미 떠 있던 claude 세션의 hook 용, 아래 "이름과 예전 판 이어받기")
 ```
 
-- 표시 이름만 **AgentDeck** 이고 안쪽 이름은 예전 그대로 둔다: 실행 파일 `ClaudeTerm`·`ClaudeTermDaemon`(hook 이 이 이름으로 알아본다),
-  묶음 ID `dev.claude-sessions.term`(알림 권한·창 위치), 데이터 폴더 `~/Library/Application Support/ClaudeSessions`, 환경 변수 `CLAUDE_TERM_*`,
-  Swift 타깃 이름. 바꾸면 데이터·권한·hook 을 옮겨야 해서다.
+- 묶음 ID `dev.agentdeck.app`, 데이터 `~/Library/Application Support/AgentDeck`, 환경 변수 `AGENTDECK_*`. 0.3 까지의 안쪽 이름에서 바꿨다(아래).
 - 앱 ↔ 데몬: 유닉스 소켓(`term/daemon.sock`)으로 짧은 메시지(`Sources/TermWire`). 데몬은 앱과 다른 세션(setsid)으로 떠서 앱이 끝나도 남는다.
+  앱은 정한 데이터 위치를 `AgentDeckDaemon --root <폴더>` 로 넘긴다(셸 환경에 남지 않게 인자로).
 - Claude Code·Codex hook → 데몬 실행 파일이 세션 기록 파일(`sessions/<세션>.json`, `codex-sessions/`)에 적고, 앱은 2초마다 목록을 다시 만들며 읽는다.
-- 소스: `Sources/ClaudeTerm`(앱), `Sources/ClaudeTermDaemon`(데몬), `Sources/TermWire`(앱↔데몬 메시지·데이터 위치),
+- 소스: `Sources/AgentDeck`(앱), `Sources/AgentDeckDaemon`(데몬), `Sources/TermWire`(앱↔데몬 메시지·데이터 위치 `DataLocation`·환경 변수 `AgentDeckEnv`),
   `Sources/TermLayout`(탭·분할·되살리기 정보, 작업 트리 읽기, 도구 창 배치), `Sources/EditorCore`(편집기의 화면 없는 부분: 줄 diff·줄 끝·바이너리 판별·
   안전한 저장·글자 색 훑기·선언 찾기·이름 맞추기·이동 기록), `Sources/SessionCore`(hook 처리·hook 설치/제거·세션 기록·대화 파일 읽기·프로세스 정보·업데이트 확인),
   `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
-- 데이터(`~/Library/Application Support/ClaudeSessions/`, `CLAUDE_SESSIONS_HOME` 으로 바꿈): `sessions/`(Claude 세션 기록), `codex-sessions/`,
-  `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`codex-bindings.json`·`update-check.json`, `CLAUDE_TERM_HOME` 으로 바꿈).
+- 데이터(`~/Library/Application Support/AgentDeck/`, `AGENTDECK_HOME` 으로 바꿈): `sessions/`(Claude 세션 기록), `codex-sessions/`,
+  `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`codex-bindings.json`·`update-check.json`, `AGENTDECK_TERM_HOME` 으로 바꿈).
 - 새 버전 확인: 켤 때·앞으로 나올 때, 마지막 확인(`term/update-check.json`)에서 24시간이 지났을 때만 백그라운드에서
   `gh release view --repo <저장소> --json tagName,url`(저장소는 `UpdateCheck.repository`). gh 가 없거나 로그인·권한이 없거나 오프라인이면 조용히 넘어간다.
+
+## 이름과 예전 판 이어받기
+
+0.3 까지는 표시 이름만 AgentDeck 이고 안쪽은 예전 이름이었다. 지금은 모두 AgentDeck 이고, 예전 이름은 읽기만 이어 간다.
+
+| 무엇 | 지금 | 예전(계속 읽음) |
+|---|---|---|
+| 실행 파일 | `AgentDeck`·`AgentDeckDaemon` | `ClaudeTerm`·`ClaudeTermDaemon`(번들에 링크로 남김) |
+| 묶음 ID | `dev.agentdeck.app` | `dev.claude-sessions.term`(설치 스크립트가 끄기·지우기에 씀) |
+| 데이터 | `~/Library/Application Support/AgentDeck` | `…/ClaudeSessions`(옮긴 뒤 `MIGRATED_TO` 표식만) |
+| 데이터 위치 변수 | `AGENTDECK_HOME`·`AGENTDECK_TERM_HOME` | `CLAUDE_SESSIONS_HOME`·`CLAUDE_TERM_HOME` |
+| 화면 ID(셸 환경) | `AGENTDECK_PANE` | `CLAUDE_SESSIONS_PANE`(예전 데몬이 띄운 셸) |
+| 시험 변수 | `AGENTDECK_<이름>` | `CLAUDE_TERM_<이름>` |
+| 셸의 `TERM_PROGRAM` | `AgentDeck` | `ClaudeTerm` |
+| hook 명령 | `…/AgentDeckDaemon" hook` | `…/ClaudeTermDaemon" hook`(가드 있음·없음), `…/ClaudeSessions" hook` → "갱신하기" 대상, 연결 해제 때 함께 뺌 |
+| 디버그 알림 | `dev.agentdeck.debug` | — |
+| 설정 백업 | `*.agentdeck-backup-<시각>` | `*.claudeterm-backup-*`(지우지 않음) |
+
+데이터 위치(`TermWire/DataLocation`). 예전 데몬(그 안의 셸·claude)을 끊지 않으려고 이렇게 정한다:
+
+| 새 데몬 | 예전 데몬 | 예전 폴더에 데이터 | 표식 | 앱이 켤 때 | hook·ctl 이 적는 곳 |
+|---|---|---|---|---|---|
+| 살아 있음 | (무엇이든) | | | 새 위치 | 새 위치 |
+| 없음 | 살아 있음 | | | **예전 데몬에 붙음**(legacy, 새 데몬 안 띄움) | 예전 폴더 |
+| 없음 | 없음 | 있음 | 없음 | **옮긴 뒤** 새 위치 | 예전 폴더(곧 함께 옮겨짐) |
+| 없음 | 없음 | 있음 | 있음 | 새 위치(다시 옮기지 않음) | 새 위치 |
+| 없음 | 없음 | 없음 | | 새 위치(처음 설치) | 새 위치 |
+
+- 환경 변수(`AGENTDECK_HOME`, 예전 `CLAUDE_SESSIONS_HOME`)가 있으면 늘 그 위치이고 옮기지 않는다(개발·시험).
+- "데몬이 살아 있음" = `term/daemon.pid` 의 프로세스가 이 앱의 데몬 실행 파일(새·예전 이름)이거나 `term/daemon.sock` 에 붙을 수 있음.
+  재부팅 뒤 PID 가 다른 프로그램에 다시 쓰여도, 소켓 파일만 남아도 속지 않는다. 잠깐 소켓이 안 받아도 살아 있는 데몬의 폴더를 옮기지 않는다.
+- 옮기기: 새 폴더가 없으면 폴더째 이름 바꾸기(같은 볼륨이라 한 번에), 있으면 없는 항목만 옮기고(폴더는 안으로 합침) 겹치는 파일은 예전 폴더에 남긴다.
+  지우는 것은 없다. 끝나면 예전 폴더에 `MIGRATED_TO`(새 위치·시각). 결과는 새 `term/daemon.log` 에 한 줄. 실패하면 예전 폴더를 데이터 위치로 삼아
+  이 앱의 데몬을 거기서 띄우고(상태 줄에 오류), 다음에 켤 때 다시 시도한다.
+- legacy 동안: 상태 줄에 "이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다"와 **지금 옮기기…**(앱 메뉴에도).
+  새 탭은 예전 데몬에 만들어진다. 예전 데몬이 끝나면(앱이 다시 붙으려다 알게 됨) 그 자리에서 옮기고 새 데몬을 띄운다.
+- 지금 옮기기: 확인 창(열린 셸·claude 가 멈춘다는 경고) → 배치를 저장하고 앱의 연결을 먼저 끊음(끄는 동안 오는 목록으로 화면이 배치에서 빠지지 않게)
+  → 소켓으로 화면마다 kill(끊김 신호, 3초 뒤 강제) → 화면이 다 끝나면 `daemon.pid` 가 이 앱의 데몬 실행 파일일 때만 SIGTERM(안 끝나면 SIGKILL)
+  → 1초 기다려 끝나며 도는 hook 이 예전 폴더에 다 적게 → 옮기기 → 새 데몬. 데몬 ID 가 바뀌었으니 화면은 "꺼짐"으로 남고(되살리기 정보가 있는 것)
+  보이는 탭부터 `claude --resume` 으로 되살아난다.
+- 메모리에 있는 배치·이름·spaces·Codex 연결은 그대로 이어지고 저장 경로만 바뀐다(옮긴 파일과 같은 내용).
+- 번들의 `ClaudeTermDaemon` 링크: Claude Code 는 세션을 시작할 때 hook 설정을 읽어 두므로, 이미 떠 있던 claude 는 갱신하기를 눌러도
+  예전 경로(`…/ClaudeTermDaemon hook`)를 계속 부른다. 업데이트로 그 파일이 없어지면 그 세션들의 상태 기록이 끊기므로 링크로 새 데몬에 잇는다.
+  예전 데몬이 다 끝난 뒤의 판에서 뺀다.
 
 ## Codex CLI
 
 - 사이드바의 **+ codex**(좁은 사이드바에서는 **+ 새 세션 → Codex**)와 폴더·작업 트리의 오른쪽 클릭 메뉴에서 실행한다.
 - 실행 중인 대화형 Codex만 화면의 셸 계보로 찾는다. `exec`·`app-server`·node 래퍼는 세션으로 세지 않는다.
-- `CODEX_THREAD_ID`와 `CLAUDE_SESSIONS_PANE`, 훅 기록, 명시적인 `codex resume <UUID>` 인자로 세션을 연결한다. 폴더가 같다는 이유로 최근 대화를 연결하지 않는다.
+- `CODEX_THREAD_ID`와 `AGENTDECK_PANE`(예전 데몬의 셸은 `CLAUDE_SESSIONS_PANE`), 훅 기록, 명시적인 `codex resume <UUID>` 인자로 세션을 연결한다. 폴더가 같다는 이유로 최근 대화를 연결하지 않는다.
   확인된 연결은 Codex PID·시작 시각과 함께 `term/codex-bindings.json`에 저장한다. 연결 전에도 프로그램명 **codex**는 표시된다.
 - Codex의 `state_5.sqlite`·`thread_history_1.sqlite`와 기존 `sessions/**/*.jsonl`을 읽기 전용으로 읽어 이름·작업 상태를 표시한다.
   `CODEX_HOME`을 지정한 CLI는 해당 폴더를 읽는다. 이름 변경은 앱 내부 이름만 바꾼다. Codex 대화·설정·DB는 수정하지 않는다.
@@ -36,7 +80,7 @@ AgentDeck.app/Contents/MacOS/
   Codex 하위 에이전트는 부모 세션과 연결해 표시하고, 작업 폴더가 작업 트리와 일치하면 그 아래에 둔다.
 - **Codex 연결하기**는 `~/.codex/hooks.json`에 관찰용 훅을 추가한다(기존 설정 백업·다른 훅 보존).
   Codex의 **`/hooks`에서 새 훅을 검토·신뢰해야** 권한 요청·질문 대기·완료 상태를 정확하게 받을 수 있다.
-  훅은 `ClaudeTermDaemon codex-hook`으로 기록만 남기며, 승인 결정·모델 문맥은 반환하지 않는다.
+  훅은 `AgentDeckDaemon codex-hook`으로 기록만 남기며, 승인 결정·모델 문맥은 반환하지 않는다.
   연결 전에 실행한 세션은 도구 실행 등에서 세션 ID가 확인된 뒤 이름·복원 정보가 연결될 수 있다.
 - 데몬 재시작·재부팅으로 사라진 Codex 화면은 저장된 정확한 ID로 `codex resume <UUID>`를 실행한다.
   모델·프로필·권한 등의 원래 옵션과 `CODEX_HOME`을 이어받고, 첫 질문·`--last`·`--worktree`는 다시 실행하지 않는다.
@@ -44,13 +88,13 @@ AgentDeck.app/Contents/MacOS/
 
 ## 자세한 동작
 
-- 셸·claude 는 앱이 아니라 `ClaudeTermDaemon` 이 붙잡고 있다. 앱을 끄거나 다시 빌드해도 계속 돌고, 앱을 다시 켜면 그대로 붙는다.
+- 셸·claude 는 앱이 아니라 `AgentDeckDaemon` 이 붙잡고 있다. 앱을 끄거나 다시 빌드해도 계속 돌고, 앱을 다시 켜면 그대로 붙는다.
   데몬은 화면도 앱 연결도 없이 60초가 지나면 스스로 끝난다. 재부팅하면 셸·claude 는 끝난다.
 - 메모리: 앱은 지금 탭에 보이는 화면만 터미널 뷰를 만든다(다른 탭은 데몬이 화면당 최대 2MB 의 지난 출력만 보관).
   그래서 탭이 늘어도 앱 메모리는 거의 그대로다(화면 6개로 나눈 탭도 약 76MB). 실측(M 시리즈, release): 앱 빈 상태 28MB, 화면 보는 중 약 62~65MB(뒤로 보기 2,000줄), 데몬 3~9MB.
   글자가 화면에 찍히는 동안(입력·claude 작업 중)은 macOS 가 그리기용 그래픽 메모리를 약 +130MB 붙였다가, 멈추고 몇 초 뒤 돌려준다.
   창 크기·그리기 방식(Metal 포함)과 무관하고, 빈 창 하나만 띄운 시험 앱이나 iTerm2 도 똑같다(시스템 동작, 새는 것 아님).
-- 화면 ↔ 세션 짝짓기: 데몬이 화면의 tty 를 정확히 알고, hook 기록의 tty 와 맞춘다(추측 없음). 셸에는 `TERM_PROGRAM=ClaudeTerm`, `CLAUDE_SESSIONS_PANE=<화면 ID>` 가 들어간다.
+- 화면 ↔ 세션 짝짓기: 데몬이 화면의 tty 를 정확히 알고, hook 기록의 tty 와 맞춘다(추측 없음). 셸에는 `TERM_PROGRAM=AgentDeck`, `AGENTDECK_PANE=<화면 ID>` 가 들어간다(예전 이름 `CLAUDE_SESSIONS_PANE` 은 빼서 넘긴다).
 - 모양: Ghostty 기본값과 같게 — JetBrains Mono 13pt + Nerd Font 아이콘(`Resources/Fonts`, 앱 안에서만 등록), 배경 #282c34·Tomorrow Night 색, 늘 보이는 스크롤 막대.
   한글은 앱에 넣은 D2Coding 1.3.2(`Resources/Fonts/README.md`, 굵은 글자 포함)로, Ghostty 처럼 소문자 높이를 JetBrains Mono 에 맞춰 그린다.
   Markdown 미리보기(다른 프로세스라 앱에 등록한 글꼴을 못 봄)에는 한글이 있을 때만 같은 파일을 `@font-face` 로 넘긴다.
@@ -64,10 +108,11 @@ AgentDeck.app/Contents/MacOS/
   데몬이 바뀌면(강제 종료·재부팅 뒤 새로 뜸) 사라진 화면을 지우지 않고 "꺼짐"(속 빈 점)으로 남기고, 그 탭을 열 때
   같은 자리·같은 ID 로 셸을 다시 띄워 `claude --resume <세션>` 을 원래 옵션으로 실행한다(대화가 없던 세션·셸은 셸만).
   한꺼번에 다 띄우지 않아 가볍다. 같은 데몬에서 셸·claude 가 스스로 끝난 화면은 Ghostty 처럼 닫힌다.
-- Claude Code hook(SessionStart·SessionEnd 와 작업 상태용 hook — 아래 "작업 상태 표시와 알림")은 앱 안의 데몬 실행 파일이 맡는다(`ClaudeTermDaemon hook`, AppKit 없이 가볍게 끝남).
-  명령은 `[ -x "<경로>" ] || exit 0; exec "<경로>" hook` 형태라 앱을 지우거나 옮겨도 오류 없이 아무것도 하지 않는다(0.1 의 가드 없는 형태는 "갱신하기" 대상).
-  연결이 안 됐거나 예전 ClaudeSessions 앱 hook 이면 사이드바 아래에 안내와 "연결하기/옮기기" 버튼이 뜬다.
-  누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 ClaudeSessions hook 은 같이 뺀다. 세션 기록 위치는 그대로.
+- Claude Code hook(SessionStart·SessionEnd 와 작업 상태용 hook — 아래 "작업 상태 표시와 알림")은 앱 안의 데몬 실행 파일이 맡는다(`AgentDeckDaemon hook`, AppKit 없이 가볍게 끝남).
+  명령은 `[ -x "<경로>" ] || exit 0; exec "<경로>" hook` 형태라 앱을 지우거나 옮겨도 오류 없이 아무것도 하지 않는다
+  (0.1 의 가드 없는 형태, 예전 이름 `ClaudeTermDaemon`·`ClaudeSessions` 는 "갱신하기" 대상).
+  연결이 안 됐거나 예전 것이면 사이드바 아래에 안내와 "연결하기/갱신하기" 버튼이 뜬다.
+  누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 이름 hook 은 같이 뺀다. hook 이 적는 위치는 위 "이름과 예전 판 이어받기".
 - 되살릴 때 이어받는 claude 옵션은 허용 목록(권한·모델·effort·add-dir·MCP·허용 도구 등)만. 처음 질문·`--worktree`·세션 지정은 뺀다.
 - 지난 출력을 다시 그리는 동안 터미널이 내는 응답·클립보드 쓰기는 버린다(예전 질의의 답이 지금 claude 입력으로 새지 않게).
 - 지난 출력은 앞에서부터 잘리므로 긴 claude 세션은 맨 앞의 대체 화면 켜기(`ESC[?1049h`)가 사라진다. 그대로 다시 그리면
@@ -77,7 +122,7 @@ AgentDeck.app/Contents/MacOS/
     앞에 붙여 보낸다(동기 출력 2026 은 빼고). 데몬이 새로 떠야 적용된다(지금 돌고 있는 데몬의 세션은 그대로).
   - 앱(예전 데몬에도 통하는 대비책): 지난 출력에서 처음 만나는 대체 화면 켜기·끄기가 끄기면 먼저 켜고 그린다.
     하나도 없으면 "대체 화면 상태 모름"으로 표시해, 대체 화면이 아닌데 끄기가 오면 화면을 지우고 맨 위에서 이어 간다(PATCHES.md).
-  - 시험용 스위치: 데몬 `CLAUDE_TERM_NO_MODE_PREFIX=1`(앞 모드 안 붙임 = 예전 데몬 흉내), 앱 `CLAUDE_TERM_NO_ALT_FALLBACK=1`(대비책 끔).
+  - 시험용 스위치: 데몬 `AGENTDECK_NO_MODE_PREFIX=1`(앞 모드 안 붙임 = 예전 데몬 흉내), 앱 `AGENTDECK_NO_ALT_FALLBACK=1`(대비책 끔).
 - 데몬이 바뀌었는지는 데몬 실행마다 새로 정하는 ID 로 본다(PID 재사용 오판 방지). 만들기·되살리기가 15초 안에 안 되면
   되살리던 화면은 "꺼짐"으로 돌아가고(30초 뒤 다시 시도), 새로 만들던 화면은 빠진다.
 - 하위 에이전트(Agent 도구): claude 와 하위 에이전트는 메인 폴더에서 돌고 작업 트리는 경로로만 쓰므로, 하위 에이전트 기록
@@ -103,7 +148,7 @@ AgentDeck.app/Contents/MacOS/
   ② 사람이 붙인 claude 세션 이름(/rename, `claude -n`). claudec 처럼 `<폴더>@<브랜치>`·`<폴더>-<HHMM>` 로 기계적으로 붙인 이름은 건너뛴다
   ③ claude 가 스스로 붙인 제목(ai-title) ④ 첫 질문으로 지은 제목(Orca 처럼) ⑤ 폴더 이름.
   ④ 는 세션마다 한 번 `claude -p --model sonnet`(설정·hook·MCP·도구·대화 저장 없이, 약 3초)으로 짓고 `term/names.json` 에 둔다.
-  짓는 동안은 첫 질문 앞부분을 보여 준다. `CLAUDE_TERM_AUTO_TITLE=0` 이면 부르지 않는다. 실패 이유는 `term/title-errors.log`.
+  짓는 동안은 첫 질문 앞부분을 보여 준다. `AGENTDECK_AUTO_TITLE=0` 이면 부르지 않는다. 실패 이유는 `term/title-errors.log`.
   claude 세션 자체의 이름(`claude --resume` 목록)은 바꾸지 않는다.
 - 도구 창(IntelliJ 식): 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구는 **spaces**(세션 목록)와 **files**(파일 트리) 둘이고,
   각각 왼쪽·오른쪽·숨김 중 한 곳에 붙는다. 한 도크에 둘이 붙으면 위에 도구 버튼 줄(고른 것은 강조색)이 생기고, 보이는 도구가 없는 도크는 접힌다.
@@ -194,10 +239,16 @@ AgentDeck.app/Contents/MacOS/
   탭 순서·⌘1~9 는 바뀌지 않는다. 새 세션은 칸 맨 뒤에 붙는다. 접힘·순서는 `term/spaces.json` 에 저장한다(묶음은 경로, 세션은 화면 ID).
 - 스크롤: 바뀌지 않은 줄은 지난번 그린 결과를 다시 써서 한 번 그리기가 약 1/3 로 줄었다(PATCHES.md).
 - 터미널 엔진은 한글 폭·입력 표시를 고친 SwiftTerm 사본(`Vendor/SwiftTerm`, 고친 내용은 `PATCHES.md`).
-- 데이터 위치: `~/Library/Application Support/ClaudeSessions/term/`(소켓·로그). `CLAUDE_TERM_HOME` 으로 바꿀 수 있다.
-- 진단: `dist/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon ctl list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>`
-- 시험용: `CLAUDE_TERM_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
-  `CLAUDE_TERM_DEBUG=1` 이면 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
+- 데이터 위치: `~/Library/Application Support/AgentDeck/term/`(소켓·로그). `AGENTDECK_TERM_HOME` 으로 바꿀 수 있다.
+- 진단: `dist/AgentDeck.app/Contents/MacOS/AgentDeckDaemon ctl list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>`
+  (ctl 도 위 규칙대로 데몬을 고른다 — 예전 데몬이 살아 있으면 그것에 붙는다. 시험 땐 `AGENTDECK_HOME` 을 준다)
+- 시험 환경 변수는 모두 `AGENTDECK_*`(예전 이름 `CLAUDE_TERM_*` 도 읽는다). 데이터 옮기기 시험은 `HOME=<가짜 홈>` 과
+  `AGENTDECK_APP_SUPPORT=<가짜 홈>/Library/Application Support`(Foundation 의 홈 폴더는 HOME 을 따르지 않는다)를 주고 `AGENTDECK_HOME` 은 주지 않는다.
+  예전 데몬을 흉내 내려면 main 의 `ClaudeTermDaemon` 을 `git archive` 로 꺼내 scratch 에서 빌드하고,
+  **반드시** `CLAUDE_TERM_HOME`·`CLAUDE_SESSIONS_HOME` 을 가짜 예전 폴더로 주어 띄운다(없으면 실제 폴더를 쓴다).
+  시험 프로세스는 띄울 때 기록한 PID 로만 끈다(`pkill`·이름으로 찾아 끄기 금지 — 실제 데몬과 실행 파일 이름이 같다).
+- 시험용: `AGENTDECK_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
+  `AGENTDECK_DEBUG=1` 이면 분산 알림으로 화면 고르기·메뉴 동작(`action split-right` 등)·입력·단축키(`chord cmd+shift+d`)·
   틈 끌기(`drag`)·마우스 단계별(`mouse <down|drag|up|right> <x> <y>`)·오른쪽 클릭 메뉴 항목 실행(`menu-pick <x> <y> <항목>`)·
   탭·분할 나무(`tabs`)·끌기 좌표(`dragpoints`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
@@ -207,7 +258,7 @@ AgentDeck.app/Contents/MacOS/
   `font-size <pt>`(⌘+ ⌘− 와 같은 길, 배율 출력)·`footprint`. `tabs` 는 편집기를 파일 이름으로, 미리보기는 뒤에 `~` 를 붙여 보인다.
   spaces 시험 명령: `spaces`(보이는 줄·접힌 줄 합계·저장 상태)·`spaces-toggle g:<묶음 경로>|w:<작업 트리 경로>`·`spaces-collapse-all`·`spaces-expand-all`·
   `spaces-move-group <경로>|<대상 경로>`·`spaces-move-session <화면 ID>|<대상 화면 ID>`(ID 는 앞 4글자로도)·`spaces-drag <group|session> <ID>|<대상>`(끄는 모습만 그림)·`spaces-drag-end`.
-  `CLAUDE_TERM_DEBUG_NAME=<이름>` 이면 그 이름의 알림만 받는다(시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게).
+  `AGENTDECK_DEBUG_NAME=<이름>` 이면 그 이름의 알림만 받는다(기본 `dev.agentdeck.debug`, 시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게).
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
   이동 시험 명령: `goto [<줄>:<열>]`·`usages [<줄>:<열>]`·`symbol <글>`·`popup`(목록 내용)·`popup-key <up|down|enter|esc>`·
@@ -215,10 +266,11 @@ AgentDeck.app/Contents/MacOS/
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
-  `update-state`·`update-open`·`hooks-state`·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일). `CLAUDE_TERM_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
+  `update-state`·`update-open`·`hooks-state`·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
+  `location`(데이터 위치·모드 standard/legacy/custom·연결·화면 수·꺼진 화면 수; 옮기기는 `alert-answer 0` 뒤 `action relocate-data`). `AGENTDECK_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
   `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex` 를 건드리지 않게).
-  `CLAUDE_TERM_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
-  이때와 `CLAUDE_TERM_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
+  `AGENTDECK_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
+  이때와 `AGENTDECK_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
 ## 작업 상태 표시와 알림
@@ -237,7 +289,7 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
 - hook 은 세션 기록 파일(`sessions/<세션>.json`)에 `state`·`stateAt`·`stateMessage`·`pane`·`stateSeq`(상태를 적을 때마다 오르는 번호 — 같은 초 안의 변화도 구분해 알림이 빠지지 않게. 날짜 형식은 예전 빌드와 같다)를 적고, 앱은 2초마다 목록을 다시 만들며 읽는다.
   화면 짝짓기는 hook 이 적은 화면 ID(`pane`)가 먼저다.
 - 알림: 입력 대기·완료·오류로 바뀌면 macOS 알림을 보낸다(누르면 그 화면으로). 지금 보고 있는 화면, 앱을 켠 직후 이미 그 상태였던 화면은 알리지 않는다.
-  Dock 아이콘 배지에 확인이 필요한 화면 수가 뜬다. `CLAUDE_TERM_NO_NOTIFY=1` 이면 알림을 보내지 않는다(시험용).
+  Dock 아이콘 배지에 확인이 필요한 화면 수가 뜬다. `AGENTDECK_NO_NOTIFY=1` 이면 알림을 보내지 않는다(시험용). 묶음 ID 가 바뀌어(0.4) 알림 권한은 다시 묻는다.
 - **기존 사용자는 사이드바 아래 "갱신하기"를 한 번 눌러야 한다.** 예전 연결(SessionStart·SessionEnd 만)으로는 상태 hook 이 없어
   claude 화면이 상태 없이 claude 색 점으로만 보인다. 갱신은 그 뒤 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
 - 알려진 한계:

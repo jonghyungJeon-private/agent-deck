@@ -5,13 +5,16 @@ import SwiftUI
 import TermLayout
 import TermWire
 
-// AgentDeck: 왼쪽 세션 목록 + 오른쪽 터미널. 셸·claude 는 데몬(ClaudeTermDaemon)이 붙잡고 있다.
-// 표시 이름만 AgentDeck 이고, 안쪽 이름(실행 파일 ClaudeTerm·ClaudeTermDaemon, 묶음 ID dev.claude-sessions.term,
-// 데이터 폴더 ClaudeSessions, CLAUDE_TERM_* 환경 변수)은 그대로 둔다 — hook 인식·데이터·권한을 옮기지 않으려고.
+// AgentDeck: 왼쪽 세션 목록 + 오른쪽 터미널. 셸·claude 는 데몬(AgentDeckDaemon)이 붙잡고 있다.
+// 0.3 까지의 안쪽 이름(ClaudeTerm·ClaudeTermDaemon, dev.claude-sessions.term, ClaudeSessions 폴더, CLAUDE_TERM_*)에서
+// 바꿨다. 예전 데이터·데몬은 DataLocation 이 이어받는다.
 
 // Claude 세션 안에서 띄워도 그 세션 표시 변수가 데몬·셸로 넘어가지 않게(대화 저장이 꺼지는 문제)
 InheritedEnvironment.reexecIfNeeded(executablePath: Bundle.main.executablePath)
 signal(SIGPIPE, SIG_IGN)
+
+// 데이터 위치는 무엇을 읽기 전에 정한다: 예전 데몬이 살아 있으면 그 폴더 그대로, 데몬이 없으면 예전 폴더를 새 폴더로 옮긴다
+DataLocation.prepareForApp()
 
 TermAppearance.registerBundledFonts()
 
@@ -43,12 +46,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         window.titlebarAppearsTransparent = true
         window.backgroundColor = TermAppearance.chrome
         window.setContentSize(NSSize(width: 1200, height: 760))
-        window.setFrameAutosaveName("ClaudeTermMain")
+        window.setFrameAutosaveName("AgentDeckMain")
         window.delegate = self
         tools.restoreWidths()
         self.window = window
-        // 시험용: CLAUDE_TERM_NO_ACTIVATE=1 이면 앞으로 나오지 않는다(사용 중인 다른 앱의 포커스를 뺏지 않게 창을 뒤에 둔다)
-        if ProcessInfo.processInfo.environment["CLAUDE_TERM_NO_ACTIVATE"] == "1" {
+        // 시험용: AGENTDECK_NO_ACTIVATE=1 이면 앞으로 나오지 않는다(사용 중인 다른 앱의 포커스를 뺏지 않게 창을 뒤에 둔다)
+        if AgentDeckEnv.isOn("NO_ACTIVATE") {
             window.orderBack(nil)
         } else {
             window.makeKeyAndOrderFront(nil)
@@ -104,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return model.workspace.selectedIndex.map { $0 < model.workspace.tabs.count - 1 } ?? false
         case "hooks-disconnect":
             return [.ok, .update].contains(model.hookState)
+        case "relocate-data":
+            menuItem.isHidden = !model.legacyDaemon
+            return model.legacyDaemon && !model.relocating
         case "codex-hooks-disconnect":
             menuItem.isHidden = ![.ok, .update].contains(model.codexHookState)
             return !menuItem.isHidden
@@ -124,6 +130,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // hook 빼기(넣기는 사이드바 아래 "연결하기"). Codex 것은 연결돼 있을 때만 보인다.
         addAction(appMenu, "Claude Code 연결 해제…", "hooks-disconnect", "")
         addAction(appMenu, "Codex 연결 해제…", "codex-hooks-disconnect", "")
+        // 예전 데몬에 붙어 있을 때만 보인다(상태 줄 "지금 옮기기…"와 같음)
+        addAction(appMenu, "새 데이터 위치로 지금 옮기기…", "relocate-data", "")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "AgentDeck 가리기", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "기타 가리기", action: #selector(NSApplication.hideOtherApplications(_:)),
@@ -357,27 +365,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if let action = sender.representedObject as? String { perform(action) }
     }
 
-    // MARK: - 시험용(CLAUDE_TERM_SNAPSHOT 또는 CLAUDE_TERM_DEBUG 가 있을 때만)
+    // MARK: - 시험용(AGENTDECK_SNAPSHOT 또는 AGENTDECK_DEBUG 가 있을 때만, 예전 이름 CLAUDE_TERM_* 도 읽는다)
 
-    /// CLAUDE_TERM_SNAPSHOT=<폴더> 면 1초마다 창 그림을 <폴더>/window.png 로 남긴다(화면 기록 권한 없이 확인용. 메모리를 더 쓴다).
-    /// 둘 중 하나라도 있으면 분산 알림 "dev.claude-sessions.term.debug" 로 받은 명령을 실행한다.
+    /// AGENTDECK_SNAPSHOT=<폴더> 면 1초마다 창 그림을 <폴더>/window.png 로 남긴다(화면 기록 권한 없이 확인용. 메모리를 더 쓴다).
+    /// 둘 중 하나라도 있으면 분산 알림 "dev.agentdeck.debug" 로 받은 명령을 실행한다.
     ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
     ///   도구 창: tool <files|spaces>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
     ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
     ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
     ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
+    ///   데이터 위치: location(위치·모드·데몬). 옮기기는 action relocate-data
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
-        let snapshotDir = env["CLAUDE_TERM_SNAPSHOT"].flatMap { $0.isEmpty ? nil : $0 }
-        guard snapshotDir != nil || env["CLAUDE_TERM_DEBUG"] == "1" else { return }
+        let snapshotDir = AgentDeckEnv.nonEmpty("SNAPSHOT", in: env)
+        guard snapshotDir != nil || AgentDeckEnv.isOn("DEBUG", in: env) else { return }
         if let snapshotDir {
             let url = URL(fileURLWithPath: snapshotDir).appendingPathComponent("window.png")
             let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in self?.snapshot(to: url) }
             RunLoop.main.add(timer, forMode: .common)
             snapshotTimer = timer
         }
-        // CLAUDE_TERM_DEBUG_NAME: 시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게 알림 이름을 바꾼다
-        let channel = env["CLAUDE_TERM_DEBUG_NAME"].flatMap { $0.isEmpty ? nil : $0 } ?? "dev.claude-sessions.term.debug"
+        // AGENTDECK_DEBUG_NAME: 시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게 알림 이름을 바꾼다
+        let channel = AgentDeckEnv.nonEmpty("DEBUG_NAME", in: env) ?? "dev.agentdeck.debug"
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name(channel), object: nil, queue: .main
         ) { [weak self] note in
@@ -446,6 +455,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             model.updates.presentUpdate()
         case "fonts":
             print("fonts " + TermAppearance.debugFontSources())
+            fflush(stdout)
+        case "location":
+            print("location mode=\(DataLocation.mode.rawValue) root=\(DataLocation.root.path) term=\(TermPaths.home.path)"
+                  + " legacyDaemon=\(model.legacyDaemon) connected=\(model.connected) relocating=\(model.relocating)"
+                  + " panes=\(model.workspace.allPanes.count) dormant=\(model.workspace.dormant.count)")
             fflush(stdout)
         case "hooks-state":
             print("hooks-state claude=\(model.hookState) codex=\(model.codexHookState)")

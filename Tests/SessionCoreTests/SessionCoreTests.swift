@@ -10,7 +10,7 @@ final class HookHandlerTests: XCTestCase {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         store = SessionStore(dir: dir)
         // 테스트가 실제 앱 데이터(launching.json 등)를 건드리지 않게
-        setenv("CLAUDE_SESSIONS_HOME", dir.path, 1)
+        setenv("AGENTDECK_HOME", dir.path, 1)
     }
 
     override func tearDownWithError() throws {
@@ -112,7 +112,7 @@ final class HookInstallerTests: XCTestCase {
          "SessionStart":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}
         """
         try Data(original.utf8).write(to: settings)
-        let installer = HookInstaller(settingsURL: settings, executablePath: "/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions")
+        let installer = HookInstaller(settingsURL: settings, executablePath: "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon")
         XCTAssertEqual(try installer.status(), .notInstalled)
 
         let backup = try installer.install()
@@ -136,23 +136,23 @@ final class HookInstallerTests: XCTestCase {
     }
 
     func testMovedAppIsOutdatedAndReinstallFixesPath() throws {
-        try HookInstaller(settingsURL: settings, executablePath: "/Users/me/Downloads/ClaudeSessions.app/Contents/MacOS/ClaudeSessions").install()
-        let moved = HookInstaller(settingsURL: settings, executablePath: "/Applications/ClaudeSessions.app/Contents/MacOS/ClaudeSessions")
+        try HookInstaller(settingsURL: settings, executablePath: "/Users/me/Downloads/AgentDeck.app/Contents/MacOS/AgentDeckDaemon").install()
+        let moved = HookInstaller(settingsURL: settings, executablePath: "/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon")
         XCTAssertEqual(try moved.status(), .outdated)
         try moved.install()
         XCTAssertEqual(try moved.status(), .installed)
     }
 
     func testMissingSettingsFileIsCreated() throws {
-        let installer = HookInstaller(settingsURL: settings, executablePath: "/A B/ClaudeSessions")
+        let installer = HookInstaller(settingsURL: settings, executablePath: "/A B/AgentDeckDaemon")
         XCTAssertNil(try installer.install())
         XCTAssertEqual(try installer.status(), .installed)
-        XCTAssertEqual(installer.command, "[ -x \"/A B/ClaudeSessions\" ] || exit 0; exec \"/A B/ClaudeSessions\" hook")
+        XCTAssertEqual(installer.command, "[ -x \"/A B/AgentDeckDaemon\" ] || exit 0; exec \"/A B/AgentDeckDaemon\" hook")
     }
 
     func testInvalidSettingsIsNotOverwritten() throws {
         try Data("{ not json".utf8).write(to: settings)
-        XCTAssertThrowsError(try HookInstaller(settingsURL: settings, executablePath: "/x/ClaudeSessions").install())
+        XCTAssertThrowsError(try HookInstaller(settingsURL: settings, executablePath: "/x/AgentDeckDaemon").install())
         XCTAssertEqual(try String(contentsOf: settings, encoding: .utf8), "{ not json")
     }
 }
@@ -195,7 +195,7 @@ final class SessionSwitchTests: XCTestCase {
     override func setUpWithError() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         store = SessionStore(dir: dir)
-        setenv("CLAUDE_SESSIONS_HOME", dir.path, 1)
+        setenv("AGENTDECK_HOME", dir.path, 1)
     }
 
     override func tearDownWithError() throws {
@@ -282,12 +282,12 @@ final class RepairTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let settings = dir.appendingPathComponent("settings.json")
-        let installed = dir.appendingPathComponent("A/ClaudeSessions")
+        let installed = dir.appendingPathComponent("A/AgentDeckDaemon")
         try FileManager.default.createDirectory(at: installed.deletingLastPathComponent(), withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: installed.path, contents: Data(), attributes: [.posixPermissions: 0o755])
         try HookInstaller(settingsURL: settings, executablePath: installed.path).install()
 
-        let other = HookInstaller(settingsURL: settings, executablePath: dir.appendingPathComponent("B/ClaudeSessions").path)
+        let other = HookInstaller(settingsURL: settings, executablePath: dir.appendingPathComponent("B/AgentDeckDaemon").path)
         XCTAssertEqual(try other.status(), .outdated)
         XCTAssertFalse(try other.needsRepair(), "기존 앱이 아직 있으면 건드리지 않는다")
         try FileManager.default.removeItem(at: installed)
@@ -428,7 +428,7 @@ final class SessionEndOwnershipTests: XCTestCase {
     override func setUpWithError() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         store = SessionStore(dir: dir)
-        setenv("CLAUDE_SESSIONS_HOME", dir.path, 1)
+        setenv("AGENTDECK_HOME", dir.path, 1)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         FileManager.default.createFile(atPath: dir.appendingPathComponent("t.jsonl").path, contents: Data("{}\n".utf8))
     }

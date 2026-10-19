@@ -72,18 +72,24 @@ zip 파일을 직접 받았다면 `bash install.sh AgentDeck-0.2.0.zip`.
 
    ```json
    { "type": "command", "timeout": 10,
-     "command": "[ -x \"/Applications/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon\" ] || exit 0; exec \"/Applications/AgentDeck.app/Contents/MacOS/ClaudeTermDaemon\" hook" }
+     "command": "[ -x \"/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon\" ] || exit 0; exec \"/Applications/AgentDeck.app/Contents/MacOS/AgentDeckDaemon\" hook" }
    ```
 
    - 세션 기록·상태만 앱 데이터 폴더에 적고, 아무것도 출력하지 않으며 claude 의 동작을 바꾸지 않는다(늘 성공으로 끝남).
-   - 바꾸기 전에 `settings.json.claudeterm-backup-<시각>` 백업을 남기고, 다른 hook·설정은 그대로 둔다.
+   - 바꾸기 전에 `settings.json.agentdeck-backup-<시각>` 백업을 남기고, 다른 hook·설정은 그대로 둔다.
    - **앱을 지우거나 옮겨도 안전하다**: 실행 파일이 없으면 아무것도 하지 않고 끝나 어떤 터미널의 claude 에도 오류가 나지 않는다.
    - 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
-2. Codex 를 쓰면 **Codex 연결하기** 를 누른 뒤, Codex 의 `/hooks` 에서 ClaudeTermDaemon 훅을 검토·신뢰한다.
+2. Codex 를 쓰면 **Codex 연결하기** 를 누른 뒤, Codex 의 `/hooks` 에서 AgentDeckDaemon 훅을 검토·신뢰한다.
 3. 위 **+ claude**·**+ codex**·**+ 셸** 이나 ⌘T 로 시작한다.
 
-예전 ClaudeTerm(0.1)·ClaudeSessions 를 쓰던 PC 는 설치 스크립트가 `ClaudeTerm.app` 을 `AgentDeck.app` 으로 바꿔 끼우고(열린 세션은 유지),
-사이드바에 **갱신하기**(또는 **AgentDeck 으로 옮기기**)가 뜬다. 누르면 hook 이 새 위치·새 형태로 바뀐다.
+예전 판(0.3 까지 — 안쪽 이름 ClaudeTerm·ClaudeTermDaemon, 그 전 ClaudeSessions 앱)을 쓰던 PC:
+- 설치 스크립트가 `ClaudeTerm.app` 을 `AgentDeck.app` 으로 바꿔 끼운다. 사이드바에 **갱신하기** 가 뜨면 누른다(hook 이 `AgentDeckDaemon` 으로 바뀐다).
+- 예전 판의 세션 데몬이 아직 돌고 있으면 새 앱은 그 데몬에 그대로 붙어 열린 세션을 이어 간다. 상태 줄에
+  **이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다** 가 보인다.
+  - 그 데몬이 끝나면(재부팅, 화면을 다 닫고 앱을 끔) 앱이 켜져 있으면 바로, 아니면 다음에 켤 때 데이터 폴더 `ClaudeSessions` 를 `AgentDeck` 으로 옮긴다(지우는 것 없음,
+    예전 폴더에는 `MIGRATED_TO` 표식만 남김). 탭 배치·이름·spaces 는 그대로이고, 화면은 "꺼짐"으로 남아 탭을 열면 같은 대화로 되살아난다.
+  - **지금 옮기기…** 를 누르면 바로 옮긴다. 열린 셸·claude·codex 가 멈추므로(확인 창이 먼저 뜬다) 하던 작업을 정리한 뒤에.
+- 묶음 ID 가 바뀌어(`dev.agentdeck.app`) macOS 가 알림 권한을 다시 묻고, 창 위치는 처음 크기로 돌아간다.
 
 연결을 빼려면 메뉴 **AgentDeck > Claude Code 연결 해제…**(Codex 도 같은 자리). 이 앱의 hook 만 빼고 백업을 남긴다.
 
@@ -101,7 +107,7 @@ gh api repos/jonghyungJeon-private/agent-deck/contents/scripts/install.sh -H 'Ac
 
 - 무엇을 지울지 보여 주고 묻는다. 앱을 끄고, `~/.claude/settings.json`·`~/.codex/hooks.json` 에서 이 앱의 hook 만 뺀다(백업을 남김).
 - 세션 데몬이 돌고 있으면 "열린 세션이 모두 종료된다"고 한 번 더 묻는다. claude 대화 자체는 남아 `claude --resume` 으로 이어 열 수 있다.
-- 마지막으로 데이터 폴더(`~/Library/Application Support/ClaudeSessions`)를 지울지 묻는다(기본은 남김).
+- 마지막으로 데이터 폴더(`~/Library/Application Support/AgentDeck`, 남아 있으면 예전 `ClaudeSessions` 도)를 지울지 하나씩 묻는다(기본은 남김).
 
 ## 단축키
 
@@ -135,7 +141,8 @@ gh api repos/jonghyungJeon-private/agent-deck/contents/scripts/install.sh -H 'Ac
 **재부팅하면요?** 셸·claude 프로세스는 끝납니다. 대신 탭·분할 배치와 세션 정보가 남아 있어, 탭을 열면 같은 자리에서
 `claude --resume`(원래 옵션) 또는 `codex resume` 으로 되살립니다. 한꺼번에 띄우지 않고 여는 탭만 되살립니다.
 
-**데이터는 어디에 있나요?** `~/Library/Application Support/ClaudeSessions/` — `sessions/`(세션 기록), `codex-sessions/`, `term/`(배치·이름·spaces·설정·로그).
+**데이터는 어디에 있나요?** `~/Library/Application Support/AgentDeck/` — `sessions/`(세션 기록), `codex-sessions/`, `term/`(배치·이름·spaces·설정·로그).
+0.3 까지는 `ClaudeSessions/` 였고, 앱이 옮긴다(위 "처음 실행").
 Claude·Codex 의 대화 파일은 읽기만 하고 고치지 않습니다.
 
 **앱을 지우면 Claude Code hook 은요?** 0.2 이후 hook 은 실행 파일이 없으면 아무것도 하지 않아 오류가 나지 않습니다.
@@ -147,14 +154,18 @@ Claude·Codex 의 대화 파일은 읽기만 하고 고치지 않습니다.
 
 ```bash
 swift build && swift test                       # 또는 swift test --filter SessionCoreTests
-scripts/build-term-proto.sh                     # dist/AgentDeck.app + dist/AgentDeck-<버전>.zip (VERSION 기본 0.2.0)
+scripts/build-term-proto.sh                     # dist/AgentDeck.app + dist/AgentDeck-<버전>.zip (VERSION 기본은 스크립트 안)
 VERSION=0.3.0 scripts/build-term-proto.sh
 ```
 
 - 구조·동작 규칙·실측·시험 명령: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). 릴리스 절차·배포 전 점검: [docs/RELEASING.md](docs/RELEASING.md). 변경 기록: [CHANGELOG.md](CHANGELOG.md).
-- 표시 이름만 AgentDeck 이고 실행 파일(`ClaudeTerm`·`ClaudeTermDaemon`)·묶음 ID(`dev.claude-sessions.term`)·데이터 폴더·`CLAUDE_TERM_*` 환경 변수는 예전 이름 그대로다.
-- 시험은 실제 기록·데몬·설정과 떼어서:
-  `CLAUDE_TERM_HOME=<폴더> CLAUDE_SESSIONS_HOME=<폴더> CLAUDE_CONFIG_DIR=<폴더> CODEX_HOME=<폴더> CLAUDE_TERM_DEBUG=1 CLAUDE_TERM_DEBUG_NAME=<채널> CLAUDE_TERM_NO_ACTIVATE=1 CLAUDE_TERM_NO_NOTIFY=1`.
-  디버그 명령은 분산 알림 `<채널>` 로 보낸다(목록은 docs/ARCHITECTURE.md). 묶음 ID 가 실제 앱과 같으니 `open`·AppleScript 로 시험 앱을 다루지 않는다.
-- 설치 스크립트 시험: `HOME=<가짜 홈> AGENTDECK_APPS_DIR=<가짜 앱 폴더> AGENTDECK_NO_OPEN=1 bash scripts/install.sh <zip>|--uninstall`.
+- 이름: 실행 파일 `AgentDeck`·`AgentDeckDaemon`, 묶음 ID `dev.agentdeck.app`, 데이터 `~/Library/Application Support/AgentDeck`, 환경 변수 `AGENTDECK_*`.
+  0.3 까지의 이름(`ClaudeTerm`·`ClaudeTermDaemon`·`dev.claude-sessions.term`·`ClaudeSessions`·`CLAUDE_TERM_*`·`CLAUDE_SESSIONS_*`)은
+  예전 데몬·hook·셸이 아직 쓰므로 읽기만 이어 간다(자세히는 docs/ARCHITECTURE.md "이름과 예전 판 이어받기").
+- 시험은 실제 기록·데몬·설정과 떼어서(예전 이름의 변수도 읽지만 새 이름을 쓴다):
+  `AGENTDECK_HOME=<폴더> CLAUDE_CONFIG_DIR=<폴더> CODEX_HOME=<폴더> AGENTDECK_DEBUG=1 AGENTDECK_DEBUG_NAME=<채널> AGENTDECK_NO_ACTIVATE=1 AGENTDECK_NO_NOTIFY=1`.
+  데이터 옮기기를 시험할 때는 `AGENTDECK_HOME` 대신 `AGENTDECK_APP_SUPPORT=<가짜 홈>/Library/Application Support`(Foundation 은 HOME 을 따르지 않는다)와
+  `HOME=<가짜 홈>` 을 준다. 디버그 명령은 분산 알림 `<채널>`(기본 `dev.agentdeck.debug`)로 보낸다(목록은 docs/ARCHITECTURE.md).
+  `open`·AppleScript 로 시험 앱을 다루지 않는다(실행 파일을 직접 띄운다).
+- 설치 스크립트 시험: `HOME=<가짜 홈> AGENTDECK_APPS_DIR=<가짜 앱 폴더> AGENTDECK_NO_OPEN=1 bash scripts/install.sh <zip>|--uninstall`(HOME 없이 돌리지 않는다).
 - 릴리스 저장소 이름은 `Sources/SessionCore/UpdateCheck.swift`(`repository`)와 `scripts/install.sh`(`REPO`) 두 곳에 있다.

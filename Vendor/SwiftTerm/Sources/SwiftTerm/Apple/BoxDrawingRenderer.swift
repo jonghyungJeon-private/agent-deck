@@ -88,7 +88,7 @@ struct BoxDrawingRenderer {
              cgColor: color.cgColor, baseThicknessPx: baseThicknessPx)
     }
 
-    /// ClaudeTerm patch: CGColor 를 받는 판(칸마다 NSColor → CGColor 변환을 하지 않게)
+    /// AgentDeck patch: CGColor 를 받는 판(칸마다 NSColor → CGColor 변환을 하지 않게)
     static func draw(codePoint: UInt32,
                      in context: CGContext,
                      cellOrigin: CGPoint,

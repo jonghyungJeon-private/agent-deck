@@ -101,15 +101,17 @@ final class TermModel: ObservableObject {
     @Published var hookState: HookState = .unknown
     @Published var codexHookState: HookState = .unknown
     @Published var notice: String?
+    /// 예전 데몬(예전 데이터 폴더 ClaudeSessions)에 붙어 있다. 그 데몬이 끝나면(재시작·재부팅) 새 위치로 옮긴다.
+    @Published private(set) var legacyDaemon = DataLocation.mode == .legacy
+    /// "지금 옮기기" 중(그동안 다시 붙지 않는다)
+    @Published private(set) var relocating = false
 
     enum HookState: Equatable {
         case unknown
         case ok
         /// 연결 안 됨(또는 앱을 옮겨 경로가 바뀜)
         case missing
-        /// 예전 ClaudeSessions 앱의 hook 으로 기록 중(그 앱을 지우면 끊긴다)
-        case legacy
-        /// 이 앱 hook 이 있지만 예전 것(상태 표시 이벤트가 빠짐, 또는 앱을 옮김)
+        /// 이 앱 hook 이 있지만 예전 것(상태 표시 이벤트가 빠짐, 앱을 옮김, 예전 이름 ClaudeTermDaemon·ClaudeSessions)
         case update
         case error(String)
     }
@@ -150,7 +152,7 @@ final class TermModel: ObservableObject {
     var selectedId: String? { workspace.selectedTab?.focused }
 
     private var daemonPath: String {
-        Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent("ClaudeTermDaemon").path
+        Bundle.main.executableURL!.deletingLastPathComponent().appendingPathComponent(HookInstaller.daemonExecutable).path
     }
     /// hook 은 데몬 실행 파일이 맡는다(AppKit 을 띄우지 않아 가볍다)
     private var hookInstaller: HookInstaller { .claude(daemonPath: daemonPath) }
@@ -159,7 +161,7 @@ final class TermModel: ObservableObject {
     func connectCodexHooks() {
         do {
             _ = try codexHookInstaller.install()
-            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks 에서 ClaudeTermDaemon 훅을 검토·신뢰한 뒤 사용하세요(갱신했으면 다시 신뢰)."
+            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks 에서 AgentDeckDaemon 훅을 검토·신뢰한 뒤 사용하세요(갱신했으면 다시 신뢰)."
         } catch { notice = "Codex 연결 실패: \(error.localizedDescription)" }
         checkHooks()
     }
@@ -178,7 +180,7 @@ final class TermModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "\(label) 연결을 해제할까요?"
         alert.informativeText = """
-            \(file) 에서 이 앱이 넣은 hook(ClaudeTermDaemon, \(installer.eventNames.count)개 이벤트)만 뺍니다. \
+            \(file) 에서 이 앱이 넣은 hook(AgentDeckDaemon, 예전 이름 포함 \(installer.eventNames.count)개 이벤트)만 뺍니다. \
             다른 hook·설정은 그대로이고, 바꾸기 전에 백업을 남깁니다.
 
             \(effect) 이미 열린 세션은 계속 돌고, 언제든 다시 연결할 수 있습니다.
@@ -203,12 +205,10 @@ final class TermModel: ObservableObject {
         worker.async { [weak self] in
             let state: HookState
             do {
-                let status = try installer.status()
-                let legacy = try installer.hasLegacyHooks()
-                switch status {
+                switch try installer.status() {
                 case .installed: state = .ok
                 case .outdated: state = .update
-                case .notInstalled: state = legacy ? .legacy : .missing
+                case .notInstalled: state = .missing
                 }
             } catch {
                 state = .error(error.localizedDescription)
@@ -225,10 +225,10 @@ final class TermModel: ObservableObject {
         }
     }
 
-    /// ~/.claude/settings.json 에 hook 을 넣는다(사용자가 누를 때만). 예전 ClaudeSessions hook 은 같이 뺀다.
+    /// ~/.claude/settings.json 에 hook 을 넣는다(사용자가 누를 때만). 예전 이름(ClaudeTermDaemon·ClaudeSessions) hook 은 같이 뺀다.
     func connectHooks() {
         do {
-            let backup = try hookInstaller.install(replacingLegacy: true)
+            let backup = try hookInstaller.install()
             notice = "Claude Code 에 연결했습니다. 새로 시작하는 claude 세션부터 적용됩니다."
                 + (backup.map { "\n이전 설정 백업: \(($0.path as NSString).abbreviatingWithTildeInPath)" } ?? "")
         } catch {
@@ -268,6 +268,7 @@ final class TermModel: ObservableObject {
             self?.connected = false
             self?.host?.render()
         }
+        if let error = DataLocation.migrationError { lastError = "예전 데이터를 새 위치로 옮기지 못했습니다(다음에 켤 때 다시 시도): \(error)" }
         reconnect()
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
@@ -275,7 +276,13 @@ final class TermModel: ObservableObject {
     }
 
     func reconnect() {
-        connected = client.connect()
+        guard !relocating else { return }
+        // 붙어 있던 예전 데몬이 끝났다(그 화면들도 함께) → 이제 옮길 수 있다
+        if DataLocation.mode == .legacy, !DataLocation.daemonAlive(termDir: TermPaths.home) {
+            relocate()
+        }
+        // 예전 데몬에 붙는 동안은 새 데몬을 띄우지 않는다(같은 폴더에 데몬 둘)
+        connected = client.connect(launch: DataLocation.mode != .legacy)
         if connected {
             // 다시 붙었으면 배치가 그대로여도 화면을 새로 만들어 붙인다(끊길 때 화면을 모두 버렸으므로)
             reconciled = false
@@ -283,6 +290,63 @@ final class TermModel: ObservableObject {
         } else {
             lastError = "데몬에 연결하지 못했습니다"
         }
+    }
+
+    // MARK: - 예전 데몬 → 새 위치
+
+    /// 상태 줄 "지금 옮기기…": 예전 데몬을 끄고(열린 셸·claude·codex 가 멈춤) 데이터를 새 위치로 옮긴 뒤 새 데몬을 띄운다.
+    /// 화면은 "꺼짐"으로 남고 탭을 열면 claude·codex 는 같은 대화로 되살아난다(데몬이 바뀐 것과 같은 길).
+    func moveToNewLocation() {
+        guard DataLocation.mode == .legacy, !relocating else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "지금 새 위치로 옮길까요?"
+        alert.informativeText = """
+            예전 데몬을 끄고 데이터(세션 기록·탭 배치·이름·spaces·설정)를 \
+            ~/Library/Application Support/\(DataLocation.folderName) 으로 옮깁니다.
+
+            지금 화면에서 돌고 있는 셸·claude·codex 가 모두 멈춥니다(셸에서 돌던 작업도 끝납니다). \
+            화면은 "꺼짐"으로 남고, 탭을 열면 claude·codex 는 같은 대화로 되살아납니다(--resume).
+
+            옮기지 않아도 앱을 다시 켤 때 예전 데몬이 끝나 있으면(재부팅 등) 자동으로 옮깁니다.
+            """
+        alert.addButton(withTitle: "옮기기")
+        alert.addButton(withTitle: "취소")
+        guard AppAlert.run(alert) == .alertFirstButtonReturn else { return }
+        relocating = true
+        host?.rememberEditorCursors()
+        saveLayoutNow()
+        // 끄는 동안 오는 목록(화면이 하나씩 끝남)으로 배치에서 화면이 빠지지 않게 먼저 끊는다
+        client.disconnect()
+        connected = false
+        host?.render()
+        let legacyTerm = TermPaths.home
+        DataLocation.log("지금 옮기기: 예전 데몬을 끈다")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let stopped = DataLocation.stopDaemon(termDir: legacyTerm)
+            usleep(1_000_000) // 끝나며 도는 hook(SessionEnd 등)이 예전 폴더에 다 적게
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.relocating = false
+                if stopped {
+                    self.relocate()
+                } else {
+                    DataLocation.log("예전 데몬을 끄지 못해 옮기지 않음")
+                    self.lastError = "예전 데몬을 끄지 못해 옮기지 않았습니다. 앱을 다시 켜 보세요."
+                }
+                self.reconnect()
+            }
+        }
+    }
+
+    /// 예전 데몬이 끝났을 때: 위치를 다시 정하고(데몬이 없으면 옮긴다) 그 뒤로는 새 위치에 저장한다.
+    /// 메모리에 있는 배치·이름·spaces 는 그대로 이어지고, 저장 경로만 바뀐다(옮긴 파일과 같은 내용).
+    private func relocate() {
+        saveLayoutNow() // 미뤄 둔 배치 저장을 옮기기 전 위치에 마저 쓴다
+        DataLocation.prepareForApp()
+        legacyDaemon = DataLocation.mode == .legacy
+        if let error = DataLocation.migrationError { lastError = "예전 데이터를 새 위치로 옮기지 못했습니다(다음에 켤 때 다시 시도): \(error)" }
+        saveLayoutNow()
     }
 
     private func tick() {
@@ -293,7 +357,7 @@ final class TermModel: ObservableObject {
     // MARK: - 데몬 목록 → 목록·배치
 
     /// 기록 읽기·대화 제목 읽기·폴더 확인은 파일을 읽으므로 메인 스레드 밖에서 한다(입력·화면 그리기가 끊기지 않게).
-    private let worker = DispatchQueue(label: "ClaudeTerm.rows", qos: .utility)
+    private let worker = DispatchQueue(label: "AgentDeck.rows", qos: .utility)
 
     private func apply(_ state: DaemonState) {
         daemonFootprint = state.footprint
@@ -596,8 +660,8 @@ final class TermModel: ObservableObject {
         for id in targets {
             guard let recipe = next.recipes[id] else { continue }
             // 대화를 한 번도 안 한 세션은 대화 파일이 없어 이어 열 수 없다 → 셸만
-            // 시험용: CLAUDE_TERM_RESUME_PREFIX="echo" 면 실제 claude 대신 명령만 찍는다(대화 파일 확인도 건너뜀)
-            let testPrefix = ProcessInfo.processInfo.environment["CLAUDE_TERM_RESUME_PREFIX"]
+            // 시험용: AGENTDECK_RESUME_PREFIX="echo" 면 실제 claude 대신 명령만 찍는다(대화 파일 확인도 건너뜀)
+            let testPrefix = AgentDeckEnv.value("RESUME_PREFIX")
             let codexExists = recipe.codexSessionId.flatMap { sid in
                 CodexSessions(home: URL(fileURLWithPath: recipe.codexHome ?? CodexSessions.defaultHome.path)).session(sid)
             } != nil
@@ -746,8 +810,8 @@ final class TermModel: ObservableObject {
 
     /// 새 화면. command 가 있으면 셸이 뜬 뒤 입력한다. split 이 있으면 지금 화면을 나눠 넣고, 없으면 새 탭.
     func newPane(cwd: String? = nil, command: String? = nil, split axis: SplitAxis? = nil) {
-        guard client.isConnected || client.connect() else { return }
-        connected = true
+        if !client.isConnected { reconnect() } // 예전 데몬이 끝났으면 여기서 옮기고 새 데몬을 띄운다
+        guard client.isConnected else { return }
         let cwd = cwd ?? focusedCwd ?? NSHomeDirectory()
         let size = host?.estimatedSize(splitting: axis) ?? (cols: 120, rows: 36)
         let id = UUID().uuidString
@@ -1038,6 +1102,7 @@ final class TermModel: ObservableObject {
         case "close-tab": closeTab()
         case "rename": renameFocused()
         case "save": saveFocused()
+        case "relocate-data": moveToNewLocation()
         case "markdown-preview": host?.focusedEditor?.togglePreview()
         case "goto-declaration": host?.navigator.gotoDeclaration()
         case "find-usages": host?.navigator.findUsages()
