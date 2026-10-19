@@ -12,6 +12,8 @@ public struct CodexSession: Equatable {
     public var stateSeq: Int?
     public var message: String?
     public var lastText: String?
+    /// rollout 또는 해당 턴을 읽은 SQLite(DB·WAL)가 마지막으로 바뀐 시각
+    public var lastActivityAt: Date?
 }
 
 public final class CodexSessions {
@@ -58,6 +60,10 @@ public final class CodexSessions {
         if let path { snapshot = readTranscript(path, into: snapshot) }
         // 새 CLI는 대화를 SQLite로 옮긴다. rollout이 멈춰 있어도 최신 턴을 읽는다.
         if let turn = query("thread_history_1.sqlite", "SELECT status,started_at,completed_at FROM thread_turns WHERE thread_id=? ORDER BY rollout_ordinal DESC LIMIT 1", id: id).first {
+            let modified = ["thread_history_1.sqlite", "thread_history_1.sqlite-wal"].compactMap {
+                WorkStateRules.transcriptModifiedAt(home.appendingPathComponent($0).path)
+            }.max()
+            snapshot.lastActivityAt = [snapshot.lastActivityAt, modified].compactMap { $0 }.max()
             let state: String?
             switch turn["status"] {
             case "inProgress", "in_progress", "running": state = "working"
@@ -113,9 +119,10 @@ public final class CodexSessions {
             if !initial.cwd.isEmpty { snapshot.cwd = initial.cwd }
             return snapshot
         }
-        guard let file = FileHandle(forReadingAtPath: path) else { return initial }
-        defer { try? file.close() }
         var snapshot = initial
+        snapshot.lastActivityAt = modified
+        guard let file = FileHandle(forReadingAtPath: path) else { return snapshot }
+        defer { try? file.close() }
         let head = (try? file.read(upToCount: 256 << 10)) ?? Data()
         let offset = size > 1 << 20 ? size - UInt64(1 << 20) : 0
         try? file.seek(toOffset: offset)

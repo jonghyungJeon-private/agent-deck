@@ -267,6 +267,8 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
     링크: http·https·mailto 는 기본 앱으로, 로컬 파일은 편집기로(Markdown 이면 미리보기로), #제목은 그 자리 스크롤.
   - 디스크에서 바뀌면(보이는 편집기는 파일 감시, 앱이 앞으로 올 때·탭을 열 때 확인): 고친 게 없으면 조용히 다시 읽고,
     고쳤으면 배너 "디스크에서 바뀌었습니다 · 다시 읽기 / 내 것으로 덮어쓰기". 그 상태의 ⌘S 는 쓰지 않고 배너로 묻는다.
+    처음 열기·다시 읽기는 읽기 전후 지문(수정 시각·크기·inode)이 같을 때만 받아들인다. 최대 3회에도 계속 바뀌면 충돌로 남기고 기존 글을 지킨다
+    (처음 열기는 읽기 실패 안내). 저장 지문은 경로를 다시 읽지 않고 직접 쓴 파일의 fd 에서 얻는다.
   - 메모리: 편집기 뷰는 보이는 화면만 만든다. 숨은 편집기 중 저장된 것은 글을 놓고(다시 보일 때 디스크에서 읽음), 고친 것은 메모리에 둔다.
     실측(release, 시험 창 약 2056×1262pt, 그림 저장 끔): 편집기 없을 때 194MB → 파일 5개 열고(숨김) 195MB → 그중 하나 보임 195.4MB(나머지는 창 그림 버퍼).
     4.6MB 파일 하나를 열면 TextKit 배치 때문에 약 +140MB, 닫으면 대부분 돌려준다.
@@ -299,8 +301,9 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   예전 데몬을 흉내 내려면 main 의 `ClaudeTermDaemon` 을 `git archive` 로 꺼내 scratch 에서 빌드하고,
   **반드시** `CLAUDE_TERM_HOME`·`CLAUDE_SESSIONS_HOME` 을 가짜 예전 폴더로 주어 띄운다(없으면 실제 폴더를 쓴다).
   시험 프로세스는 띄울 때 기록한 PID 로만 끈다(`pkill`·이름으로 찾아 끄기 금지 — 실제 데몬과 실행 파일 이름이 같다).
-- **시험 앱은 반드시 LaunchServices 로 띄운다**: `open -n --env AGENTDECK_HOME=… --env AGENTDECK_APP_SUPPORT=… --env HOME=<가짜 홈> --env AGENTDECK_NO_ACTIVATE=1 … <경로>/AgentDeck.app`
-  (`ps -o ppid` 가 1 인지 확인). AgentDeck 화면 안의 셸에서 `Contents/MacOS/AgentDeck` 를 직접 실행하면 그 앱이 사용자 데몬의 coalition 에 들어가,
+- **시험 앱은 반드시 LaunchServices 로 띄운다**: 한 번짜리 launchd opener 작업에서 `open -n --env AGENTDECK_HOME=… --env AGENTDECK_APP_SUPPORT=… --env HOME=<가짜 홈> --env AGENTDECK_NO_ACTIVATE=1 … <경로>/AgentDeck.app`
+  을 실행한다(또는 AgentDeck 화면 밖의 셸에서 실행). `ps -o ppid` 가 1 이고, `lsappinfo` 의 `relatedCoalitionPIDs` 에 사용자 데몬이 없는지 확인한다.
+  AgentDeck 화면 안의 셸에서 `Contents/MacOS/AgentDeck` 를 직접 실행하면 그 앱이 사용자 데몬의 coalition 에 들어가,
   그 앱이 끝날 때 loginwindow 가 사용자 데몬과 모든 화면을 강제 종료할 수 있다. 같은 이유로 Dock 에 남은 AgentDeck 아이콘(멈춘·끝난 시험 앱)을
   **강제 종료하지 않는다**. 시험 데몬의 launchd 작업은 시험 폴더로 계산한 이름만 `bootout` 한다(다른 `dev.agentdeck.daemon.*` 는 건드리지 않는다).
 - 시험용: `AGENTDECK_SNAPSHOT=<폴더>` 면 1초마다 창 그림(window.png)과 터미널 그림(terminal.png, 실제 배경색)을 남기고,
@@ -373,7 +376,10 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
   - 하위 에이전트 줄의 "작업 중"도 같은 끝 표시로 정한다(예전: 최근 1분 안에 기록이 늘었는지 — 긴 명령을 기다리면 끝난 것처럼 보였다).
     끝 표시가 없어도 12분 넘게 기록이 그대로면 멈춘 것으로 본다.
   - Codex: 부모 턴이 끝났는데(완료·쉬는 중) 하위 에이전트(`thread_spawn_edges` 가 닫히지 않았고 그 턴이 진행 중)가 있으면 오케스트레이션 중
-    (하위 훑기 10초 주기 결과). Codex 의 백그라운드 셸은 알아낼 방법이 없어 보지 않는다.
+    (하위 훑기 10초 주기 결과). `CodexChildRules.activity` 는 작업 중인 자식을 `stateAt` 이 오래됐다는 이유로 제외하지 않는다.
+    끝난·닫힌·쉬는 자식은 상태 시각에서 15분 뒤 제외한다. 방치된 기록은 rollout 수정 시각(이미 stat 한 값)과 상태 시각이 모두 24시간 넘게 그대로면 제외한다.
+    SQLite 에서 턴을 읽었다면 `thread_history_1.sqlite`·WAL 수정 시각도 함께 본다(rollout 을 더 쓰지 않는 새 CLI 대응).
+    공용 DB 에 다른 세션이 쓰면 제외가 늦어질 수 있고, 파일 시각을 모르면 작업 중인 자식을 유지한다. Codex 의 백그라운드 셸은 알아낼 방법이 없어 보지 않는다.
 - **기존 사용자는 사이드바 아래 "갱신하기"를 한 번 눌러야 한다.** 예전 연결(SessionStart·SessionEnd 만)으로는 상태 hook 이 없어
   claude 화면이 상태 없이 claude 색 점으로만 보인다. 갱신은 그 뒤 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
 - 알려진 한계:

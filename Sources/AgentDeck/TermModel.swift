@@ -461,13 +461,14 @@ final class TermModel: ObservableObject {
             let home = URL(fileURLWithPath: row.codexHome ?? CodexSessions.defaultHome.path)
             for (child, status) in codexScanner.reader(home).children(of: codex.id) {
                 let at = child.stateAt ?? .distantPast
-                guard Date().timeIntervalSince(at) < 15 * 60 else { continue }
+                guard let activity = CodexChildRules.activity(state: child.state, stateAt: child.stateAt,
+                    edgeStatus: status, lastActivityAt: child.lastActivityAt) else { continue }
                 let worktrees = row.git.map { GitWorktrees.list($0).filter { !$0.isMain }.map(\.path) } ?? []
                 let tree = worktrees.first { child.cwd == $0 || child.cwd.hasPrefix($0 + "/") }
                 lastAgents.append(SubagentActivity(id: child.id, sessionId: "codex:" + codex.id, paneId: row.id,
                     description: child.title.isEmpty ? "Codex 하위 에이전트" : SessionNaming.preview(of: child.title),
                     agentType: "codex", worktreePath: tree, lastActive: at, lastText: child.lastText,
-                    running: child.state == "working" && status != "closed"))
+                    running: activity == .running))
             }
         }
         return lastAgents

@@ -127,7 +127,8 @@ public enum TextFile {
 
     /// 안전하게 쓴다: 같은 폴더에 임시 파일로 다 쓴 뒤 이름을 바꿔 끼운다(중간에 끊겨도 원본이 반쯤 남지 않게).
     /// 심볼릭 링크면 링크가 가리키는 파일을 바꾸고, 원래 권한(실행 비트 등)을 이어받는다.
-    public static func writeAtomically(_ data: Data, to path: String) throws {
+    @discardableResult
+    public static func writeAtomically(_ data: Data, to path: String) throws -> FileFingerprint {
         let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
         let directory = (target as NSString).deletingLastPathComponent
         let name = (target as NSString).lastPathComponent
@@ -149,6 +150,8 @@ public enum TextFile {
         }
         if failed == 0, existed { fchmod(fd, mode) } // umask 로 깎인 권한을 원래대로
         if failed == 0, fsync(fd) != 0 { failed = errno }
+        var writtenInfo = stat()
+        if failed == 0, fstat(fd, &writtenInfo) != 0 { failed = errno }
         close(fd)
         if failed != 0 {
             unlink(temp)
@@ -159,6 +162,8 @@ public enum TextFile {
             unlink(temp)
             throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
         }
+        // 경로를 다시 stat 하면 다른 작성자가 바꿔 끼운 파일을 내 저장으로 받아들일 수 있다.
+        return FileFingerprint(info: writtenInfo)
     }
 }
 
@@ -178,7 +183,11 @@ public struct FileFingerprint: Equatable, Sendable {
     public static func of(_ path: String) -> FileFingerprint? {
         var info = stat()
         guard stat(path, &info) == 0 else { return nil }
+        return FileFingerprint(info: info)
+    }
+
+    fileprivate init(info: stat) {
         let seconds = TimeInterval(info.st_mtimespec.tv_sec) + TimeInterval(info.st_mtimespec.tv_nsec) / 1e9
-        return FileFingerprint(modified: seconds, size: Int64(info.st_size), inode: UInt64(info.st_ino))
+        self.init(modified: seconds, size: Int64(info.st_size), inode: UInt64(info.st_ino))
     }
 }

@@ -26,16 +26,20 @@ final class CodexTests: XCTestCase {
         {"timestamp":"2026-10-15T07:00:00.001Z","type":"event_msg","payload":{"type":"task_started"}}
         """ + "\n"
         try lines.write(to: transcript, atomically: true, encoding: .utf8)
+        let modified = Date(timeIntervalSince1970: 1792050000)
+        try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: transcript.path)
         let reader = CodexSessions(home: dir)
         let first = try XCTUnwrap(reader.session(sid))
         XCTAssertEqual(first.title, "Fix login")
         XCTAssertEqual(first.cwd, "/project")
         XCTAssertEqual(first.state, "working")
+        XCTAssertEqual(first.lastActivityAt, modified)
         XCTAssertEqual(reader.session(sid), first)
         lines += "{\"timestamp\":\"2026-10-15T07:00:00.002Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n"
         try lines.write(to: transcript, atomically: true, encoding: .utf8)
         XCTAssertEqual(reader.session(sid)?.state, "done")
         XCTAssertNotEqual(reader.session(sid)?.stateAt, first.stateAt)
+        XCTAssertGreaterThan(try XCTUnwrap(reader.session(sid)?.lastActivityAt), modified)
         XCTAssertNil(reader.session("../../private"))
     }
     func testPaginatedHistoryAndOlderDatabaseSchema() throws {
@@ -54,7 +58,37 @@ final class CodexTests: XCTestCase {
         try database("thread_history_1.sqlite", sql: "UPDATE thread_turns SET status='completed',completed_at=1792050010;")
         XCTAssertEqual(reader.session(sid)?.state, "done")
         XCTAssertEqual(reader.session(sid)?.stateAt, Date(timeIntervalSince1970: 1792050010))
+        XCTAssertEqual(reader.session(sid)?.lastActivityAt,
+                       WorkStateRules.transcriptModifiedAt(dir.appendingPathComponent("thread_history_1.sqlite").path))
         XCTAssertEqual(reader.children(of: sid).count, 0)
+    }
+
+    func testSQLiteWALActivityKeepsOldWorkingTurnWithoutRollout() throws {
+        try database("state_5.sqlite", sql: """
+        CREATE TABLE threads(id TEXT,cwd TEXT,rollout_path TEXT,title TEXT);
+        INSERT INTO threads VALUES('\(sid)','/work',NULL,'SQLite only');
+        """)
+        let history = dir.appendingPathComponent("thread_history_1.sqlite")
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(history.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_exec(db, """
+        PRAGMA journal_mode=WAL;
+        CREATE TABLE thread_turns(thread_id TEXT,status TEXT,started_at INTEGER,completed_at INTEGER,rollout_ordinal INTEGER);
+        INSERT INTO thread_turns VALUES('\(sid)','inProgress',1000,NULL,1);
+        """, nil, nil, nil), SQLITE_OK)
+        let now = Date()
+        let old = now.addingTimeInterval(-2 * 86400)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: history.path)
+        let reader = CodexSessions(home: dir)
+        let session = try XCTUnwrap(reader.session(sid))
+        XCTAssertEqual(session.lastActivityAt, WorkStateRules.transcriptModifiedAt(history.path + "-wal"))
+        XCTAssertEqual(CodexChildRules.activity(state: session.state, stateAt: session.stateAt,
+            edgeStatus: "open", lastActivityAt: session.lastActivityAt, now: now), .running)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: history.path + "-wal")
+        let stale = try XCTUnwrap(reader.session(sid))
+        XCTAssertNil(CodexChildRules.activity(state: stale.state, stateAt: stale.stateAt,
+            edgeStatus: "open", lastActivityAt: stale.lastActivityAt, now: now))
     }
     func testHooksObserveWithoutMixingClaudeRecordsOrSubagents() throws {
         let store = SessionStore(dir: dir.appendingPathComponent("records"))

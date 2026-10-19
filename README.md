@@ -174,6 +174,8 @@ VERSION=0.3.0 scripts/build-term-proto.sh
   `AGENTDECK_HOME=<폴더> CLAUDE_CONFIG_DIR=<폴더> CODEX_HOME=<폴더> AGENTDECK_DEBUG=1 AGENTDECK_DEBUG_NAME=<채널> AGENTDECK_NO_ACTIVATE=1 AGENTDECK_NO_NOTIFY=1`.
   데이터 옮기기를 시험할 때는 `AGENTDECK_HOME` 대신 `AGENTDECK_APP_SUPPORT=<가짜 홈>/Library/Application Support`(Foundation 은 HOME 을 따르지 않는다)와
   `HOME=<가짜 홈>` 을 준다. 디버그 명령은 분산 알림 `<채널>`(기본 `dev.agentdeck.debug`)로 보낸다(목록은 docs/ARCHITECTURE.md).
-  `open`·AppleScript 로 시험 앱을 다루지 않는다(실행 파일을 직접 띄운다).
+  시험 앱은 한 번짜리 launchd opener 작업을 거쳐 LaunchServices 로 띄운다(또는 **AgentDeck 화면 밖의 셸**에서 `open -n --env …`).
+  화면 안에서 `Contents/MacOS/AgentDeck` 를 직접 실행하거나 Dock 에 남은 아이콘을 강제 종료하지 않는다.
+  `lsappinfo` 의 `relatedCoalitionPIDs` 에 사용자 데몬이 없는지 확인한다. 자세한 이유·QA 규칙은 [ARCHITECTURE](docs/ARCHITECTURE.md)의 "데몬 띄우기"·시험 규칙을 따른다.
 - 설치 스크립트 시험: `HOME=<가짜 홈> AGENTDECK_APPS_DIR=<가짜 앱 폴더> AGENTDECK_NO_OPEN=1 bash scripts/install.sh <zip>|--uninstall`(HOME 없이 돌리지 않는다).
 - 릴리스 저장소 이름은 `Sources/SessionCore/UpdateCheck.swift`(`repository`)와 `scripts/install.sh`(`REPO`) 두 곳에 있다.

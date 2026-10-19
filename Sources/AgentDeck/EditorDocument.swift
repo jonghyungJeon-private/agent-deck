@@ -129,27 +129,41 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
     }
 
     private func load() {
-        fingerprint = FileFingerprint.of(path)
         do {
-            let result = try TextFile.read(path: path)
-            switch result.kind {
-            case .text:
-                if let decoded = result.decoded {
-                    install(decoded)
-                } else {
-                    content = .notice(title: "UTF-8 이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
-                }
-            case .binary:
-                content = .notice(title: "바이너리 파일이라 편집기로 열지 않습니다", detail: path)
-            case .tooLarge(let size):
-                content = .notice(title: "파일이 너무 커서 열지 않습니다 (\(Self.megabytes(size)), 한도 \(Self.megabytes(TextFile.maxEditableBytes)))",
-                                  detail: path)
-            case .notUTF8:
-                content = .notice(title: "UTF-8 이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
-            }
+            install(try readDiskSnapshot())
+        } catch StableFileRead.Failure.unstable {
+            diskConflict = .changed
+            content = .notice(title: "파일이 계속 바뀌어 읽지 못했습니다", detail: path)
         } catch {
             let missing = !FileManager.default.fileExists(atPath: path)
             content = .notice(title: missing ? "파일이 없습니다" : "파일을 읽지 못했습니다", detail: path)
+        }
+    }
+
+    private typealias DiskSnapshot = (value: (kind: TextFileKind, decoded: DecodedText?), fingerprint: FileFingerprint)
+
+    private func readDiskSnapshot() throws -> DiskSnapshot {
+        try StableFileRead.read(fingerprint: { FileFingerprint.of(path) }, read: { try TextFile.read(path: path) })
+    }
+
+    private func install(_ snapshot: DiskSnapshot) {
+        let result = snapshot.value
+        fingerprint = snapshot.fingerprint
+        diskConflict = nil
+        switch result.kind {
+        case .text:
+            if let decoded = result.decoded {
+                install(decoded)
+            } else {
+                content = .notice(title: "UTF-8 이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
+            }
+        case .binary:
+            content = .notice(title: "바이너리 파일이라 편집기로 열지 않습니다", detail: path)
+        case .tooLarge(let size):
+            content = .notice(title: "파일이 너무 커서 열지 않습니다 (\(Self.megabytes(size)), 한도 \(Self.megabytes(TextFile.maxEditableBytes)))",
+                              detail: path)
+        case .notUTF8:
+            content = .notice(title: "UTF-8 이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
         }
     }
 
@@ -329,18 +343,17 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
     func save(force: Bool = false) -> Bool {
         guard content == .text, let storage else { return false }
         let now = FileFingerprint.of(path)
-        if !force, now != fingerprint {
+        if !force, diskConflict != nil || now != fingerprint {
             diskConflict = now == nil ? .deleted : .changed
             return false
         }
         let data = TextFile.encode(storage.string, lineEnding: lineEnding, hasBOM: hasBOM)
         do {
-            try TextFile.writeAtomically(data, to: path)
+            fingerprint = try TextFile.writeAtomically(data, to: path)
         } catch {
             onError?("저장하지 못했습니다: \(name)\n\(error.localizedDescription)")
             return false
         }
-        fingerprint = FileFingerprint.of(path)
         loadedBytes = data.count
         diskConflict = nil
         markSaved()
@@ -428,18 +441,27 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
 
     /// 배너 "다시 읽기"·조용한 다시 읽기: 디스크 내용으로 바꾼다(되돌리기 기록은 지운다)
     func reloadFromDisk() {
-        guard let storage else { return }
-        let read = try? TextFile.read(path: path)
-        guard let read, read.kind == .text, let decoded = read.decoded else {
-            // 텍스트가 아니게 됐으면 안내로
-            if read != nil {
-                releaseForReload()
-                load()
-                notify([.content, .title, .banner])
-            }
+        guard let storage else {
+            load()
+            notify([.content, .title, .banner])
             return
         }
-        fingerprint = FileFingerprint.of(path)
+        let snapshot: DiskSnapshot
+        do {
+            snapshot = try readDiskSnapshot()
+        } catch {
+            diskConflict = FileFingerprint.of(path) == nil ? .deleted : .changed
+            return
+        }
+        let read = snapshot.value
+        guard read.kind == .text, let decoded = read.decoded else {
+            // 텍스트가 아니게 됐으면 안내로
+            releaseForReload()
+            install(snapshot)
+            notify([.content, .title, .banner])
+            return
+        }
+        fingerprint = snapshot.fingerprint
         applyingDiskText = true
         storage.beginEditing()
         storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: decoded.text)
