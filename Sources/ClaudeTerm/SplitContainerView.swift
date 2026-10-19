@@ -5,6 +5,8 @@ import TermLayout
 struct PaneTitle: Equatable {
     var name: String
     var status: WorkStatus = .none
+    /// 미리보기 편집기(파일 트리에서 다음 파일을 열면 바뀐다) — 기울인 제목 + "미리보기"
+    var preview = false
 
     /// 테두리에 이름 앞에 붙일 상태(쉬는 중·모름은 붙이지 않는다)
     var statusLabel: String? {
@@ -20,10 +22,10 @@ struct PaneTitle: Equatable {
 final class SplitContainerView: NSView {
     /// 화면 사이 틈(끌어서 크기 조절하는 곳)
     static let gap: CGFloat = 4
-    /// 테두리 안쪽 여백. 위는 제목 줄 자리.
-    static let insetTop: CGFloat = 18
-    static let insetSide: CGFloat = 6
-    static let insetBottom: CGFloat = 6
+    /// 테두리 안쪽 여백. 위는 제목 줄 자리(제목 글꼴이 배율을 따르므로 함께 커진다).
+    static var insetTop: CGFloat { TermAppearance.scaled(18) }
+    static var insetSide: CGFloat { TermAppearance.scaled(6) }
+    static var insetBottom: CGFloat { TermAppearance.scaled(6) }
     /// 틈 양쪽으로 더 잡히는 폭
     static let grab: CGFloat = 2
 
@@ -60,6 +62,12 @@ final class SplitContainerView: NSView {
         guard focused != id || self.titles != titles else { return }
         focused = id
         self.titles = titles
+        needsDisplay = true
+    }
+
+    /// 글꼴 크기 배율이 바뀜: 제목 줄 높이·글꼴을 다시
+    func scaleChanged() {
+        needsLayout = true
         needsDisplay = true
     }
 
@@ -113,18 +121,28 @@ final class SplitContainerView: NSView {
             // 제목: 위 테두리 위에 바탕을 깔고 쓴다(herdr 처럼 ─ 제목 ───)
             // 상태가 있으면 "입력 대기 · 이름" 처럼 앞에 상태를 그 색(굵게)으로 붙인다
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: TermAppearance.uiFont(11, bold: isFocused),
+                .font: TermAppearance.scaledUIFont(11, bold: isFocused),
                 .foregroundColor: isFocused ? TermAppearance.accent : TermAppearance.textDim,
             ]
             let paneTitle = titles[id]
             let title = NSMutableAttributedString(string: " ", attributes: attributes)
             if let paneTitle, let label = paneTitle.statusLabel {
                 title.append(NSAttributedString(string: label, attributes: [
-                    .font: TermAppearance.uiFont(11, bold: true), .foregroundColor: paneTitle.status.color,
+                    .font: TermAppearance.scaledUIFont(11, bold: true), .foregroundColor: paneTitle.status.color,
                 ]))
                 title.append(NSAttributedString(string: " · ", attributes: attributes))
             }
-            title.append(NSAttributedString(string: "\(paneTitle?.name ?? "") ", attributes: attributes))
+            if paneTitle?.preview == true {
+                // 미리보기: 이름을 기울이고 뒤에 작게 "미리보기"(VS Code 처럼). 고치거나 제목을 두 번 누르면 고정된다.
+                var italic = attributes
+                italic[.font] = TermAppearance.scaledUIFont(11, bold: isFocused, italic: true)
+                title.append(NSAttributedString(string: paneTitle?.name ?? "", attributes: italic))
+                title.append(NSAttributedString(string: "  미리보기 ", attributes: [
+                    .font: TermAppearance.scaledUIFont(10), .foregroundColor: TermAppearance.textDim,
+                ]))
+            } else {
+                title.append(NSAttributedString(string: "\(paneTitle?.name ?? "") ", attributes: attributes))
+            }
             let size = title.size()
             let maxWidth = max(0, frame.width - 24)
             let titleRect = CGRect(x: frame.minX + 10, y: frame.minY - size.height / 2,
@@ -165,6 +183,8 @@ final class SplitContainerView: NSView {
         titlePress = nil
         guard let divider = divider(at: point), let window else {
             titlePress = titlePane(at: point).map { ($0, point) }
+            // 미리보기 제목을 두 번 누르면 고정
+            if event.clickCount == 2, let pane = titlePress?.pane, titles[pane]?.preview == true { onPin?(pane) }
             return
         }
         while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp]) {
@@ -193,6 +213,8 @@ final class SplitContainerView: NSView {
     var onPaneDrag: ((String, NSPoint, Bool) -> Void)?
     /// 제목 오른쪽 클릭 > 새 탭으로 꺼내기
     var onExtract: ((String) -> Void)?
+    /// 미리보기 고정(제목 두 번 누르기·오른쪽 클릭 "고정")
+    var onPin: ((String) -> Void)?
     private var titlePress: (pane: String, point: NSPoint)?
     private var titleDragging = false
 
@@ -224,6 +246,9 @@ final class SplitContainerView: NSView {
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let pane = titlePane(at: convert(event.locationInWindow, from: nil)) else { return nil }
         let menu = NSMenu()
+        if titles[pane]?.preview == true {
+            menu.addItem(MenuAction(title: "고정 (미리보기 끝내기)") { [weak self] in self?.onPin?(pane) })
+        }
         menu.addItem(MenuAction(title: "새 탭으로 꺼내기") { [weak self] in self?.onExtract?(pane) })
         return menu
     }

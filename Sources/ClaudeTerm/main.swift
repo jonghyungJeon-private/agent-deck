@@ -364,6 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
     ///   도구 창: tool <files|spaces>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
     ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
+    ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
     ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
@@ -420,6 +421,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
         case "open-file":
             toolWindows?.files.debugOpen(argument)
+        case "files-select":
+            // files-select a|b|c: 여러 줄 고르기(⌘누르기와 같음)
+            toolWindows?.files.debugSelect(argument)
+        case "files-enter":
+            toolWindows?.files.debugEnter()
+        case "files-scroll":
+            toolWindows?.files.debugScroll(argument)
+        case "font-size":
+            // font-size <pt>: ⌘+ ⌘− 와 같은 길(앱 테두리 배율도 따라간다)
+            if let size = Double(argument) { TermAppearance.setFontSize(CGFloat(size)) }
+            print("font-size \(TermAppearance.fontSize) scale=\(TermAppearance.uiScale.factor)")
+            fflush(stdout)
+        case "editor-pin":
+            // 지금 화면(편집기 미리보기)을 고정 — 분할 제목 두 번 누르기와 같음
+            if let id = model.selectedId { model.pin(editor: id) }
         case "alert-answer":
             // alert-answer <번호…>: 다음 확인 창들에서 누를 버튼(0 = 첫 버튼)
             AppAlert.pendingAnswers += argument.split(separator: " ").compactMap { Int($0) }
@@ -733,10 +749,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 NSApp.sendEvent(event)
             }
         case "tabs":
-            // 탭 순서·분할 나무(화면 ID 앞 4자, * = 포커스, > = 고른 탭)
+            // 탭 순서·분할 나무(화면 ID 앞 4자 — 편집기는 파일 이름, ~ = 미리보기, * = 포커스, > = 고른 탭)
             func describe(_ node: SplitNode, _ focused: String) -> String {
                 switch node {
-                case .pane(let id): return String(id.prefix(4)) + (id == focused ? "*" : "")
+                case .pane(let id):
+                    let name = model.workspace.editors[id].map {
+                        ($0.path as NSString).lastPathComponent + ($0.isPreview ? "~" : "")
+                    } ?? String(id.prefix(4))
+                    return name + (id == focused ? "*" : "")
                 case .split(let axis, _, let first, let second):
                     return "(" + describe(first, focused) + (axis == .horizontal ? " | " : " / ") + describe(second, focused) + ")"
                 }

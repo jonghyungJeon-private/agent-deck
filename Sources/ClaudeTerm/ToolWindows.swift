@@ -30,8 +30,10 @@ final class ToolWindowsController: NSObject {
         super.init()
 
         files.dockMenu = { [weak self] in self?.menu(for: .files) ?? NSMenu() }
-        // 파일 열기(2단계 편집기): 두 번 클릭·Enter = 새 탭(이미 열렸으면 그 화면), 오른쪽 클릭 = 나눠 열기
-        files.onOpenFile = { [weak model] path in model?.openFile(path) }
+        // 파일 열기: 두 번 클릭·Enter = 지금 화면 옆 미리보기(여러 개면 고정 화면으로 쌓기), ⌘두 번 클릭·메뉴 = 새 탭, 메뉴 = 나눠 열기
+        files.onOpenFile = { [weak model] path in model?.openFromTree(path) }
+        files.onOpenFiles = { [weak model] paths in model?.openFromTree(paths: paths) }
+        files.onOpenFileInTab = { [weak model] path in model?.openFile(path) }
         files.onOpenFileSplit = { [weak model] path, axis in model?.openFile(path, split: axis) }
         for (_, dock) in docks {
             dock.onSelect = { [weak self] tool in self?.select(tool) }
@@ -137,6 +139,9 @@ final class ToolWindowsController: NSObject {
         let size = TermAppearance.fontSize
         layout.fontSize = size == TermAppearance.defaultFontSize ? nil : Double(size)
         save()
+        // 도구 창도 배율을 따른다(spaces·상태 줄은 SwiftUI 라 UIScaleModel 로 스스로 다시 그린다)
+        docks.values.forEach { $0.scaleChanged() }
+        files.scaleChanged()
     }
 
     private func save() {
@@ -298,6 +303,13 @@ final class DockViewController: NSViewController {
         }
     }
 
+    /// 글꼴 크기 배율이 바뀜: 도구 버튼 줄 높이·글꼴
+    func scaleChanged() {
+        guard isViewLoaded else { return }
+        if stripHeight.constant > 0 { stripHeight.constant = DockStripView.height }
+        strip.scaleChanged()
+    }
+
     func show(tools: [ToolID], selected: ToolID?, content: NSViewController?) {
         _ = view
         strip.update(tools: tools, selected: selected)
@@ -340,6 +352,11 @@ final class DockStripView: NSView {
 
     override var isFlipped: Bool { true }
 
+    func scaleChanged() {
+        layoutButtons()
+        needsDisplay = true
+    }
+
     func update(tools: [ToolID], selected: ToolID?) {
         guard tools != self.tools || selected != self.selected else { return }
         self.tools = tools
@@ -351,12 +368,12 @@ final class DockStripView: NSView {
     private func attributes(_ tool: ToolID) -> [NSAttributedString.Key: Any] {
         let isSelected = tool == selected
         let color = isSelected ? TermAppearance.chrome : tool == hovered ? TermAppearance.textPrimary : TermAppearance.textDim
-        return [.font: TermAppearance.uiFont(11, bold: isSelected), .foregroundColor: color]
+        return [.font: TermAppearance.scaledUIFont(11, bold: isSelected), .foregroundColor: color]
     }
 
     private func hintAttributes(_ tool: ToolID) -> [NSAttributedString.Key: Any] {
         let color = tool == selected ? TermAppearance.chrome.withAlphaComponent(0.7) : TermAppearance.textDim.withAlphaComponent(0.7)
-        return [.font: TermAppearance.uiFont(9), .foregroundColor: color]
+        return [.font: TermAppearance.scaledUIFont(9), .foregroundColor: color]
     }
 
     private func layoutButtons() {
@@ -365,7 +382,8 @@ final class DockStripView: NSView {
         for tool in tools {
             let label = (tool.rawValue as NSString).size(withAttributes: attributes(tool)).width
             let hint = (ToolWindowsController.shortcutLabel(tool) as NSString).size(withAttributes: hintAttributes(tool)).width
-            let rect = CGRect(x: x, y: 0, width: ceil(12 + label + 6 + hint + 12), height: bounds.height)
+            let pad = TermAppearance.scaled(12), gap = TermAppearance.scaled(6)
+            let rect = CGRect(x: x, y: 0, width: ceil(pad + label + gap + hint + pad), height: bounds.height)
             rects.append((tool, rect))
             x = rect.maxX
         }
@@ -390,10 +408,11 @@ final class DockStripView: NSView {
             }
             let label = tool.rawValue as NSString
             let size = label.size(withAttributes: attributes(tool))
-            label.draw(at: CGPoint(x: rect.minX + 12, y: rect.midY - size.height / 2), withAttributes: attributes(tool))
+            let pad = TermAppearance.scaled(12), gap = TermAppearance.scaled(6)
+            label.draw(at: CGPoint(x: rect.minX + pad, y: rect.midY - size.height / 2), withAttributes: attributes(tool))
             let hint = ToolWindowsController.shortcutLabel(tool) as NSString
             let hintSize = hint.size(withAttributes: hintAttributes(tool))
-            hint.draw(at: CGPoint(x: rect.minX + 12 + size.width + 6, y: rect.midY - hintSize.height / 2 + 0.5),
+            hint.draw(at: CGPoint(x: rect.minX + pad + size.width + gap, y: rect.midY - hintSize.height / 2 + 0.5),
                       withAttributes: hintAttributes(tool))
         }
         // 아래 경계(도구 내용과 나눔)

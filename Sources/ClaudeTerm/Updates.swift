@@ -97,7 +97,7 @@ final class UpdateNotifier: ObservableObject {
             열려 있는 셸·claude 세션은 끊기지 않습니다.
             """
         let field = NSTextField(wrappingLabelWithString: command)
-        field.font = TermAppearance.uiFont(11)
+        field.font = TermAppearance.scaledUIFont(11)
         field.isSelectable = true
         field.frame = NSRect(x: 0, y: 0, width: 440, height: 48)
         alert.accessoryView = field

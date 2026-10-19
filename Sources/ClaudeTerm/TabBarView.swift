@@ -11,8 +11,10 @@ final class TabBarView: NSView {
     }
 
     /// 상태 점 지름과 제목까지 간격
-    private static let dotSize: CGFloat = 8
-    private static let dotGap: CGFloat = 6
+    private static var dotSize: CGFloat { TermAppearance.scaled(8) }
+    private static var dotGap: CGFloat { TermAppearance.scaled(6) }
+    /// 배율을 곱한 길이
+    private func ui(_ value: CGFloat) -> CGFloat { TermAppearance.scaled(value) }
 
     var onSelect: ((Int) -> Void)?
     var onClose: ((Int) -> Void)?
@@ -29,6 +31,12 @@ final class TabBarView: NSView {
     private var plusRect: CGRect = .zero
 
     override var isFlipped: Bool { true }
+
+    /// 글꼴 크기 배율이 바뀜: 탭 폭·글꼴을 다시
+    func scaleChanged() {
+        layoutTabs()
+        needsDisplay = true
+    }
 
     func update(tabs: [Tab], selected: Int?) {
         guard tabs != self.tabs || selected != self.selected else { return }
@@ -51,12 +59,12 @@ final class TabBarView: NSView {
         if tabs.indices.contains(index), case .waiting = tabs[index].status { waiting = true }
         let color = isSelected ? TermAppearance.chrome
             : index == hovered || waiting ? TermAppearance.textPrimary : TermAppearance.textDim
-        return [.font: TermAppearance.uiFont(12, bold: isSelected), .foregroundColor: color]
+        return [.font: TermAppearance.scaledUIFont(12, bold: isSelected), .foregroundColor: color]
     }
 
     private func smallAttributes(_ index: Int, alpha: CGFloat) -> [NSAttributedString.Key: Any] {
         let color = index == selected ? TermAppearance.chrome : TermAppearance.textDim
-        return [.font: TermAppearance.uiFont(10), .foregroundColor: color.withAlphaComponent(alpha)]
+        return [.font: TermAppearance.scaledUIFont(10), .foregroundColor: color.withAlphaComponent(alpha)]
     }
 
     private func badge(_ tab: Tab) -> String? {
@@ -73,20 +81,20 @@ final class TabBarView: NSView {
         var x: CGFloat = 0
         let height = bounds.height
         for (index, tab) in tabs.enumerated() {
-            var width: CGFloat = 12
+            var width: CGFloat = ui(12)
             if tab.status != .none { width += Self.dotSize + Self.dotGap }
             width += (Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(index)).width
             if let badge = badge(tab) {
-                width += 6 + (badge as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width
+                width += ui(6) + (badge as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width
             }
-            let tail = max((trailing(index) as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width, 12)
-            width += 10 + tail + 12
+            let tail = max((trailing(index) as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width, ui(12))
+            width += ui(10) + tail + ui(12)
             let rect = CGRect(x: x, y: 0, width: ceil(width), height: height)
             tabRects.append(rect)
-            closeRects.append(CGRect(x: rect.maxX - 12 - tail - 4, y: 0, width: tail + 8, height: height))
+            closeRects.append(CGRect(x: rect.maxX - ui(12) - tail - ui(4), y: 0, width: tail + ui(8), height: height))
             x = rect.maxX
         }
-        plusRect = CGRect(x: x, y: 0, width: 30, height: height)
+        plusRect = CGRect(x: x, y: 0, width: ui(30), height: height)
     }
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -115,7 +123,7 @@ final class TabBarView: NSView {
                 TermAppearance.red.setFill()
                 CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
             }
-            var x = rect.minX + 12
+            var x = rect.minX + ui(12)
             if tab.status != .none {
                 drawDot(tab.status, at: CGPoint(x: x + Self.dotSize / 2, y: rect.midY), onAccent: isSelected)
                 x += Self.dotSize + Self.dotGap
@@ -128,20 +136,20 @@ final class TabBarView: NSView {
             if let badge = badge(tab) {
                 let small = smallAttributes(index, alpha: 0.8)
                 let badgeSize = (badge as NSString).size(withAttributes: small)
-                (badge as NSString).draw(at: CGPoint(x: x + 6, y: (rect.height - badgeSize.height) / 2), withAttributes: small)
+                (badge as NSString).draw(at: CGPoint(x: x + ui(6), y: (rect.height - badgeSize.height) / 2), withAttributes: small)
             }
             // 오른쪽 끝: 평소엔 ⌘숫자, 마우스를 올리면 닫기(×)
             let closing = index == hovered
             let tail = (closing ? "×" : trailing(index)) as NSString
             var tailAttributes = smallAttributes(index, alpha: closing ? (hoveringClose ? 1 : 0.8) : 0.6)
-            if closing { tailAttributes[.font] = TermAppearance.uiFont(13) }
+            if closing { tailAttributes[.font] = TermAppearance.scaledUIFont(13) }
             let tailSize = tail.size(withAttributes: tailAttributes)
             let closeRect = closeRects[index]
             tail.draw(at: CGPoint(x: closeRect.midX - tailSize.width / 2, y: (rect.height - tailSize.height) / 2),
                       withAttributes: tailAttributes)
             if !isSelected, index + 1 != selected {
                 TermAppearance.border.withAlphaComponent(0.6).setFill()
-                CGRect(x: rect.maxX - 0.5, y: rect.midY - 7, width: 1, height: 14).fill()
+                CGRect(x: rect.maxX - 0.5, y: rect.midY - ui(7), width: 1, height: ui(14)).fill()
             }
         }
         // 분할 화면을 끌어 와 탭으로 놓을 틈
@@ -152,7 +160,7 @@ final class TabBarView: NSView {
         }
         let plus = "+" as NSString
         let plusAttributes: [NSAttributedString.Key: Any] = [
-            .font: TermAppearance.uiFont(14),
+            .font: TermAppearance.scaledUIFont(14),
             .foregroundColor: hoveringPlus ? TermAppearance.textPrimary : TermAppearance.textDim,
         ]
         let plusSize = plus.size(withAttributes: plusAttributes)

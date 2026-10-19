@@ -29,7 +29,10 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     private var hintWork: DispatchWorkItem?
     private var hintToken = 0
 
-    static let statusHeight: CGFloat = 20
+    /// 상태 줄 높이(글꼴 크기 배율을 따른다)
+    static var statusHeight: CGFloat { TermAppearance.scaled(20) }
+    private var statusHeightConstraint: NSLayoutConstraint!
+    private var modeSwitchHeight: NSLayoutConstraint!
 
     init(document: EditorDocument, frame: NSRect) {
         self.document = document
@@ -37,7 +40,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         wantsLayer = true
         layer?.backgroundColor = EditorStyle.background.cgColor
 
-        status.font = TermAppearance.uiFont(10)
+        status.font = TermAppearance.scaledUIFont(10)
         status.textColor = TermAppearance.textDim
         status.lineBreakMode = .byTruncatingHead
         status.alignment = .right
@@ -51,6 +54,8 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         hintLabel.isHidden = true
         bannerHeight = banner.heightAnchor.constraint(equalToConstant: 0)
         modeSwitchWidth = modeSwitch.widthAnchor.constraint(equalToConstant: 0)
+        modeSwitchHeight = modeSwitch.heightAnchor.constraint(equalToConstant: EditorModeSwitch.height)
+        statusHeightConstraint = status.heightAnchor.constraint(equalToConstant: Self.statusHeight)
         NSLayoutConstraint.activate([
             banner.topAnchor.constraint(equalTo: topAnchor),
             banner.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -62,12 +67,12 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
             body.bottomAnchor.constraint(equalTo: status.topAnchor),
             modeSwitch.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
             modeSwitch.centerYAnchor.constraint(equalTo: status.centerYAnchor),
-            modeSwitch.heightAnchor.constraint(equalToConstant: EditorModeSwitch.height),
+            modeSwitchHeight,
             modeSwitchWidth,
             status.leadingAnchor.constraint(equalTo: modeSwitch.trailingAnchor, constant: 8),
             status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             status.bottomAnchor.constraint(equalTo: bottomAnchor),
-            status.heightAnchor.constraint(equalToConstant: Self.statusHeight),
+            statusHeightConstraint,
             hintLabel.topAnchor.constraint(equalTo: body.topAnchor, constant: 10),
             hintLabel.trailingAnchor.constraint(equalTo: body.trailingAnchor, constant: -18),
             hintLabel.leadingAnchor.constraint(greaterThanOrEqualTo: body.leadingAnchor, constant: 18),
@@ -116,6 +121,16 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
 
     /// 앱 글꼴 크기 변경: 글·줄 번호 여백 글꼴을 바꾸고 여백 폭을 다시 정한다
     @objc private func fontSizeChanged() {
+        // 상태 줄·편집/미리보기 단추·안내·배너·안내 문구는 앱 테두리 배율로
+        status.font = TermAppearance.scaledUIFont(10)
+        statusHeightConstraint.constant = Self.statusHeight
+        hintLabel.refreshScale()
+        banner.refreshScale()
+        bannerHeight.constant = document.diskConflict == nil ? 0 : EditorBannerView.height
+        notice?.refreshScale()
+        modeSwitchHeight.constant = EditorModeSwitch.height
+        modeSwitchWidth.constant = canPreview ? modeSwitch.fittingWidth : 0
+        modeSwitch.needsDisplay = true
         guard let textView else { return }
         document.applyFontSize()
         textView.font = EditorStyle.font
@@ -716,7 +731,7 @@ final class EditorHintView: NSView {
         layer?.cornerRadius = 6
         layer?.borderWidth = 1
         layer?.borderColor = TermAppearance.border.cgColor
-        label.font = TermAppearance.uiFont(12)
+        label.font = TermAppearance.scaledUIFont(12)
         label.textColor = TermAppearance.textPrimary
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -730,6 +745,9 @@ final class EditorHintView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 글꼴 크기 배율이 바뀜
+    func refreshScale() { label.font = TermAppearance.scaledUIFont(12) }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
@@ -965,7 +983,7 @@ final class EditorHighlighter {
 
 /// 상태 줄 왼쪽의 [편집 | 미리보기] 두 칸 단추(Markdown 파일만). 고른 칸은 강조색.
 final class EditorModeSwitch: NSView {
-    static let height: CGFloat = 16
+    static var height: CGFloat { TermAppearance.scaled(16) }
     static let titles = ["편집", "미리보기"]
     var onSelect: ((Bool) -> Void)?
     var selected = 0 {
@@ -986,15 +1004,15 @@ final class EditorModeSwitch: NSView {
 
     private func attributes(_ index: Int) -> [NSAttributedString.Key: Any] {
         let on = index == selected
-        return [.font: TermAppearance.uiFont(10, bold: on),
+        return [.font: TermAppearance.scaledUIFont(10, bold: on),
                 .foregroundColor: on ? TermAppearance.accent : (hovered == index ? TermAppearance.textPrimary : TermAppearance.textDim)]
     }
 
     /// 두 칸 폭의 합(굵은 글꼴 기준이라 고른 칸이 바뀌어도 흔들리지 않게 넉넉히)
     var fittingWidth: CGFloat { Self.widths.reduce(0, +) }
 
-    private static let widths: [CGFloat] = titles.map {
-        ceil(($0 as NSString).size(withAttributes: [.font: TermAppearance.uiFont(10, bold: true)]).width) + 16
+    private static var widths: [CGFloat] {
+        titles.map { ceil(($0 as NSString).size(withAttributes: [.font: TermAppearance.scaledUIFont(10, bold: true)]).width) + TermAppearance.scaled(16) }
     }
 
     private func segmentRects() -> [NSRect] {
@@ -1060,7 +1078,7 @@ final class EditorModeSwitch: NSView {
 
 /// "디스크에서 바뀌었습니다 · 다시 읽기 / 내 것으로 덮어쓰기"
 final class EditorBannerView: NSView {
-    static let height: CGFloat = 30
+    static var height: CGFloat { TermAppearance.scaled(30) }
     var onReload: (() -> Void)?
     var onOverwrite: (() -> Void)?
     private let label = NSTextField(labelWithString: "")
@@ -1072,13 +1090,13 @@ final class EditorBannerView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor(srgbHex: 0x4a3f24).cgColor
         clipsToBounds = true
-        label.font = TermAppearance.uiFont(11, bold: true)
+        label.font = TermAppearance.scaledUIFont(11, bold: true)
         label.textColor = NSColor(srgbHex: 0xf0d58a)
         label.lineBreakMode = .byTruncatingTail
         for button in [reload, overwrite] {
             button.bezelStyle = .recessed
             button.controlSize = .small
-            button.font = TermAppearance.uiFont(11)
+            button.font = TermAppearance.scaledUIFont(11)
             button.target = self
             button.appearance = NSAppearance(named: .darkAqua)
         }
@@ -1118,6 +1136,13 @@ final class EditorBannerView: NSView {
         }
     }
 
+    /// 글꼴 크기 배율이 바뀜
+    func refreshScale() {
+        label.font = TermAppearance.scaledUIFont(11, bold: true)
+        reload.font = TermAppearance.scaledUIFont(11)
+        overwrite.font = TermAppearance.scaledUIFont(11)
+    }
+
     @objc private func reloadPressed() { onReload?() }
     @objc private func overwritePressed() { onOverwrite?() }
 
@@ -1132,6 +1157,9 @@ final class EditorBannerView: NSView {
 final class EditorNoticeView: NSView {
     private let path: String
 
+    private var titleLabel: NSTextField?
+    private var detailLabel: NSTextField?
+
     init(title: String, detail: String) {
         path = detail
         super.init(frame: .zero)
@@ -1139,11 +1167,13 @@ final class EditorNoticeView: NSView {
         icon.symbolConfiguration = .init(pointSize: 28, weight: .light)
         icon.contentTintColor = TermAppearance.textDim
         let titleLabel = NSTextField(wrappingLabelWithString: title)
-        titleLabel.font = TermAppearance.uiFont(13, bold: true)
+        titleLabel.font = TermAppearance.scaledUIFont(13, bold: true)
         titleLabel.textColor = TermAppearance.textPrimary
         titleLabel.alignment = .center
         let detailLabel = NSTextField(wrappingLabelWithString: (detail as NSString).abbreviatingWithTildeInPath)
-        detailLabel.font = TermAppearance.uiFont(11)
+        detailLabel.font = TermAppearance.scaledUIFont(11)
+        self.titleLabel = titleLabel
+        self.detailLabel = detailLabel
         detailLabel.textColor = TermAppearance.textDim
         detailLabel.alignment = .center
         let reveal = NSButton(title: "Finder 에서 보기", target: self, action: #selector(revealInFinder))
@@ -1170,6 +1200,12 @@ final class EditorNoticeView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         EditorStyle.background.setFill()
         dirtyRect.intersection(bounds).fill()
+    }
+
+    /// 글꼴 크기 배율이 바뀜
+    func refreshScale() {
+        titleLabel?.font = TermAppearance.scaledUIFont(13, bold: true)
+        detailLabel?.font = TermAppearance.scaledUIFont(11)
     }
 
     @objc private func revealInFinder() {

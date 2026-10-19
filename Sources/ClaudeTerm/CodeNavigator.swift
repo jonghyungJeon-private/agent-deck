@@ -457,7 +457,7 @@ final class CodeNavigator {
 
     private func place(_ popup: NavigatorPopupView, anchor: NSRect?) {
         let bounds = host.view.bounds
-        let width = min(anchor == nil ? 760 : 680, bounds.width - 24)
+        let width = min(TermAppearance.scaled(anchor == nil ? 760 : 680), bounds.width - 24)
         let height = min(popup.preferredHeight, max(bounds.height - 80, 120))
         var frame = NSRect(x: 0, y: 0, width: width, height: height)
         if let anchor {

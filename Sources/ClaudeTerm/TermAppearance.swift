@@ -13,7 +13,7 @@ enum TermAppearance {
     /// 글꼴 크기가 바뀌었다(터미널·편집기 화면이 받아 글꼴을 바꾼다). `ui.json` 저장도 이 알림을 받아 한다.
     static let fontSizeChanged = Notification.Name("ClaudeTerm.fontSizeChanged")
 
-    /// 앱 전체 글꼴 크기(터미널·편집기 내용만, 사이드바·탭 줄은 그대로). 처음 읽을 때 `ui.json` 에서 가져온다.
+    /// 앱 전체 글꼴 크기(터미널·편집기 내용, 앱 테두리는 `uiScale` 로 따라간다). 처음 읽을 때 `ui.json` 에서 가져온다.
     private(set) static var fontSize: CGFloat = {
         let saved = ToolLayout.load(from: TermPaths.home.appendingPathComponent("ui.json")).fontSize
         return saved.map { clampedFontSize(CGFloat($0)) } ?? defaultFontSize
@@ -118,10 +118,24 @@ enum TermAppearance {
     static let red = NSColor(srgbHex: 0xe06c75)
     static let cyan = NSColor(srgbHex: 0x56b6c2)
 
-    /// 사이드바·탭 줄 글꼴(터미널과 같은 JetBrains Mono)
-    static func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
-        NSFont(name: bold ? "JetBrainsMono-Bold" : "JetBrainsMono-Regular", size: size)
+    /// 사이드바·탭 줄 글꼴(터미널과 같은 JetBrains Mono). 크기를 그대로 쓴다 — 글꼴 크기를 따라가려면 `scaledUIFont`.
+    static func uiFont(_ size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {
+        let name = "JetBrainsMono-" + (bold ? (italic ? "BoldItalic" : "Bold") : (italic ? "Italic" : "Regular"))
+        return NSFont(name: name, size: size)
             ?? NSFont.monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular)
+    }
+
+    // MARK: - 앱 테두리 배율(⌘+ ⌘− 를 도구 창·탭 줄·분할 제목·상태 줄·이동 목록도 따라간다)
+
+    /// 지금 글꼴 크기의 배율(0.8~1.6). 크기가 바뀌면 `fontSizeChanged` 가 온다.
+    static var uiScale: UIScale { UIScale(fontSize: fontSize, defaultSize: defaultFontSize) }
+
+    /// 배율을 곱한 길이(줄 높이·여백·아이콘 크기)
+    static func scaled(_ value: CGFloat) -> CGFloat { uiScale(value) }
+
+    /// 배율을 곱한 테두리 글꼴. 테두리 뷰는 `uiFont` 대신 이것을 쓴다.
+    static func scaledUIFont(_ size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {
+        uiFont(uiScale(size), bold: bold, italic: italic)
     }
 
     static func apply(to view: TerminalView) {

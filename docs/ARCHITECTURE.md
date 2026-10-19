@@ -54,6 +54,11 @@ AgentDeck.app/Contents/MacOS/
 - 모양: Ghostty 기본값과 같게 — JetBrains Mono 13pt + Nerd Font 아이콘(`Resources/Fonts`, 앱 안에서만 등록), 배경 #282c34·Tomorrow Night 색, 늘 보이는 스크롤 막대.
   한글은 앱에 넣은 D2Coding 1.3.2(`Resources/Fonts/README.md`, 굵은 글자 포함)로, Ghostty 처럼 소문자 높이를 JetBrains Mono 에 맞춰 그린다.
   Markdown 미리보기(다른 프로세스라 앱에 등록한 글꼴을 못 봄)에는 한글이 있을 때만 같은 파일을 `@font-face` 로 넘긴다.
+- 글자 크기(⌘+ ⌘− ⌘0, `ui.json` 의 `fontSize`): 터미널·편집기 글꼴과 함께 앱 테두리도 배율 = 크기 ÷ 13(0.8~1.6, 0.5pt 단위,
+  `TermLayout/UIScale`)로 따라간다. 한 곳(`TermAppearance.uiScale`·`scaled(_:)`·`scaledUIFont(_:)`)을 거친다: 탭 줄 높이·글꼴(도구 창 머리 줄·도구 버튼 줄도
+  탭 줄 높이를 따라 한 선에 맞음 — 터미널 줄 수가 바뀌면 창 크기를 바꿀 때처럼 데몬에 알린다), 분할 제목 줄, 편집기 상태 줄·편집/미리보기 단추,
+  이동 목록(⌘B·⌥F7·⌘O, 열 때마다 새로 만듦), files(줄 높이·들여쓰기·아이콘 — 펼침·고른 줄·맨 위 줄을 지키며 다시 그림), spaces·상태 줄(SwiftUI,
+  `UIScaleModel` 이 `\.uiScale` 로 내려 주고 `.uiFont(11)`·`ui(6)` 로 쓴다). 타이머 없이 `fontSizeChanged` 알림으로만 바뀐다.
 - Shift+Enter = 줄바꿈(⌥+Enter 와 같은 ESC CR 을 보낸다).
 - 되살리기: 화면마다 지금 폴더·claude 세션·claude 실행 옵션(세션 지정 인자 뺀 것, 예: `--dangerously-skip-permissions`)을 배치와 함께 저장한다.
   데몬이 바뀌면(강제 종료·재부팅 뒤 새로 뜸) 사라진 화면을 지우지 않고 "꺼짐"(속 빈 점)으로 남기고, 그 탭을 열 때
@@ -108,11 +113,17 @@ AgentDeck.app/Contents/MacOS/
   기본값은 spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 의 Project 창 자리, 터미널 폭은 그대로). 배치·고른 도구·도크 폭은 `term/ui.json`
   (없거나 예전·망가진 파일이면 기본값).
 - files: 포커스 화면의 작업 트리 맨 위(작업 트리가 아니면 화면 폴더)를 보인다. 머리 줄에 폴더 이름·브랜치·바뀐 파일 수, 오른쪽에 모두 접기.
-  다른 프로젝트 화면으로 포커스가 옮겨 가면 루트가 바뀌고, 펼친 폴더는 루트별로 메모리에만 기억한다(루트 12개·루트당 400개까지).
+  다른 프로젝트 화면으로 포커스가 옮겨 가면 루트가 바뀌고, 펼친 폴더·보던 자리(맨 위 줄·고른 줄)는 루트별로 메모리에만 기억해
+  돌아오면 그대로 보인다(루트 12개·루트당 400개까지, `TermLayout/ExpansionMemory`). 루트가 같으면 트리를 다시 만들지 않는다.
   NSOutlineView 로 그리고, 폴더는 펼칠 때 백그라운드에서 읽는다(`.git`·`.DS_Store` 뺌, 폴더 먼저 → 대소문자 무시 이름순, 점 파일은 흐리게).
   두 번 클릭·Enter = 편집기로 열기(아래). 오른쪽 클릭: (파일이면) 오른쪽에 나눠 열기·아래에 나눠 열기, Finder 에서 보기·경로 복사·상대 경로 복사·여기서 셸 열기(새 탭).
-  편집기 화면이 포커스면 그 파일의 작업 트리 맨 위를 보인다.
-- 편집기: files 에서 두 번 클릭·Enter 하면 지금 탭 바로 뒤 새 탭에 열고, 이미 열린 파일이면 그 화면으로 간다(나눠 열기도 같음).
+  편집기 화면이 포커스면: 지금 루트 안의 파일이면 루트를 그대로 두고(상위 폴더를 둘러보다 하위 저장소 파일을 열어도 보던 트리를 잃지 않게),
+  밖이면 터미널 화면과 같은 규칙(그 파일 폴더의 작업 트리 맨 위, `TermLayout/FilesRoot`). 도구를 숨겼다 다시 보여도 숨기기 전 루트를 기준으로 한다.
+  그 파일을 트리에 드러낸다(위 폴더를 차례로 펼치고 고른 뒤 보이게 스크롤, 다른 폴더는 접지 않음, 여러 줄을 골라 둔 가운데면 고른 것을 그대로).
+  여러 줄 고르기(⌘·⇧). 열기 규칙(미리보기·고정·여러 개)은 README "파일·편집기", 배치 계산은 `TermLayout/FileOpening`.
+- 편집기: files 에서 두 번 클릭·Enter 하면 지금 화면 오른쪽 미리보기 화면에 연다(탭에 하나, 다음 파일이 그 자리를 바꿔 쓴다 —
+  바꿔 쓴 화면은 배치에서 빼고 문서를 닫는다). 미리보기는 `editors` 의 `preview: true` 로 저장되고, 고치면(●) 또는 분할 제목 두 번 누르기·
+  "고정"으로 지운다. ⌘두 번 클릭·"새 탭으로 열기"·코드 이동·Markdown 링크는 예전처럼 지금 탭 바로 뒤 새 탭(고정). 이미 열린 파일이면 그 화면으로 간다(나눠 열기도 같음).
   - 터미널과 같은 탭·분할에 들어간다(배치 잎 ID `editor:<UUID>`). 데몬과 상관없어 데몬 목록 맞추기에서 지워지지 않고 셸로 되살리지도 않으며,
     spaces 목록에 나오지 않는다. 연 파일·커서 위치는 `term/layout.json`(`editors`)에 저장돼 앱을 다시 켜면 다시 열린다.
   - 탭·분할 테두리 제목 = 파일 이름, 저장 안 했으면 뒤에 ●. 아래 상태 줄에 줄:열·UTF-8·줄 끝(LF/CRLF)·언어.
@@ -191,7 +202,9 @@ AgentDeck.app/Contents/MacOS/
   탭·분할 나무(`tabs`)·끌기 좌표(`dragpoints`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
   도구 창·files 시험 명령: `tool files`(⌘⇧E 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
-  `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`·`filesmenu <상대 경로>[|<항목>]`·`footprint`.
+  `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수·고른 줄·맨 위 줄·줄 높이)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`(두 번 클릭과 같음)·
+  `filesmenu <상대 경로>[|<항목>]`·`files-select a|b|c`(여러 줄 고르기)·`files-enter`·`files-scroll <상대 경로>`(맨 위로)·`editor-pin`(미리보기 고정)·
+  `font-size <pt>`(⌘+ ⌘− 와 같은 길, 배율 출력)·`footprint`. `tabs` 는 편집기를 파일 이름으로, 미리보기는 뒤에 `~` 를 붙여 보인다.
   spaces 시험 명령: `spaces`(보이는 줄·접힌 줄 합계·저장 상태)·`spaces-toggle g:<묶음 경로>|w:<작업 트리 경로>`·`spaces-collapse-all`·`spaces-expand-all`·
   `spaces-move-group <경로>|<대상 경로>`·`spaces-move-session <화면 ID>|<대상 화면 ID>`(ID 는 앞 4글자로도)·`spaces-drag <group|session> <ID>|<대상>`(끄는 모습만 그림)·`spaces-drag-end`.
   `CLAUDE_TERM_DEBUG_NAME=<이름>` 이면 그 이름의 알림만 받는다(시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게).

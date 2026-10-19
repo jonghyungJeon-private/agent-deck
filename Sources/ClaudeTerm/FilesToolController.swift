@@ -86,9 +86,13 @@ protocol ToolContent: AnyObject {
 /// 폴더는 펼칠 때 읽고, git 상태는 보이는 동안만 FSEvents 로 바뀔 때 다시 읽는다.
 final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
     let model: TermModel
-    /// 2단계(편집기) 연결점: 파일을 두 번 누르거나 Enter. 없으면 안내만 띄운다.
+    /// 파일 하나를 두 번 누르거나 Enter: 지금 화면 옆 미리보기로. 없으면 안내만 띄운다.
     var onOpenFile: ((String) -> Void)?
-    /// 오른쪽 클릭 "오른쪽에 나눠 열기"(horizontal)·"아래에 나눠 열기"(vertical)
+    /// 여러 줄을 골라 Enter·두 번 클릭·"열기": 고정 화면으로 한꺼번에
+    var onOpenFiles: (([String]) -> Void)?
+    /// ⌘두 번 클릭·"새 탭으로 열기"
+    var onOpenFileInTab: ((String) -> Void)?
+    /// 오른쪽 클릭 "오른쪽에 분할로 열기"(horizontal)·"아래로 분할로 열기"(vertical)
     var onOpenFileSplit: ((String, SplitAxis) -> Void)?
     /// 머리 줄 오른쪽 클릭 메뉴(옮기기·숨기기, 도구 창 관리자가 채운다)
     var dockMenu: (() -> NSMenu)?
@@ -99,9 +103,18 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     private let empty = NSTextField(labelWithString: "")
     private let toast = NSTextField(labelWithString: "")
     private var toastWork: DispatchWorkItem?
+    private var toastHeight: NSLayoutConstraint?
 
     private let watcher = FilesWatcher()
+    /// 루트별 펼친 폴더·보던 자리(스크롤 맨 위 줄·고른 줄)
     private var memory = ExpansionMemory()
+    /// 마지막으로 트리에 드러낸 편집기 파일(목록이 2초마다 와도 다시 하지 않게)
+    private var revealed: String?
+    /// 루트를 읽는 중이라 미뤄 둔 드러내기(절대 경로)
+    private var pendingReveal: String?
+    private var headerHeight: NSLayoutConstraint!
+    /// 숨기기 전에 보던 루트(다시 보일 때 편집기 화면이면 이 루트를 그대로 쓴다 — 도구를 오가도 루트가 바뀌지 않게)
+    private var lastShown: FilesRoot?
     /// 최근 루트 몇 개의 git 상태(루트를 오갈 때 색을 바로 보이려고, 4개까지)
     private var recentStatus: [(root: String, status: GitStatusSnapshot)] = []
     private var rootNode: FileNode?
@@ -149,13 +162,13 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         outline.outlineTableColumn = column
         outline.headerView = nil
         outline.backgroundColor = TermAppearance.chrome
-        outline.rowHeight = 22
-        outline.indentationPerLevel = 14
+        outline.rowHeight = TermAppearance.scaled(22)
+        outline.indentationPerLevel = TermAppearance.scaled(14)
         outline.intercellSpacing = NSSize(width: 0, height: 0)
         outline.style = .plain
         outline.selectionHighlightStyle = .regular
         outline.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
-        outline.allowsMultipleSelection = false
+        outline.allowsMultipleSelection = true // ⌘·⇧ 누르기로 여러 파일을 골라 한꺼번에 연다
         outline.autoresizesOutlineColumn = false
         outline.dataSource = self
         outline.delegate = self
@@ -175,13 +188,13 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         scroll.borderType = .noBorder
         scroll.scrollerStyle = .overlay
 
-        empty.font = TermAppearance.uiFont(11)
+        empty.font = TermAppearance.scaledUIFont(11)
         empty.textColor = TermAppearance.textDim
         empty.alignment = .center
         empty.maximumNumberOfLines = 3
         empty.lineBreakMode = .byWordWrapping
 
-        toast.font = TermAppearance.uiFont(10)
+        toast.font = TermAppearance.scaledUIFont(10)
         toast.textColor = TermAppearance.textPrimary
         toast.drawsBackground = true
         toast.backgroundColor = TermAppearance.chromeRaised
@@ -193,11 +206,12 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
+        headerHeight = header.heightAnchor.constraint(equalToConstant: TerminalHostController.tabBarHeight)
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: root.topAnchor),
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            header.heightAnchor.constraint(equalToConstant: TerminalHostController.tabBarHeight),
+            headerHeight,
             scroll.topAnchor.constraint(equalTo: header.bottomAnchor),
             scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
@@ -208,8 +222,9 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
             toast.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             toast.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             toast.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            toast.heightAnchor.constraint(equalToConstant: 24),
         ])
+        toastHeight = toast.heightAnchor.constraint(equalToConstant: TermAppearance.scaled(24))
+        toastHeight?.isActive = true
         view = root
     }
 
@@ -230,7 +245,10 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         if visible {
             updateRoot(force: true)
         } else {
-            // 숨기면 트리·감시를 놓는다(펼침만 기억). 다시 보이면 새로 읽는다.
+            // 숨기면 트리·감시를 놓는다(펼침·보던 자리만 기억). 다시 보이면 새로 읽는다.
+            savePlace()
+            lastShown = current ?? lastShown
+            revealed = nil
             watcher.stop()
             generation += 1
             rootNode = nil
@@ -262,35 +280,40 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     // MARK: - 루트
 
     /// 포커스 화면의 작업 트리 맨 위(없으면 화면 폴더)
-    static func root(for row: PaneRow?) -> (path: String, isGit: Bool)? {
-        guard let row else { return nil }
-        if let git = row.git { return (git.worktreeRoot, true) }
-        return ((row.cwd as NSString).standardizingPath, false)
+    static func root(for row: PaneRow?) -> FilesRoot? {
+        row.map { FilesRoot.folder($0.cwd, git: $0.git) }
     }
 
+    private var current: FilesRoot? { root.map { FilesRoot(path: $0, isGit: isGit) } }
+
+    /// 포커스 화면에 맞춰 루트를 정한다. 같은 루트면 아무것도 다시 만들지 않는다(펼침·스크롤·고른 줄 그대로).
     private func updateRoot(force: Bool = false) {
         guard toolVisible, isViewLoaded else { return }
-        let target: (path: String, isGit: Bool)?
+        let target: FilesRoot?
+        var editorFile: String?
         if let id = model.selectedId, let path = model.workspace.editors[id]?.path {
-            // 편집기 화면: 그 파일의 작업 트리 맨 위. 저장소가 아니면 지금 루트 안의 파일이면 그대로 둔다.
-            let directory = (path as NSString).deletingLastPathComponent
-            if let location = GitWorktrees.locate(directory) {
-                target = (location.worktreeRoot, true)
-            } else if let root, path.hasPrefix(root + "/") {
-                target = (root, isGit)
-            } else {
-                target = (directory, false)
-            }
+            // 편집기 화면: 지금 루트 안의 파일이면 그대로, 아니면 터미널 화면과 같은 규칙(작업 트리 맨 위)
+            editorFile = path
+            target = FilesRoot.editor(file: path, current: current ?? lastShown, locate: GitWorktrees.locate)
         } else {
             // 막 만든 화면은 목록(2초마다)에 오기 전까지 줄이 없다 — 그동안은 지금 루트를 그대로 둔다
             if !force, root != nil, model.selectedId != nil, model.focusedRow == nil { return }
             target = Self.root(for: model.focusedRow)
         }
-        guard force || target?.path != root || target?.isGit != isGit else { return }
-        load(root: target)
+        if force || target != current {
+            load(root: target)
+        }
+        // 편집기로 포커스가 오면 그 파일을 트리에 드러낸다(다른 폴더는 접지 않는다)
+        if let editorFile, editorFile != revealed {
+            revealed = editorFile
+            reveal(editorFile)
+        } else if editorFile == nil {
+            revealed = nil
+        }
     }
 
-    private func load(root target: (path: String, isGit: Bool)?) {
+    private func load(root target: FilesRoot?) {
+        savePlace()
         generation += 1
         let generation = self.generation
         watcher.stop()
@@ -333,6 +356,11 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
                 self.outline.reloadData()
                 for rel in restored { if let folder = node.find(rel: rel) { self.outline.expandItem(folder) } }
                 self.restoring = false
+                self.restorePlace(target.path)
+                if let path = self.pendingReveal {
+                    self.pendingReveal = nil
+                    self.reveal(path)
+                }
                 self.showEmpty(readable ? (node.children?.isEmpty == true ? "빈 폴더입니다." : nil) : "폴더를 읽을 수 없습니다.\n\(target.path)")
                 if self.isActive {
                     self.watcher.loadedDirectories = self.loadedDirectories()
@@ -340,6 +368,102 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
                 }
             }
         }
+    }
+
+    // MARK: - 보던 자리
+
+    private func rel(ofRow row: Int) -> String? { (outline.item(atRow: row) as? FileNode)?.rel }
+
+    /// 맨 위에 보이는 줄
+    private var topRow: Int { outline.row(at: NSPoint(x: 1, y: scroll.contentView.bounds.minY + 1)) }
+
+    /// 떠나기 전 이 루트의 스크롤(맨 위 줄)·고른 줄을 기억한다
+    private func savePlace() {
+        guard let root, rootNode != nil else { return }
+        memory.setPlace(TreePlace(topRow: rel(ofRow: topRow), selected: rel(ofRow: outline.selectedRow)), root: root)
+    }
+
+    private func restorePlace(_ root: String) {
+        guard let place = memory.place(for: root), let rootNode else { return }
+        if let rel = place.topRow { scroll(toTop: rel) }
+        if let rel = place.selected, let node = rootNode.find(rel: rel) {
+            let row = outline.row(forItem: node)
+            if row >= 0 { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+        }
+    }
+
+    /// 그 줄이 맨 위에 오게 스크롤
+    private func scroll(toTop rel: String) {
+        guard let node = rootNode?.find(rel: rel) else { return }
+        let row = outline.row(forItem: node)
+        guard row >= 0 else { return }
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: outline.rect(ofRow: row).minY))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    /// 파일을 트리에 드러낸다: 위 폴더를 차례로 펼치고(읽기를 기다리며) 고른 뒤 보이게 스크롤. 다른 폴더는 그대로.
+    /// 이미 여러 줄을 골라 둔 가운데 하나면 고른 것을 바꾸지 않는다.
+    private func reveal(_ path: String) {
+        guard let rel = current?.relative(path), !rel.isEmpty else { return }
+        guard let rootNode else {
+            pendingReveal = path
+            return
+        }
+        let generation = self.generation
+        let folders = ExpansionMemory.ancestors(of: rel)
+        func step(_ index: Int) {
+            guard generation == self.generation else { return }
+            guard index < folders.count else {
+                guard let node = rootNode.find(rel: rel) else { return }
+                let row = outline.row(forItem: node)
+                guard row >= 0 else { return }
+                if !outline.selectedRowIndexes.contains(row) {
+                    outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                }
+                outline.scrollRowToVisible(row)
+                return
+            }
+            guard let folder = rootNode.find(rel: folders[index]), folder.isDirectory else { return }
+            if folder.children == nil {
+                loadChildren(folder, expand: true) { step(index + 1) }
+            } else {
+                if !outline.isItemExpanded(folder) { outline.expandItem(folder) }
+                step(index + 1)
+            }
+        }
+        step(0)
+    }
+
+    // MARK: - 배율
+
+    /// 글꼴 크기 배율이 바뀜: 줄 높이·들여쓰기·글꼴을 바꾸되 펼침·고른 줄·맨 위 줄은 그대로
+    func scaleChanged() {
+        guard isViewLoaded else { return }
+        let top = rel(ofRow: topRow)
+        headerHeight.constant = TerminalHostController.tabBarHeight
+        header.applyScale()
+        empty.font = TermAppearance.scaledUIFont(11)
+        toast.font = TermAppearance.scaledUIFont(10)
+        toastHeight?.constant = TermAppearance.scaled(24)
+        outline.rowHeight = TermAppearance.scaled(22)
+        outline.indentationPerLevel = TermAppearance.scaled(14)
+        // 들여쓰기는 칸을 다시 만들어야 맞는다 — 펼침·고른 줄·맨 위 줄을 지키며 다시 읽는다(디스크는 다시 읽지 않음)
+        reloadKeepingState(top: top)
+    }
+
+    /// 트리를 다시 그리되 펼친 폴더·고른 줄·맨 위 줄은 그대로
+    private func reloadKeepingState(top: String?) {
+        guard let root, let rootNode else { return outline.reloadData() }
+        let selected = outline.selectedRowIndexes.compactMap { rel(ofRow: $0) }
+        outline.reloadData()
+        restoring = true
+        for rel in memory.paths(for: root) {
+            if let folder = rootNode.find(rel: rel), folder.children != nil { outline.expandItem(folder) }
+        }
+        restoring = false
+        let rows = selected.compactMap { rootNode.find(rel: $0) }.map { outline.row(forItem: $0) }.filter { $0 >= 0 }
+        outline.selectRowIndexes(IndexSet(rows), byExtendingSelection: false)
+        if let top { scroll(toTop: top) }
     }
 
     private func showEmpty(_ text: String?) {
@@ -355,7 +479,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
 
     // MARK: - 폴더 읽기
 
-    private func loadChildren(_ node: FileNode, expand: Bool) {
+    private func loadChildren(_ node: FileNode, expand: Bool, then done: (() -> Void)? = nil) {
         guard node.isDirectory, node.children == nil, !node.loading else { return }
         node.loading = true
         let generation = self.generation
@@ -368,6 +492,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
                 self.outline.reloadItem(node, reloadChildren: true)
                 if expand { self.outline.expandItem(node) }
                 self.watcher.loadedDirectories = self.loadedDirectories()
+                done?()
             }
         }
     }
@@ -473,13 +598,42 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
 
     private var selectedNode: FileNode? { outline.item(atRow: outline.selectedRow) as? FileNode }
 
-    @objc private func doubleClicked() {
-        guard let node = outline.item(atRow: outline.clickedRow) as? FileNode else { return }
-        open(node)
+    /// 고른 파일들(줄 순서, 폴더는 뺀다)
+    private var selectedFiles: [FileNode] {
+        outline.selectedRowIndexes.compactMap { outline.item(atRow: $0) as? FileNode }.filter { !$0.isDirectory }
     }
 
+    @objc private func doubleClicked() {
+        let row = outline.clickedRow
+        guard let node = outline.item(atRow: row) as? FileNode else { return }
+        // ⌘두 번 클릭 = 새 탭
+        if NSApp.currentEvent?.modifierFlags.contains(.command) == true, !node.isDirectory, let onOpenFileInTab {
+            onOpenFileInTab(node.path)
+            return
+        }
+        // 여러 줄을 고른 가운데를 두 번 누르면 고른 파일을 모두 연다
+        if outline.selectedRowIndexes.count > 1, outline.selectedRowIndexes.contains(row) {
+            openSelected()
+        } else {
+            open(node)
+        }
+    }
+
+    /// Enter: 하나면 그 줄(폴더는 펼치기·접기), 여러 줄이면 고른 파일을 모두
     private func openSelected() {
-        if let node = selectedNode { open(node) }
+        guard outline.selectedRowIndexes.count > 1 else {
+            if let node = selectedNode { open(node) }
+            return
+        }
+        open(files: selectedFiles.map(\.path))
+    }
+
+    private func open(files: [String]) {
+        if files.count == 1 {
+            onOpenFile?(files[0])
+        } else if files.count > 1 {
+            onOpenFiles?(files)
+        }
     }
 
     func open(_ node: FileNode) {
@@ -528,10 +682,28 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         // 오른쪽 클릭한 줄(키보드로 연 메뉴면 고른 줄)
         let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
         guard let node = outline.item(atRow: row) as? FileNode else { return }
+        // 여러 줄을 고른 가운데를 오른쪽 클릭: 고른 파일을 한꺼번에
+        if outline.selectedRowIndexes.count > 1, outline.selectedRowIndexes.contains(row) {
+            let files = selectedFiles.map(\.path)
+            if !files.isEmpty {
+                add(menu, "열기 (파일 \(files.count)개)") { [weak self] in self?.open(files: files) }
+                menu.addItem(.separator())
+            }
+            let paths = outline.selectedRowIndexes.compactMap { (self.outline.item(atRow: $0) as? FileNode)?.path }
+            add(menu, "경로 복사 (\(paths.count)개)") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(paths.joined(separator: "\n"), forType: .string)
+            }
+            return
+        }
         let folder = node.isDirectory ? node.path : (node.path as NSString).deletingLastPathComponent
-        if !node.isDirectory, let split = onOpenFileSplit {
-            add(menu, "오른쪽에 나눠 열기") { split(node.path, .horizontal) }
-            add(menu, "아래에 나눠 열기") { split(node.path, .vertical) }
+        if !node.isDirectory {
+            add(menu, "열기") { [weak self] in self?.onOpenFile?(node.path) }
+            if let inTab = onOpenFileInTab { add(menu, "새 탭으로 열기") { inTab(node.path) } }
+            if let split = onOpenFileSplit {
+                add(menu, "오른쪽에 분할로 열기") { split(node.path, .horizontal) }
+                add(menu, "아래로 분할로 열기") { split(node.path, .vertical) }
+            }
             menu.addItem(.separator())
         }
         add(menu, "Finder 에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)]) }
@@ -583,7 +755,9 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         let parts = argument.split(separator: "|", maxSplits: 1).map(String.init)
         guard let node = rootNode?.find(rel: parts[0]) else { print("filesmenu: 없음 \(parts[0])"); fflush(stdout); return }
         let row = outline.row(forItem: node)
-        if row >= 0 { outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+        if row >= 0, !outline.selectedRowIndexes.contains(row) {
+            outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
         let menu = NSMenu()
         menuNeedsUpdate(menu)
         print("filesmenu \(node.rel): " + menu.items.map { $0.isSeparatorItem ? "—" : $0.title }.joined(separator: " / "))
@@ -595,11 +769,25 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         if let node = rootNode?.find(rel: rel) { open(node) }
     }
 
+    /// files-select a|b|c: 그 줄들을 고른다(펼쳐져 있어야 한다)
+    func debugSelect(_ argument: String) {
+        let rows = argument.split(separator: "|").compactMap { rootNode?.find(rel: String($0)) }.map { outline.row(forItem: $0) }
+        outline.selectRowIndexes(IndexSet(rows.filter { $0 >= 0 }), byExtendingSelection: false)
+    }
+
+    /// files-enter: Enter 와 같다
+    func debugEnter() { openSelected() }
+
+    /// files-scroll <줄>: 그 줄을 맨 위로
+    func debugScroll(_ rel: String) { scroll(toTop: rel) }
+
     var debugSummary: String {
         let changes = status.map { "\($0.changeCount) (files \($0.files.count), folders \($0.folders.count))" } ?? "none"
         return "filesroot root=\(root ?? "-") git=\(isGit) branch=\(branch ?? "-") visible=\(toolVisible) active=\(isActive) "
             + "watching=\(watcher.isRunning) gitRuns=\(watcher.runs) lastGit=\(String(format: "%.0fms", watcher.lastDuration * 1000)) "
             + "changes=\(changes) loadedNodes=\(rootNode?.loadedCount ?? 0) rows=\(outline.numberOfRows) "
+            + "selected=[\(outline.selectedRowIndexes.compactMap { rel(ofRow: $0) }.joined(separator: ","))] top=\(rel(ofRow: topRow) ?? "-") "
+            + "rowHeight=\(outline.rowHeight) "
             + "rootsRemembered=\(memory.rootCount) toast=\(toast.isHidden ? "-" : toast.stringValue) toastFrame=\(toast.frame)"
     }
 }
@@ -677,23 +865,30 @@ final class FileRowView: NSTableRowView {
 
 final class FileCellView: NSTableCellView {
     static let identifier = NSUserInterfaceItemIdentifier("FileCell")
-    private static let symbolConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
-    private static let folderImage = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: "폴더")?
-        .withSymbolConfiguration(symbolConfig)
-    private static let fileImage = NSImage(systemSymbolName: "doc", accessibilityDescription: "파일")?
-        .withSymbolConfiguration(symbolConfig)
+    /// 아이콘(배율별로 한 번만 만든다)
+    private static var images: [CGFloat: (folder: NSImage?, file: NSImage?)] = [:]
+    private static func icons(_ pointSize: CGFloat) -> (folder: NSImage?, file: NSImage?) {
+        if let cached = images[pointSize] { return cached }
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .regular)
+        let made = (NSImage(systemSymbolName: "folder.fill", accessibilityDescription: "폴더")?.withSymbolConfiguration(config),
+                    NSImage(systemSymbolName: "doc", accessibilityDescription: "파일")?.withSymbolConfiguration(config))
+        images[pointSize] = made
+        return made
+    }
 
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
     private let badge = NSTextField(labelWithString: "")
+    private var iconWidth: NSLayoutConstraint!
+    private var iconHeight: NSLayoutConstraint!
+    /// 이 칸에 맞춘 배율(재사용된 칸이 예전 배율이면 configure 에서 맞춘다)
+    private var scale: UIScale?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         identifier = Self.identifier
-        label.font = TermAppearance.uiFont(12)
         label.lineBreakMode = .byTruncatingMiddle
         label.cell?.truncatesLastVisibleLine = true
-        badge.font = TermAppearance.uiFont(10)
         badge.alignment = .right
         icon.imageScaling = .scaleProportionallyDown
         for view in [icon, label, badge] as [NSView] {
@@ -703,11 +898,13 @@ final class FileCellView: NSTableCellView {
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         badge.setContentCompressionResistancePriority(.required, for: .horizontal)
         badge.setContentHuggingPriority(.required, for: .horizontal)
+        iconWidth = icon.widthAnchor.constraint(equalToConstant: 16)
+        iconHeight = icon.heightAnchor.constraint(equalToConstant: 14)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 14),
+            iconWidth,
+            iconHeight,
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 5),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
             badge.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 6),
@@ -732,11 +929,23 @@ final class FileCellView: NSTableCellView {
         }
     }
 
+    private func applyScale() {
+        let ui = TermAppearance.uiScale
+        guard ui != scale else { return }
+        scale = ui
+        label.font = TermAppearance.uiFont(ui(12))
+        badge.font = TermAppearance.uiFont(ui(10))
+        iconWidth.constant = ui(16)
+        iconHeight.constant = ui(14)
+    }
+
     func configure(name: String, isDirectory: Bool, color: NSColor, dim: Bool, status: GitFileStatus?) {
+        applyScale()
         let alpha: CGFloat = dim ? 0.55 : 1
         label.stringValue = name
         label.textColor = color.withAlphaComponent(alpha)
-        icon.image = isDirectory ? Self.folderImage : Self.fileImage
+        let icons = Self.icons(TermAppearance.scaled(11))
+        icon.image = isDirectory ? icons.folder : icons.file
         icon.contentTintColor = (isDirectory ? FileStatusColors.folderIcon : TermAppearance.textDim).withAlphaComponent(alpha)
         let letter = isDirectory ? "" : Self.letter(status)
         badge.stringValue = letter
@@ -758,16 +967,12 @@ final class FilesHeaderView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        title.font = TermAppearance.uiFont(12, bold: true)
         title.textColor = TermAppearance.textPrimary
         title.lineBreakMode = .byTruncatingTail
-        branch.font = TermAppearance.uiFont(11)
         branch.textColor = TermAppearance.cyan
         branch.lineBreakMode = .byTruncatingMiddle
-        changes.font = TermAppearance.uiFont(10)
         changes.textColor = FileStatusColors.modified
-        collapse.image = NSImage(systemSymbolName: "chevron.up.chevron.down", accessibilityDescription: "모두 접기")?
-            .withSymbolConfiguration(.init(pointSize: 10, weight: .medium))
+        applyScale()
         collapse.isBordered = false
         collapse.contentTintColor = TermAppearance.textDim
         collapse.toolTip = "모두 접기"
@@ -801,6 +1006,15 @@ final class FilesHeaderView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         TermAppearance.chrome.setFill()
         dirtyRect.intersection(bounds).fill()
+    }
+
+    /// 글꼴 크기 배율
+    func applyScale() {
+        title.font = TermAppearance.scaledUIFont(12, bold: true)
+        branch.font = TermAppearance.scaledUIFont(11)
+        changes.font = TermAppearance.scaledUIFont(10)
+        collapse.image = NSImage(systemSymbolName: "chevron.up.chevron.down", accessibilityDescription: "모두 접기")?
+            .withSymbolConfiguration(.init(pointSize: TermAppearance.scaled(10), weight: .medium))
     }
 
     func update(name: String?, branch value: String?, changes count: Int, isGit: Bool) {

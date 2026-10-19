@@ -247,7 +247,10 @@ final class TermModel: ObservableObject {
     func start() {
         checkHooks()
         updates.start()
-        editors.onTitleChange = { [weak self] in self?.host?.refreshTitles() }
+        editors.onTitleChange = { [weak self] in
+            self?.pinDirtyPreviews() // 고치면(●) 미리보기가 아니다
+            self?.host?.refreshTitles()
+        }
         notifier.onOpen = { [weak self] pane in self?.focus(pane: pane) }
         notifier.start()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
@@ -803,6 +806,67 @@ final class TermModel: ObservableObject {
             next.selected = tab.id
         }
         setWorkspace(next, render: true)
+    }
+
+    // MARK: 파일 트리에서 열기(배치 규칙은 TermLayout `Workspace.openPreview`·`openStacked`·`openGrid`)
+
+    /// 두 번 클릭·Enter: 지금 화면 옆 미리보기 화면에(이미 열렸으면 그 화면으로)
+    func openFromTree(_ path: String) {
+        pinDirtyPreviews()
+        var next = workspace
+        let result = next.openPreview(path: (path as NSString).standardizingPath, newId: EditorPane.newId)
+        applyOpen(next, result)
+    }
+
+    /// 여러 파일을 한꺼번에: 4개까지는 지금 화면 옆 칸에 위아래로, 더 많으면 물어보고 새 탭에 격자로(12개까지)
+    func openFromTree(paths: [String]) {
+        let paths = paths.map { ($0 as NSString).standardizingPath }
+        guard paths.count > 1 else {
+            if let path = paths.first { openFromTree(path) }
+            return
+        }
+        pinDirtyPreviews()
+        var next = workspace
+        let result: FileOpenResult
+        if paths.count <= Workspace.maxStackedFiles {
+            result = next.openStacked(paths: paths, newId: EditorPane.newId)
+        } else {
+            let alert = NSAlert()
+            alert.messageText = "\(paths.count)개 파일을 새 탭에 열까요?"
+            alert.informativeText = paths.count > Workspace.maxGridFiles
+                ? "한 탭에 \(Workspace.maxGridFiles)개까지 나눠 엽니다. 앞의 \(Workspace.maxGridFiles)개만 열립니다."
+                : "새 탭 하나에 나눠 엽니다."
+            alert.addButton(withTitle: "새 탭에 열기")
+            alert.addButton(withTitle: "취소")
+            guard AppAlert.run(alert) == .alertFirstButtonReturn else { return }
+            result = next.openGrid(paths: paths, newId: EditorPane.newId)
+        }
+        applyOpen(next, result)
+    }
+
+    private func applyOpen(_ next: Workspace, _ result: FileOpenResult) {
+        guard next != workspace else { return }
+        setWorkspace(next, render: true) // 뷰를 먼저 떼고
+        result.closed.forEach(editors.remove) // 바꿔 쓴 미리보기 문서를 닫는다
+        host?.focusPane()
+    }
+
+    /// 미리보기를 보통 화면으로(제목 두 번 누르기·"고정")
+    func pin(editor id: String) {
+        var next = workspace
+        guard next.pin(editor: id) else { return }
+        setWorkspace(next, render: false)
+        host?.refreshTitles()
+    }
+
+    /// 고친 미리보기는 고정한다(다음 파일이 그 자리를 덮지 않게)
+    private func pinDirtyPreviews() {
+        var next = workspace
+        var changed = false
+        for (id, recipe) in workspace.editors where recipe.isPreview && editors.isDirty(id) {
+            changed = next.pin(editor: id) || changed
+        }
+        if changed { setWorkspace(next, render: false) }
     }
 
     /// ⌘S: 지금 화면이 편집기면 저장

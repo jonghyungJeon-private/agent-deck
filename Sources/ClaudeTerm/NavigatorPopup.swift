@@ -17,9 +17,10 @@ struct NavigatorRow {
 /// 키보드 먼저: ↑↓ 고르기, ↩ 열기, esc 닫기. 찾기 칸이 있으면(⌘O) 글을 치는 대로 onQuery.
 final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate {
     static let maxVisibleRows = 12
-    static let headerHeight: CGFloat = 30
-    static let fieldHeight: CGFloat = 34
-    static let footerHeight: CGFloat = 22
+    // 머리 줄·찾기 칸·꼬리 줄은 글꼴 크기 배율을 따른다(창은 열 때마다 새로 만든다)
+    static var headerHeight: CGFloat { TermAppearance.scaled(30) }
+    static var fieldHeight: CGFloat { TermAppearance.scaled(34) }
+    static var footerHeight: CGFloat { TermAppearance.scaled(22) }
 
     var onQuery: ((String) -> Void)?
     var onChoose: ((Int) -> Void)?
@@ -55,23 +56,23 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         appearance = NSAppearance(named: .darkAqua)
 
         titleLabel.stringValue = title
-        titleLabel.font = TermAppearance.uiFont(12, bold: true)
+        titleLabel.font = TermAppearance.scaledUIFont(12, bold: true)
         titleLabel.textColor = TermAppearance.textPrimary
         titleLabel.lineBreakMode = .byTruncatingTail
-        statusLabel.font = TermAppearance.uiFont(11)
+        statusLabel.font = TermAppearance.scaledUIFont(11)
         statusLabel.textColor = TermAppearance.textDim
         statusLabel.alignment = .right
         statusLabel.lineBreakMode = .byTruncatingHead
-        footerLabel.font = TermAppearance.uiFont(10)
+        footerLabel.font = TermAppearance.scaledUIFont(10)
         footerLabel.textColor = TermAppearance.textDim
         footerLabel.stringValue = "↑↓ 고르기 · ↩ 열기 · esc 닫기"
-        emptyLabel.font = TermAppearance.uiFont(12)
+        emptyLabel.font = TermAppearance.scaledUIFont(12)
         emptyLabel.textColor = TermAppearance.textDim
         emptyLabel.alignment = .center
         emptyLabel.isHidden = true
 
         field.isHidden = !searchable
-        field.font = TermAppearance.uiFont(14)
+        field.font = TermAppearance.scaledUIFont(14)
         field.textColor = TermAppearance.textPrimary
         field.backgroundColor = TermAppearance.background
         field.drawsBackground = true
@@ -82,7 +83,7 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         field.cell?.usesSingleLineMode = true
         field.cell?.isScrollable = true
         field.placeholderAttributedString = NSAttributedString(string: placeholder ?? "", attributes: [
-            .foregroundColor: TermAppearance.textDim, .font: TermAppearance.uiFont(13),
+            .foregroundColor: TermAppearance.textDim, .font: TermAppearance.scaledUIFont(13),
         ])
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("row"))
@@ -119,7 +120,7 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
     /// 위 줄 코드 글꼴(앱 글꼴 크기를 따른다) + 아래 줄 경로
     static var rowHeight: CGFloat {
         let code = EditorStyle.font
-        let detail = TermAppearance.uiFont(11)
+        let detail = TermAppearance.scaledUIFont(11)
         return ceil(code.ascender - code.descender + code.leading) + ceil(detail.ascender - detail.descender) + 14
     }
 
@@ -132,8 +133,9 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
     override func layout() {
         super.layout()
         let w = bounds.width
-        titleLabel.frame = NSRect(x: 12, y: 7, width: w * 0.6 - 12, height: 17)
-        statusLabel.frame = NSRect(x: w * 0.6, y: 8, width: w * 0.4 - 12, height: 16)
+        let ui = TermAppearance.uiScale
+        titleLabel.frame = NSRect(x: 12, y: ui(7), width: w * 0.6 - 12, height: ui(17))
+        statusLabel.frame = NSRect(x: w * 0.6, y: ui(8), width: w * 0.4 - 12, height: ui(16))
         var y = Self.headerHeight
         if searchable {
             field.frame = NSRect(x: 10, y: y, width: w - 20, height: Self.fieldHeight - 8)
@@ -141,8 +143,8 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         }
         let listHeight = bounds.height - y - Self.footerHeight - 2
         scroll.frame = NSRect(x: 1, y: y, width: w - 2, height: max(listHeight, 0))
-        emptyLabel.frame = NSRect(x: 12, y: y + max(listHeight, 0) / 2 - 9, width: w - 24, height: 18)
-        footerLabel.frame = NSRect(x: 12, y: bounds.height - Self.footerHeight + 3, width: w - 24, height: 15)
+        emptyLabel.frame = NSRect(x: 12, y: y + max(listHeight, 0) / 2 - ui(9), width: w - 24, height: ui(18))
+        footerLabel.frame = NSRect(x: 12, y: bounds.height - Self.footerHeight + ui(3), width: w - 24, height: ui(15))
         table.tableColumns.first?.width = scroll.contentSize.width
     }
 
@@ -290,12 +292,12 @@ final class NavigatorCellView: NSView {
         let codeHeight = ceil(codeFont.ascender - codeFont.descender + codeFont.leading)
         let top: CGFloat = 6
         if let badge = row.badge {
-            let size: CGFloat = 18
+            let size = TermAppearance.scaled(18)
             let rect = NSRect(x: x, y: top + (codeHeight - size) / 2, width: size, height: size)
             let path = NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4)
             row.badgeColor.withAlphaComponent(0.18).setFill()
             path.fill()
-            let attrs: [NSAttributedString.Key: Any] = [.font: TermAppearance.uiFont(11, bold: true), .foregroundColor: row.badgeColor]
+            let attrs: [NSAttributedString.Key: Any] = [.font: TermAppearance.scaledUIFont(11, bold: true), .foregroundColor: row.badgeColor]
             let text = badge as NSString
             let textSize = text.size(withAttributes: attrs)
             text.draw(at: NSPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2), withAttributes: attrs)
@@ -303,7 +305,7 @@ final class NavigatorCellView: NSView {
         }
         var tagWidth: CGFloat = 0
         if let tag = row.tag {
-            let attrs: [NSAttributedString.Key: Any] = [.font: TermAppearance.uiFont(10, bold: true), .foregroundColor: TermAppearance.yellow]
+            let attrs: [NSAttributedString.Key: Any] = [.font: TermAppearance.scaledUIFont(10, bold: true), .foregroundColor: TermAppearance.yellow]
             let size = (tag as NSString).size(withAttributes: attrs)
             tagWidth = size.width + 16
             (tag as NSString).draw(at: NSPoint(x: bounds.width - size.width - 12, y: top + (codeHeight - size.height) / 2), withAttributes: attrs)
@@ -311,10 +313,11 @@ final class NavigatorCellView: NSView {
         let titleRect = NSRect(x: x, y: top, width: max(bounds.width - x - 12 - tagWidth, 10), height: codeHeight)
         row.title.draw(with: titleRect, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
         let detailAttrs: [NSAttributedString.Key: Any] = [
-            .font: TermAppearance.uiFont(11), .foregroundColor: TermAppearance.textDim,
+            .font: TermAppearance.scaledUIFont(11), .foregroundColor: TermAppearance.textDim,
             .paragraphStyle: { let p = NSMutableParagraphStyle(); p.lineBreakMode = .byTruncatingHead; return p }(),
         ]
-        (row.detail as NSString).draw(with: NSRect(x: x, y: top + codeHeight + 2, width: max(bounds.width - x - 12, 10), height: 16),
+        (row.detail as NSString).draw(with: NSRect(x: x, y: top + codeHeight + 2, width: max(bounds.width - x - 12, 10),
+                                                   height: TermAppearance.scaled(16)),
                                       options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine], attributes: detailAttrs)
     }
 }

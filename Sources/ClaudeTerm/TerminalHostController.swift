@@ -7,7 +7,8 @@ import TermWire
 /// 오른쪽 터미널 영역: 위에 탭 줄, 아래에 지금 탭의 분할 화면.
 /// 지금 탭에 보이는 화면만 터미널 뷰를 만든다(다른 탭은 데몬이 지난 출력만 들고 있다).
 final class TerminalHostController: NSViewController {
-    static let tabBarHeight: CGFloat = 28
+    /// 탭 줄 높이(글꼴 크기 배율을 따른다). 도구 창 머리 줄·도구 버튼 줄도 같은 높이라 한 선에 맞는다.
+    static var tabBarHeight: CGFloat { TermAppearance.scaled(28) }
 
     let model: TermModel
     private(set) var terminals: [String: PaneTerminal] = [:]
@@ -76,6 +77,7 @@ final class TerminalHostController: NSViewController {
         tabBar.onDropOutside = { [weak self] index, point in self?.dragTab(index, at: point, drop: true) }
         container.onPaneDrag = { [weak self] id, point, ended in self?.drag(.pane(id), at: point, drop: ended) }
         container.onExtract = { [weak self] id in self?.model.extractPane(id) }
+        container.onPin = { [weak self] id in self?.model.pin(editor: id) }
         dropOverlay.isHidden = true
         for view in [container, placeholder, tabBar, dropOverlay] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
@@ -187,7 +189,8 @@ final class TerminalHostController: NSViewController {
     /// 분할 테두리에 쓰는 화면 제목과 상태
     private var paneTitles: [String: PaneTitle] {
         Dictionary(uniqueKeysWithValues: (Array(terminals.keys) + Array(editorViews.keys)).map { id in
-            (id, PaneTitle(name: model.paneLabel(id), status: model.row(id)?.status ?? .none))
+            (id, PaneTitle(name: model.paneLabel(id), status: model.row(id)?.status ?? .none,
+                           preview: model.workspace.editors[id]?.isPreview == true))
         })
     }
 
@@ -227,9 +230,14 @@ final class TerminalHostController: NSViewController {
         terminals[id]?.receive(bytes, replay: replay)
     }
 
-    /// 글꼴 크기가 바뀌면 지금 있는 터미널에 적용한다(나중에 만들 화면은 만들 때 지금 크기를 쓴다)
+    /// 글꼴 크기가 바뀌면 지금 있는 터미널에 적용한다(나중에 만들 화면은 만들 때 지금 크기를 쓴다).
+    /// 탭 줄·분할 제목도 배율을 따라 높이가 바뀌므로 다시 배치한다(터미널 줄 수가 바뀌면 창 크기를 바꿀 때처럼 데몬에 알린다).
     @objc private func fontSizeChanged() {
         for terminal in terminals.values { terminal.applyFont() }
+        guard isViewLoaded else { return }
+        if tabBarHeight.constant > 0 { tabBarHeight.constant = Self.tabBarHeight }
+        tabBar.scaleChanged()
+        container.scaleChanged()
     }
 
     func paneExited(_ id: String) {

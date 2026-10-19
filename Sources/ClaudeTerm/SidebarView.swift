@@ -20,6 +20,9 @@ struct SidebarView: View {
     var currentSide: DockSide = .left
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
     @State private var expandedAgent: String?
+    /// 글꼴 크기 배율(⌘+ ⌘−) — 안쪽 뷰에는 `\.uiScale` 로 내려 준다
+    @ObservedObject private var scaling = UIScaleModel.shared
+    private var ui: UIScale { scaling.scale }
 
     init(model: TermModel, showsTitle: Bool = true, onDock: ((DockSide) -> Void)? = nil, currentSide: DockSide = .left) {
         _model = ObservedObject(wrappedValue: model)
@@ -36,9 +39,9 @@ struct SidebarView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     if model.groups.isEmpty {
                         Text(model.connected ? "열린 세션이 없습니다.\n위 + 버튼으로 시작하세요." : "데몬에 연결 중…")
-                            .font(Font(TermAppearance.uiFont(11)))
+                            .uiFont(11)
                             .foregroundStyle(Color(TermAppearance.textDim))
-                            .padding(14)
+                            .padding(ui(14))
                     }
                     // 묶음·작업 트리·세션을 한 줄짜리 목록으로 펼쳐 그린다.
                     // ForEach 를 겹쳐 쓰면 안쪽 줄이 바뀐 것을 SwiftUI 가 놓쳐 이름이 늦게 바뀌었다.
@@ -47,7 +50,7 @@ struct SidebarView: View {
                         row(item)
                             .opacity(isDragged(item) ? 0.35 : 1)
                             .overlay(alignment: insertion(item) == .below ? .bottom : .top) {
-                                if let edge = insertion(item) { InsertionLine(edge: edge, indent: item.indent) }
+                                if let edge = insertion(item) { InsertionLine(edge: edge, indent: ui(item.indent)) }
                             }
                             .onDrop(of: [.text], delegate: SpacesDropDelegate(item: item, items: items,
                                                                               groups: model.groups, store: spaces))
@@ -57,7 +60,7 @@ struct SidebarView: View {
                             }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, ui(4))
             }
             hookBanner
             codexHookBanner
@@ -65,6 +68,7 @@ struct SidebarView: View {
         .frame(minWidth: 220, maxHeight: .infinity)
         .background(Color(TermAppearance.chrome))
         .environment(\.colorScheme, .dark)
+        .environment(\.uiScale, ui)
     }
 
     @ViewBuilder
@@ -118,7 +122,7 @@ struct SidebarView: View {
                 }
         case .gap:
             // 묶음 끝 틈: 묶음을 끌어 내릴 때 놓을 자리 줄이 여기 그려진다
-            Color.clear.frame(height: 10).contentShape(Rectangle())
+            Color.clear.frame(height: ui(10)).contentShape(Rectangle())
         }
     }
 
@@ -155,10 +159,10 @@ struct SidebarView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: ui(4)) {
             if showsTitle {
                 Text("spaces")
-                    .font(Font(TermAppearance.uiFont(11)))
+                    .uiFont(11)
                     .foregroundStyle(Color(TermAppearance.textDim))
             }
             Spacer()
@@ -170,7 +174,7 @@ struct SidebarView: View {
                 }
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 4) {
+                HStack(spacing: ui(4)) {
                     ChromeButton(label: "+ claude", help: "폴더를 골라 새 탭에서 claude 실행") {
                         pickFolder { model.newPane(cwd: $0, command: "claude") }
                     }
@@ -182,16 +186,12 @@ struct SidebarView: View {
                     }
                 }
                 .fixedSize()
-                Menu("+ 새 세션") {
-                    Button("Claude Code…") { pickFolder { model.newPane(cwd: $0, command: "claude") } }
-                    Button("Codex…") { pickFolder { model.newPane(cwd: $0, command: "codex") } }
-                    Button("셸") { model.newPane(cwd: NSHomeDirectory()) }
-                }
-                .fixedSize()
+                Menu("+ 새 세션") { newSessionItems }
+                    .fixedSize()
             }
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 8)
+        .padding(.leading, ui(14))
+        .padding(.trailing, ui(8))
         .frame(height: TerminalHostController.tabBarHeight)
         .contentShape(Rectangle())
         .contextMenu {
@@ -204,6 +204,13 @@ struct SidebarView: View {
                 Button("숨기기 (⌘⇧S)") { onDock(.hidden) }
             }
         }
+    }
+
+    @ViewBuilder
+    private var newSessionItems: some View {
+        Button("Claude Code…") { pickFolder { model.newPane(cwd: $0, command: "claude") } }
+        Button("Codex…") { pickFolder { model.newPane(cwd: $0, command: "codex") } }
+        Button("셸") { model.newPane(cwd: NSHomeDirectory()) }
     }
 
     /// hook 이 없거나 예전 앱 것이면 눈에 띄게 알린다(이름·되살리기·상태 표시가 여기에 달려 있다)
@@ -223,9 +230,9 @@ struct SidebarView: View {
             return true
         }()
         if let message {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: ui(6)) {
                 Text(message)
-                    .font(Font(TermAppearance.uiFont(11)))
+                    .uiFont(11)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                     .fixedSize(horizontal: false, vertical: true)
                 if canConnect {
@@ -233,29 +240,29 @@ struct SidebarView: View {
                         model.connectHooks()
                     } label: {
                         Text(model.hookState == .legacy ? "AgentDeck 으로 옮기기" : model.hookState == .update ? "갱신하기" : "연결하기")
-                            .font(Font(TermAppearance.uiFont(11, bold: true)))
+                            .uiFont(11, bold: true)
                             .foregroundStyle(Color(TermAppearance.chrome))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
+                            .padding(.horizontal, ui(10))
+                            .padding(.vertical, ui(4))
                             .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent)))
                     }
                     .buttonStyle(.plain)
                     .help("~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로). 앱을 지우면 hook 은 아무것도 하지 않습니다.")
                 }
             }
-            .padding(10)
+            .padding(ui(10))
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(TermAppearance.accent), lineWidth: 1))
-            .padding(.horizontal, 10)
-            .padding(.bottom, 8)
+            .padding(.horizontal, ui(10))
+            .padding(.bottom, ui(8))
         }
         if let notice = model.notice {
             Text(notice)
-                .font(Font(TermAppearance.uiFont(10)))
+                .uiFont(10)
                 .foregroundStyle(Color(TermAppearance.textDim))
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 14)
-                .padding(.bottom, 6)
+                .padding(.horizontal, ui(14))
+                .padding(.bottom, ui(6))
                 .onTapGesture { model.notice = nil }
         }
     }
@@ -263,7 +270,7 @@ struct SidebarView: View {
     @ViewBuilder
     private var codexHookBanner: some View {
         if model.codexHookState != .unknown && model.codexHookState != .ok {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: ui(6)) {
                 Text(model.codexHookState == .update
                      ? "Codex 연결이 예전 판이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks 에서 훅을 다시 신뢰하세요."
                      : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요.")
@@ -274,10 +281,10 @@ struct SidebarView: View {
                     Button(model.codexHookState == .update ? "Codex 연결 갱신" : "Codex 연결하기") { model.connectCodexHooks() }
                 }
             }
-            .font(Font(TermAppearance.uiFont(10)))
+            .uiFont(10)
             .foregroundStyle(Color(TermAppearance.textDim))
-            .padding(.horizontal, 14)
-            .padding(.bottom, 8)
+            .padding(.horizontal, ui(14))
+            .padding(.bottom, ui(8))
         }
     }
 
@@ -307,13 +314,14 @@ struct ChromeButton: View {
     let help: String
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
         Button(action: action) {
             Text(label)
-                .font(Font(TermAppearance.uiFont(11)))
+                .uiFont(11)
                 .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
-                .padding(.horizontal, 7)
+                .padding(.horizontal, ui(7))
                 .padding(.vertical, 3)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
                 .contentShape(Rectangle())
@@ -330,13 +338,14 @@ struct IconChromeButton: View {
     let help: String
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 11, weight: .medium))
+                .font(.system(size: ui(11), weight: .medium))
                 .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
-                .frame(width: 22, height: 20)
+                .frame(width: ui(22), height: ui(20))
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
                 .contentShape(Rectangle())
         }
@@ -350,6 +359,7 @@ struct IconChromeButton: View {
 struct StatusDot: View {
     let status: WorkStatus
     var dormant = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
         let color = Color(dormant ? TermAppearance.textDim.withAlphaComponent(0.8) : status.color)
@@ -363,7 +373,7 @@ struct StatusDot: View {
                 Circle().fill(color)
             }
         }
-        .frame(width: 8, height: 8)
+        .frame(width: ui(8), height: ui(8))
     }
 }
 
@@ -371,32 +381,34 @@ struct StatusDot: View {
 struct DisclosureChevron: View {
     let collapsed: Bool
     var highlighted = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
         Image(systemName: "chevron.right")
-            .font(.system(size: 8, weight: .bold))
+            .font(.system(size: ui(8), weight: .bold))
             .foregroundStyle(Color(highlighted ? TermAppearance.textPrimary : TermAppearance.textDim))
             .rotationEffect(.degrees(collapsed ? 0 : 90))
-            .frame(width: 10, height: 10)
+            .frame(width: ui(10), height: ui(10))
     }
 }
 
 /// 접힌 줄의 상태 합계: 상태 점 + 수(입력 대기·오류는 붉은 바탕으로 눈에 띄게), 일하는 하위 에이전트, 세션 수
 struct SpacesSummaryView: View {
     let summary: SpacesSummary
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: ui(6)) {
             ForEach(SpacesSummary.Kind.allCases.filter { summary.count($0) > 0 }, id: \.self) { kind in
                 let attention = kind == .waiting || kind == .error
-                HStack(spacing: 3) {
+                HStack(spacing: ui(3)) {
                     StatusDot(status: WorkStatus(summary: kind))
                     Text("\(summary.count(kind))")
-                        .font(Font(TermAppearance.uiFont(10, bold: attention)))
+                        .uiFont(10, bold: attention)
                         .foregroundStyle(Color(attention ? TermAppearance.red : TermAppearance.textPrimary).opacity(attention ? 1 : 0.85))
                 }
-                .padding(.horizontal, attention ? 5 : 0)
-                .padding(.vertical, attention ? 1 : 0)
+                .padding(.horizontal, attention ? ui(5) : 0)
+                .padding(.vertical, attention ? ui(1) : 0)
                 .background {
                     if attention {
                         Capsule().fill(Color(TermAppearance.red).opacity(0.18))
@@ -406,11 +418,11 @@ struct SpacesSummaryView: View {
             }
             if summary.runningAgents > 0 {
                 Text("↳\(summary.runningAgents)")
-                    .font(Font(TermAppearance.uiFont(10)))
+                    .uiFont(10)
                     .foregroundStyle(Color(TermAppearance.yellow))
             }
             Text(summary.sessions > 0 ? "세션 \(summary.sessions)" : "세션 없음")
-                .font(Font(TermAppearance.uiFont(10)))
+                .uiFont(10)
                 .foregroundStyle(Color(TermAppearance.textDim))
         }
         .fixedSize()
@@ -436,22 +448,23 @@ struct GroupRowView<MenuContent: View, ContextContent: View>: View {
     @ViewBuilder let menu: () -> MenuContent
     @ViewBuilder let context: () -> ContextContent
     @State private var hovering = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: ui(6)) {
             // 화살표·이름 어디를 눌러도 접고 편다(+ 메뉴는 따로)
-            HStack(alignment: .center, spacing: 6) {
+            HStack(alignment: .center, spacing: ui(6)) {
                 DisclosureChevron(collapsed: collapsed, highlighted: hovering)
                 StatusDot(status: WorkStatus.top(group.sections.flatMap { $0.rows.map(\.status) }))
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: ui(2)) {
                     Text(group.name)
-                        .font(Font(TermAppearance.uiFont(12, bold: true)))
+                        .uiFont(12, bold: true)
                         .foregroundStyle(Color(TermAppearance.textPrimary))
                     // 접혔으면 둘째 줄 앞에 안의 상태 합계(이름은 폭을 그대로 쓴다)
-                    HStack(spacing: 6) {
+                    HStack(spacing: ui(6)) {
                         if let summary { SpacesSummaryView(summary: summary) }
                         Text((summary == nil ? "" : "· ") + (group.branch ?? (group.path as NSString).abbreviatingWithTildeInPath))
-                            .font(Font(TermAppearance.uiFont(10)))
+                            .uiFont(10)
                             .foregroundStyle(Color(TermAppearance.textDim))
                     }
                 }
@@ -465,7 +478,7 @@ struct GroupRowView<MenuContent: View, ContextContent: View>: View {
             Menu {
                 menu()
             } label: {
-                Text("+").font(Font(TermAppearance.uiFont(13)))
+                Text("+").uiFont(13)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -473,9 +486,9 @@ struct GroupRowView<MenuContent: View, ContextContent: View>: View {
             .opacity(hovering ? 1 : 0.35)
             .help("이 폴더에서 새로 열기")
         }
-        .padding(.leading, 8)
-        .padding(.trailing, 10)
-        .padding(.vertical, 6)
+        .padding(.leading, ui(8))
+        .padding(.trailing, ui(10))
+        .padding(.vertical, ui(6))
         .background(Color(holdsSelection || hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
         .overlay(alignment: .leading) {
             if holdsSelection { Rectangle().fill(Color(TermAppearance.accent).opacity(0.7)).frame(width: 2) }
@@ -494,21 +507,22 @@ struct WorktreeRowView: View {
     let holdsSelection: Bool
     let onToggle: () -> Void
     @State private var hovering = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: ui(6)) {
             DisclosureChevron(collapsed: collapsed, highlighted: hovering)
             Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: ui(10), weight: .semibold))
                 .foregroundStyle(Color(section.isClaude ? TermAppearance.claudeColor : TermAppearance.textDim))
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: ui(2)) {
                 Text(section.name)
-                    .font(Font(TermAppearance.uiFont(11, bold: true)))
+                    .uiFont(11, bold: true)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
-                HStack(spacing: 6) {
+                HStack(spacing: ui(6)) {
                     if let summary { SpacesSummaryView(summary: summary) }
                     Text((summary == nil || section.branch == nil ? "" : "· ") + (section.branch ?? ""))
-                        .font(Font(TermAppearance.uiFont(10)))
+                        .uiFont(10)
                         .foregroundStyle(Color(TermAppearance.textDim))
                 }
             }
@@ -517,19 +531,19 @@ struct WorktreeRowView: View {
                 EmptyView()
             } else if section.agents.contains(where: \.isRunning) {
                 Text("● 작업 중 \(section.agents.filter(\.isRunning).count)")
-                    .font(Font(TermAppearance.uiFont(10, bold: true)))
+                    .uiFont(10, bold: true)
                     .foregroundStyle(Color(TermAppearance.yellow))
             } else if !section.agents.isEmpty {
-                Text("최근 작업").font(Font(TermAppearance.uiFont(10))).foregroundStyle(Color(TermAppearance.textDim))
+                Text("최근 작업").uiFont(10).foregroundStyle(Color(TermAppearance.textDim))
             } else if section.rows.isEmpty {
-                Text("세션 없음").font(Font(TermAppearance.uiFont(10))).foregroundStyle(Color(TermAppearance.textDim).opacity(0.7))
+                Text("세션 없음").uiFont(10).foregroundStyle(Color(TermAppearance.textDim).opacity(0.7))
             }
         }
         .lineLimit(1)
         .truncationMode(.middle)
-        .padding(.leading, 14 + 7)
-        .padding(.trailing, 10)
-        .padding(.vertical, 4)
+        .padding(.leading, ui(14 + 7))
+        .padding(.trailing, ui(10))
+        .padding(.vertical, ui(4))
         .background(Color(holdsSelection || hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
         .overlay(alignment: .leading) {
             if holdsSelection { Rectangle().fill(Color(TermAppearance.accent).opacity(0.7)).frame(width: 2) }
@@ -547,18 +561,19 @@ struct SessionRowView: View {
     let selected: Bool
     let tabNumber: Int?
     @State private var hovering = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: ui(8)) {
             StatusDot(status: row.status, dormant: row.dormant)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: ui(1)) {
                 Text(row.title)
-                    .font(Font(TermAppearance.uiFont(12, bold: selected)))
+                    .uiFont(12, bold: selected)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                 if row.dormant {
                     Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program) 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
-                        .font(Font(TermAppearance.uiFont(10)))
+                        .uiFont(10)
                         .foregroundStyle(Color(TermAppearance.textDim))
                 } else {
                 HStack(spacing: 0) {
@@ -573,21 +588,21 @@ struct SessionRowView: View {
                     Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")
                         .foregroundStyle(Color(TermAppearance.textDim))
                 }
-                .font(Font(TermAppearance.uiFont(10)))
+                .uiFont(10)
                 }
             }
             .lineLimit(1)
             Spacer(minLength: 4)
             if let tabNumber {
                 Text("⌘\(tabNumber)")
-                    .font(Font(TermAppearance.uiFont(10)))
+                    .uiFont(10)
                     .foregroundStyle(Color(selected ? TermAppearance.accent : TermAppearance.textDim).opacity(0.8))
                     .help("탭 \(tabNumber)에 있음")
             }
         }
-        .padding(.leading, 14 + CGFloat(depth) * 15)
-        .padding(.trailing, 10)
-        .padding(.vertical, 5)
+        .padding(.leading, ui(14 + CGFloat(depth) * 15))
+        .padding(.trailing, ui(10))
+        .padding(.vertical, ui(5))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(selected ? TermAppearance.chromeRaised : hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
         .overlay(alignment: .leading) {
@@ -770,6 +785,8 @@ struct AgentRowView: View {
     let expanded: Bool
     @State private var hovering = false
 
+    @Environment(\.uiScale) private var ui
+
     private var when: String {
         if agent.isRunning { return "작업 중" }
         let minutes = max(1, Int(Date().timeIntervalSince(agent.lastActive) / 60))
@@ -777,14 +794,14 @@ struct AgentRowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+        VStack(alignment: .leading, spacing: ui(4)) {
+            HStack(alignment: .firstTextBaseline, spacing: ui(6)) {
                 Text("↳")
-                    .font(Font(TermAppearance.uiFont(11)))
+                    .uiFont(11)
                     .foregroundStyle(Color(TermAppearance.textDim))
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: ui(1)) {
                     Text(agent.description)
-                        .font(Font(TermAppearance.uiFont(11)))
+                        .uiFont(11)
                         .foregroundStyle(Color(agent.isRunning ? TermAppearance.textPrimary : TermAppearance.textDim))
                     HStack(spacing: 0) {
                         Text(when)
@@ -793,7 +810,7 @@ struct AgentRowView: View {
                             .map { " · " + $0 }.joined())
                             .foregroundStyle(Color(TermAppearance.textDim))
                     }
-                    .font(Font(TermAppearance.uiFont(10)))
+                    .uiFont(10)
                 }
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -801,18 +818,18 @@ struct AgentRowView: View {
             }
             if expanded {
                 Text(agent.lastText ?? "아직 남긴 메시지가 없습니다.")
-                    .font(Font(TermAppearance.uiFont(10)))
+                    .uiFont(10)
                     .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
                     .lineLimit(8)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(8)
+                    .padding(ui(8))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.chromeRaised)))
             }
         }
-        .padding(.leading, 14 + CGFloat(depth) * 15)
-        .padding(.trailing, 10)
-        .padding(.vertical, 3)
+        .padding(.leading, ui(14 + CGFloat(depth) * 15))
+        .padding(.trailing, ui(10))
+        .padding(.vertical, ui(3))
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
         .contentShape(Rectangle())
@@ -825,6 +842,8 @@ struct AgentRowView: View {
 struct StatusFooterView: View {
     @ObservedObject var model: TermModel
     @ObservedObject private var updates: UpdateNotifier
+    @ObservedObject private var scaling = UIScaleModel.shared
+    private var ui: UIScale { scaling.scale }
 
     init(model: TermModel) {
         _model = ObservedObject(wrappedValue: model)
@@ -840,10 +859,10 @@ struct StatusFooterView: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: ui(3)) {
             if let release = updates.available {
                 UpdateLine(tag: UpdateNotifier.display(release.tag)) { updates.presentUpdate() }
-                    .padding(.bottom, 3)
+                    .padding(.bottom, ui(3))
             }
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
@@ -853,14 +872,15 @@ struct StatusFooterView: View {
                 .textSelection(.enabled)
             Text(model.connected ? "앱을 꺼도 세션은 계속 돕니다" : "데몬 연결 끊김")
         }
-        .font(Font(TermAppearance.uiFont(10)))
+        .uiFont(10)
         .foregroundStyle(Color(TermAppearance.textDim))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, ui(14))
+        .padding(.vertical, ui(10))
         .background(Color(TermAppearance.chrome))
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
         .environment(\.colorScheme, .dark)
+        .environment(\.uiScale, ui)
     }
 }
 
@@ -869,18 +889,19 @@ private struct UpdateLine: View {
     let tag: String
     let action: () -> Void
     @State private var hovering = false
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Circle().fill(Color(TermAppearance.accent)).frame(width: 6, height: 6)
+            HStack(spacing: ui(6)) {
+                Circle().fill(Color(TermAppearance.accent)).frame(width: ui(6), height: ui(6))
                 Text("새 버전 \(tag) — 업데이트")
-                    .font(Font(TermAppearance.uiFont(11, bold: true)))
+                    .uiFont(11, bold: true)
                     .underline(hovering)
             }
             .foregroundStyle(Color(TermAppearance.accent))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, ui(8))
+            .padding(.vertical, ui(4))
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent).opacity(hovering ? 0.18 : 0.1)))
             .contentShape(Rectangle())

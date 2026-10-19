@@ -166,6 +166,33 @@ public indirect enum SplitNode: Codable, Equatable {
         return walk(self).0
     }
 
+    /// 화면 하나를 node(화면 또는 분할 나무)로 바꾼다
+    public func replacing(_ target: String, with node: SplitNode) -> SplitNode {
+        switch self {
+        case .pane(let id):
+            return id == target ? node : self
+        case .split(let a, let r, let first, let second):
+            return .split(axis: a, ratio: r, first: first.replacing(target, with: node), second: second.replacing(target, with: node))
+        }
+    }
+
+    /// 같은 크기로 나란히(horizontal) 또는 위아래로(vertical) 늘어놓는다
+    public static func stack(_ nodes: [SplitNode], axis: SplitAxis) -> SplitNode? {
+        guard let first = nodes.first else { return nil }
+        guard let rest = stack(Array(nodes.dropFirst()), axis: axis) else { return first }
+        return .split(axis: axis, ratio: 1 / Double(nodes.count), first: first, second: rest)
+    }
+
+    /// 격자: 열 수 = ⌈√n⌉, 왼쪽 위부터 한 줄씩 채운다(6개 → 3×2)
+    public static func grid(_ ids: [String]) -> SplitNode? {
+        guard !ids.isEmpty else { return nil }
+        let columns = Int(Double(ids.count).squareRoot().rounded(.up))
+        let rows = stride(from: 0, to: ids.count, by: columns).compactMap { start in
+            stack(ids[start..<min(start + columns, ids.count)].map(SplitNode.pane), axis: .horizontal)
+        }
+        return stack(rows, axis: .vertical)
+    }
+
     /// 같은 방향으로 이어진 화면이 같은 크기가 되게(Ghostty equalize_splits)
     public func equalized() -> SplitNode {
         func weight(_ node: SplitNode, _ axis: SplitAxis) -> Double {
@@ -310,11 +337,16 @@ public struct EditorRecipe: Codable, Equatable {
     public var path: String
     /// 마지막 커서 위치(UTF-16, 없어도 됨)
     public var cursor: Int?
+    /// 미리보기 화면(파일 트리에서 다음 파일을 열면 이 자리를 바꿔 쓴다). 고치거나 고정하면 nil.
+    public var preview: Bool?
 
-    public init(path: String, cursor: Int? = nil) {
+    public init(path: String, cursor: Int? = nil, preview: Bool = false) {
         self.path = path
         self.cursor = cursor
+        self.preview = preview ? true : nil
     }
+
+    public var isPreview: Bool { preview == true }
 }
 
 /// 끌어 온 탭·화면을 놓을 곳

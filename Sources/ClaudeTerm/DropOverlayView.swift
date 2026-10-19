@@ -28,9 +28,10 @@ final class DropOverlayView: NSView {
         isHidden = true
     }
 
-    private static let chipAttributes: [NSAttributedString.Key: Any] = [
-        .font: TermAppearance.uiFont(11, bold: true), .foregroundColor: TermAppearance.textPrimary,
-    ]
+    /// 배율을 따라가도록 그릴 때마다 만든다
+    private static var chipAttributes: [NSAttributedString.Key: Any] {
+        [.font: TermAppearance.scaledUIFont(11, bold: true), .foregroundColor: TermAppearance.textPrimary]
+    }
 
     private var chipRect: CGRect? {
         guard let chip else { return nil }

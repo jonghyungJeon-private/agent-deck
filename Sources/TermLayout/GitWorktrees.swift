@@ -8,6 +8,12 @@ public struct GitLocation: Equatable, Hashable {
     public var worktreeRoot: String
     /// 공용 .git 폴더
     public var commonDir: String
+
+    public init(repoRoot: String, worktreeRoot: String, commonDir: String) {
+        self.repoRoot = repoRoot
+        self.worktreeRoot = worktreeRoot
+        self.commonDir = commonDir
+    }
 }
 
 public struct Worktree: Equatable, Hashable {
