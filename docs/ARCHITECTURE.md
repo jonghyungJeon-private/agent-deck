@@ -330,6 +330,8 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   `AGENTDECK_DEBUG_NAME=<이름>` 이면 그 이름의 알림만 받는다(기본 `dev.agentdeck.debug`, 시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게).
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
+  세션 이동 시험: `action next-attention`·`switcher <이름·폴더>`·`popup`·`popup-key <up|down|enter|esc>`. `chord cmd+j|cmd+k`는 실제 단축키 경로.
+  터미널 찾기 시험: `terminal-find <글>`·`terminal-find-state`(개수·선택 문자열·칸·스크롤)·`terminal-find-case on|off`·`terminal-find-close`.
   이동 시험 명령: `goto [<줄>:<열>]`·`usages [<줄>:<열>]`·`symbol <글>`·`popup`(목록 내용)·`popup-key <up|down|enter|esc>`·
   `cmd-click <줄>:<열>`·`cmd-hover <줄>:<열>`(밑줄 확인)·`nav-back`·`nav-forward`·`nav-state`·`index-state`·`index-build <루트>`(색인 시간·메모리).
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·

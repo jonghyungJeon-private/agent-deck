@@ -13,8 +13,8 @@ CONFIG="${CONFIG:-release}"
 VERSION="${VERSION:-0.4.2}"
 [[ "$(uname -m)" == arm64 ]] || { echo "Apple Silicon(arm64) 에서 빌드하세요" >&2; exit 1; }
 BUNDLE_ID="${BUNDLE_ID:-dev.agentdeck.app}"
-swift build -c "$CONFIG" --product AgentDeckDaemon
-swift build -c "$CONFIG" --product AgentDeck
+swift build -j 2 -c "$CONFIG" --product AgentDeckDaemon
+swift build -j 2 -c "$CONFIG" --product AgentDeck
 BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 
 APP=dist/AgentDeck.app

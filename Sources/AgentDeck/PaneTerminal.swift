@@ -13,6 +13,8 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
 
     let id: String
     let view: TerminalView
+    lazy var surface = TerminalPaneSurface(terminal: view, bar: findBar)
+    lazy var findBar = TerminalFindBar(terminal: view)
     private let client: DaemonClient
     /// 붙은 직후 지난 출력을 그리는 동안엔 크기 변경을 데몬에 보내지 않는다
     private var restoring = true
@@ -35,6 +37,7 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
 
     /// 앱 글꼴 크기를 적용한다. 칸 크기가 바뀌면 엔진이 sizeChanged 로 알려 데몬에도 전해진다.
     func applyFont() {
+        if findBar.superview != nil { findBar.applyFont() }
         guard view.font.pointSize != TermAppearance.fontSize else { return }
         view.font = TermAppearance.font
     }
@@ -43,10 +46,11 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
 
     func detach() {
         client.detach(id)
-        view.removeFromSuperview()
+        surface.removeFromSuperview()
     }
 
     func receive(_ bytes: ArraySlice<UInt8>, replay: Bool) {
+        defer { findBar.contentChanged() }
         guard replay else {
             view.feed(byteArray: bytes)
             return
@@ -63,7 +67,7 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
         // 되돌리기는 탭을 금방 떠나도 꼭 보낸다(안 보내면 다음에 붙을 때까지 한 줄 작은 크기로 남는다)
         let client = client, id = id
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-            if let self, self.view.superview != nil {
+            if let self, self.view.window != nil {
                 let terminal = self.view.getTerminal()
                 client.resize(id, cols: terminal.cols, rows: terminal.rows)
             } else {

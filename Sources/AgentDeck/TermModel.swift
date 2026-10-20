@@ -125,6 +125,9 @@ final class TermModel: ObservableObject {
         case error(String)
     }
 
+    var attentionCycle = AttentionCycle()
+    var paneRecent: [String: Date] = [:]
+
     let client = DaemonClient()
     /// 편집기 문서(편집기 화면은 데몬과 상관없이 앱 안에만 있다)
     let editors = EditorManager()
@@ -860,6 +863,10 @@ final class TermModel: ObservableObject {
     private func setWorkspace(_ next: Workspace, render: Bool) {
         let before = workspace
         workspace = next
+        if before.selectedTab?.focused != next.selectedTab?.focused, let id = next.selectedTab?.focused {
+            paneRecent[id] = Date()
+            paneRecent = paneRecent.filter { next.allPanes.contains($0.key) }
+        }
         if render || before.selectedTab?.visibleRoot != next.selectedTab?.visibleRoot
             || before.tabs.count != next.tabs.count {
             host?.render()
@@ -1204,6 +1211,8 @@ final class TermModel: ObservableObject {
     func perform(_ action: String) {
         let parts = action.split(separator: ":").map(String.init)
         switch parts.first {
+        case "next-attention": nextAttention()
+        case "session-switcher": host?.sessionSwitcher.show()
         case "new-tab": newPane()
         case "split-right": newPane(split: .horizontal)
         case "split-down": newPane(split: .vertical)

@@ -24,6 +24,8 @@ final class TerminalHostController: NSViewController {
     /// 편집기 이동(⌘B·⌥F7·⌘O·뒤로·앞으로)
     private(set) lazy var navigator = CodeNavigator(host: self)
 
+    private(set) lazy var sessionSwitcher = SessionSwitcher(host: self)
+
     init(model: TermModel) {
         self.model = model
         super.init(nibName: nil, bundle: nil)
@@ -107,6 +109,11 @@ final class TerminalHostController: NSViewController {
         render()
     }
 
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        sessionSwitcher.layout()
+    }
+
     var focusedTerminal: PaneTerminal? {
         model.workspace.selectedTab.flatMap { terminals[$0.focused] }
     }
@@ -150,7 +157,7 @@ final class TerminalHostController: NSViewController {
                 created.append(terminal)
             }
         }
-        var views: [String: NSView] = terminals.mapValues { $0.view }
+        var views: [String: NSView] = terminals.mapValues { $0.surface }
         for (id, editor) in editorViews { views[id] = editor }
         container.update(tree: visible, views: views, focused: tab?.focused, titles: paneTitles)
         // 크기가 정해진 뒤 붙어야 지난 출력이 맞는 크기로 그려진다
@@ -199,15 +206,16 @@ final class TerminalHostController: NSViewController {
 
     private func focusTerminal() {
         // 이동 목록 창이 키보드를 쥐고 있으면 그대로
-        if navigator.popupHasFocus { return }
+        if navigator.popupHasFocus || sessionSwitcher.popup != nil { return }
         if let editor = focusedEditor {
             // 편집기 안(찾기 막대 등)에 이미 포커스가 있으면 그대로
             if let responder = editor.window?.firstResponder as? NSView, responder.isDescendant(of: editor) { return }
             if let target = editor.focusTarget { editor.window?.makeFirstResponder(target) }
             return
         }
-        guard let view = focusedTerminal?.view, let window = view.window, window.firstResponder !== view else { return }
-        window.makeFirstResponder(view)
+        guard let pane = focusedTerminal, let window = pane.view.window, window.firstResponder !== pane.view else { return }
+        if let responder = window.firstResponder as? NSView, responder.isDescendant(of: pane.surface) { return }
+        window.makeFirstResponder(pane.view)
     }
 
     /// 지금 화면(터미널·편집기)에 키보드 포커스
@@ -239,6 +247,7 @@ final class TerminalHostController: NSViewController {
         for terminal in terminals.values { terminal.applyFont() }
         guard isViewLoaded else { return }
         if tabBarHeight.constant > 0 { tabBarHeight.constant = Self.tabBarHeight }
+        sessionSwitcher.scaleChanged()
         tabBar.scaleChanged()
         container.scaleChanged()
     }

@@ -588,7 +588,7 @@ final class EditorTextView: NSTextView {
         insertText("\n" + indent, replacementRange: selection)
     }
 
-    // 찾기(⌘F·⌘G·⌘⇧G·⌥⌘F). 편집기만 응답하는 이름이라 터미널의 ⌘F 는 그대로 터미널로 간다.
+    // 편집기 찾기(⌘F·⌘G·⌘⇧G·⌥⌘F). 공통 단축키는 앱에서 화면 종류로 나눠 보낸다.
     @objc func editorFind(_ sender: Any?) { finderAction(.showFindInterface) }
     @objc func editorFindNext(_ sender: Any?) { finderAction(.nextMatch) }
     @objc func editorFindPrevious(_ sender: Any?) { finderAction(.previousMatch) }

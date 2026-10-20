@@ -156,7 +156,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let editItem = NSMenuItem()
         main.addItem(editItem)
         let edit = NSMenu(title: "편집")
-        // 되돌리기·잘라내기·찾기는 편집기에서만 응답한다(터미널에선 꺼져 키가 그대로 터미널로 간다)
+        // 되돌리기·잘라내기는 편집기에서 응답한다. 찾기는 지금 화면 종류로 보낸다.
         edit.addItem(withTitle: "실행 취소", action: Selector(("undo:")), keyEquivalent: "z")
         let redo = edit.addItem(withTitle: "실행 복귀", action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
@@ -166,12 +166,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         edit.addItem(withTitle: "붙여넣기", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "모두 선택", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.addItem(.separator())
-        edit.addItem(withTitle: "찾기…", action: #selector(EditorTextView.editorFind(_:)), keyEquivalent: "f")
+        addAction(edit, "찾기…", "pane-find", "f")
         let replace = edit.addItem(withTitle: "바꾸기…", action: #selector(EditorTextView.editorReplace(_:)), keyEquivalent: "f")
         replace.keyEquivalentModifierMask = [.command, .option]
-        edit.addItem(withTitle: "다음 찾기", action: #selector(EditorTextView.editorFindNext(_:)), keyEquivalent: "g")
-        let previous = edit.addItem(withTitle: "이전 찾기", action: #selector(EditorTextView.editorFindPrevious(_:)), keyEquivalent: "g")
-        previous.keyEquivalentModifierMask = [.command, .shift]
+        addAction(edit, "다음 찾기", "pane-find-next", "g")
+        addAction(edit, "이전 찾기", "pane-find-previous", "g", [.command, .shift])
         editItem.submenu = edit
 
         // 단축키는 Ghostty 기본값과 같게
@@ -195,6 +194,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         // 이동(IntelliJ 식). ⌘[ ⌘] 는 편집기 화면에서만 뒤로·앞으로(터미널에선 이전·다음 화면)
         let navigate = NSMenu(title: "이동")
+        addAction(navigate, "다음 확인할 세션", "next-attention", "j")
+        addAction(navigate, "세션 빠른 전환…", "session-switcher", "k")
+        navigate.addItem(.separator())
         addAction(navigate, "선언으로 이동", "goto-declaration", "b")
         addAction(navigate, "사용 위치 찾기", "find-usages", String(UnicodeScalar(NSF7FunctionKey)!), [.option])
         addAction(navigate, "심볼로 이동…", "goto-symbol", "o")
@@ -254,6 +256,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     private static let shortcuts: [ShortcutKey: String] = {
         var map: [ShortcutKey: String] = [
+            ShortcutKey(38, .command): "next-attention",
+            ShortcutKey(40, .command): "session-switcher",
+            ShortcutKey(3, .command): "pane-find",
+            ShortcutKey(5, .command): "pane-find-next",
+            ShortcutKey(5, [.command, .shift]): "pane-find-previous",
             ShortcutKey(17, .command): "new-tab",
             ShortcutKey(2, .command): "split-right",
             ShortcutKey(2, [.command, .shift]): "split-down",
@@ -297,6 +304,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private func startShortcuts() {
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.window else { return event }
+            if [36, 76].contains(event.keyCode),
+               event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+               let pane = self.model.host?.focusedTerminal, pane.findBar.superview != nil,
+               let fieldEditor = pane.findBar.field.currentEditor() as? NSTextView,
+               event.window?.firstResponder === fieldEditor, !fieldEditor.hasMarkedText() {
+                pane.findBar.search(backwards: event.modifierFlags.contains(.shift))
+                return nil
+            }
+            if event.keyCode == 53, self.model.host?.sessionSwitcher.popup == nil,
+               self.model.host?.navigator.popup == nil, let pane = self.model.host?.focusedTerminal,
+               pane.findBar.superview != nil, !pane.view.hasMarkedText(),
+               (pane.findBar.field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
+                pane.findBar.close()
+                return nil
+            }
             // ⌘S = 편집기 저장(키 위치로 — 한글 입력 중에도). 편집기 화면이 아니면 그대로 보낸다(⌘⇧S 는 spaces).
             if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(1, .command), self.model.focusedIsEditor {
                 self.model.saveFocused()
@@ -344,7 +366,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// 메뉴·단축키·시험 명령: 도구 창 동작(tool-…)은 도구 창 관리자가, 나머지는 모델이 맡는다
     private func perform(_ action: String) {
-        if action.hasPrefix("font:") {
+        if action.hasPrefix("pane-find") {
+            if let editor = model.host?.focusedEditor?.textView {
+                switch action {
+                case "pane-find": editor.editorFind(nil)
+                case "pane-find-next": editor.editorFindNext(nil)
+                default: editor.editorFindPrevious(nil)
+                }
+            } else if let pane = model.host?.focusedTerminal {
+                if action == "pane-find" { pane.findBar.show() }
+                else { pane.findBar.search(backwards: action == "pane-find-previous") }
+            }
+        } else if action.hasPrefix("font:") {
             TermAppearance.adjustFontSize(String(action.dropFirst(5)))
         } else if action.hasPrefix("tool-") {
             toolWindows?.perform(action)
@@ -670,8 +703,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 popup.field.stringValue = argument
                 popup.onQuery?(argument)
             }
+        case "switcher":
+            host.sessionSwitcher.show()
+            if let popup = host.sessionSwitcher.popup {
+                popup.field.stringValue = argument
+                popup.onQuery?(argument)
+            }
+        case "terminal-find":
+            host.focusedTerminal?.findBar.show(query: argument)
+            say(host.focusedTerminal?.findBar.debugSummary ?? "terminal-find none")
+        case "terminal-find-state":
+            say(host.focusedTerminal?.findBar.debugSummary ?? "terminal-find none")
+        case "terminal-find-case": host.focusedTerminal?.findBar.setCaseSensitive(argument == "on")
+        case "terminal-find-close": host.focusedTerminal?.findBar.close()
         case "popup":
-            say(navigator.popup?.debugSummary ?? "popup none")
+            say(host.sessionSwitcher.popup?.debugSummary ?? navigator.popup?.debugSummary ?? "popup none")
         case "popup-key":
             guard let window else { return true }
             let codes: [String: (UInt16, Int)] = ["down": (125, NSDownArrowFunctionKey), "up": (126, NSUpArrowFunctionKey),
@@ -793,7 +839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
             // 실제 키보드(US 배열)의 키 코드
             let codes: [String: UInt16] = ["d": 2, "t": 17, "e": 14, "s": 1, "v": 9, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
-                                           "b": 11, "o": 31, String(UnicodeScalar(NSF7FunctionKey)!): 98,
+                                           "j": 38, "ㅓ": 38, "k": 40, "ㅏ": 40, "f": 3, "ㄹ": 3, "g": 5, "ㅎ": 5, "b": 11, "o": 31, String(UnicodeScalar(NSF7FunctionKey)!): 98,
                                            "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
                                            String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,
                                            String(UnicodeScalar(NSRightArrowFunctionKey)!): 124,
