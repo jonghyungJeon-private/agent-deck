@@ -406,6 +406,25 @@ public struct Workspace: Codable, Equatable {
         tabs.firstIndex { $0.root.contains(pane) }
     }
 
+    /// 번호 단축키(1~8, 9 = 마지막 탭): 다른 탭이면 첫 화면, 같은 탭이면 다음 잎으로 순환. 크게 보기는 유지한다.
+    @discardableResult
+    public mutating func numberShortcut(_ number: Int) -> Bool {
+        guard (1...9).contains(number) else { return false }
+        let index = number == 9 ? tabs.count - 1 : number - 1
+        guard tabs.indices.contains(index) else { return false }
+        let tab = tabs[index]
+        let panes = tab.root.panes
+        var position = 0
+        if selected == tab.id, let focused = panes.firstIndex(of: tab.focused) {
+            position = (focused + 1) % panes.count
+        }
+        let pane = panes[position]
+        guard selected != tab.id || tab.focused != pane else { return false }
+        selected = tab.id
+        tabs[index].focused = pane
+        return true
+    }
+
     /// 화면 하나를 빼고, 빈 탭은 닫는다. 포커스는 옆 화면으로.
     public mutating func remove(pane: String) {
         guard let index = tabIndex(containing: pane) else { return }

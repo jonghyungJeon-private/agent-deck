@@ -1233,7 +1233,10 @@ final class TermModel: ObservableObject {
         case "codex-hooks-disconnect": disconnectCodexHooks()
         case "tab":
             if parts.count > 1, let number = Int(parts[1]) {
-                selectTab(number >= 9 ? workspace.tabs.count - 1 : number - 1)
+                var next = workspace
+                if next.numberShortcut(number) {
+                    setWorkspace(next, render: next.selected != workspace.selected)
+                }
             }
         default: break
         }
