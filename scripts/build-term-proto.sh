@@ -51,6 +51,8 @@ PLIST
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # 글꼴(JetBrains Mono·D2Coding, OFL / Symbols Nerd Font, MIT) — 앱 안에서만 등록해 쓴다(Resources/Fonts/README.md)
 cp -R Resources/Fonts "$APP/Contents/Resources/Fonts"
+# SwiftTerm 의 선택형 Metal renderer 가 읽는 셰이더.
+cp -R "$BIN_DIR/SwiftTerm_SwiftTerm.bundle" "$APP/Contents/Resources/"
 # Markdown 미리보기 변환기(marked, MIT) — 앱 안에서만 쓰고 실행 중에 네트워크에서 받지 않는다
 mkdir -p "$APP/Contents/Resources/Markdown"
 cp Resources/Markdown/marked.umd.js Resources/Markdown/LICENSE "$APP/Contents/Resources/Markdown/"

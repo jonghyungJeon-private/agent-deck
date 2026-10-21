@@ -1,4 +1,5 @@
 import AppKit
+import MetalKit
 import SessionCore
 import SwiftTerm
 import SwiftUI
@@ -1014,18 +1015,140 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                              Date().timeIntervalSince(started), TerminalView.lineCacheHits, TerminalView.lineCacheMisses))
                 fflush(stdout)
             }
+        case "snapshot":
+            snapshotTimer?.fireDate = argument == "off" ? .distantFuture : .distantPast
+        case "snapshot-now":
+            if let dir = AgentDeckEnv.nonEmpty("SNAPSHOT") {
+                snapshot(to: URL(fileURLWithPath: dir).appendingPathComponent("window.png"))
+            }
+        case "window-focus":
+            guard let view = model.host?.focusedTerminal?.view else { return }
+            NSApp.unhideWithoutActivation()
+            NSApp.activate(ignoringOtherApps: true)
+            window?.makeKeyAndOrderFront(nil)
+            window?.makeFirstResponder(view)
+        case "window-position":
+            let values = argument.split(separator: " ").compactMap { Double($0) }
+            if values.count == 2 { window?.setFrameOrigin(NSPoint(x: values[0], y: values[1])) }
+        case "window-pin":
+            window?.deminiaturize(nil)
+            window?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            window?.level = .floating
+            window?.orderFrontRegardless()
+        case "window-hide":
+            NSApp.hide(nil)
+        case "terminal-grid":
+            let values = argument.split(separator: " ").compactMap { Int($0) }
+            guard values.count == 2, let window, let content = window.contentView,
+                  let view = model.host?.focusedTerminal?.view else { return }
+            let optimal = view.getOptimalFrameSize()
+            let scroller = NSScroller.scrollerWidth(for: .regular, scrollerStyle: view.scrollerStyle)
+            let cellWidth = (optimal.width - scroller) / CGFloat(view.terminal.cols)
+            let cellHeight = optimal.height / CGFloat(view.terminal.rows)
+            let target = NSSize(width: CGFloat(values[0]) * cellWidth + scroller + 0.1,
+                                height: CGFloat(values[1]) * cellHeight + 0.1)
+            if let screen = NSScreen.screens.first(where: { $0.visibleFrame.width >= target.width
+                && $0.visibleFrame.height >= target.height + window.frame.height - content.bounds.height }) {
+                window.setFrameOrigin(screen.visibleFrame.origin)
+            }
+            window.setContentSize(NSSize(width: content.bounds.width + target.width - view.bounds.width,
+                                         height: content.bounds.height + target.height - view.bounds.height))
+            if let screen = NSScreen.screens.first(where: { $0.visibleFrame.width >= window.frame.width
+                && $0.visibleFrame.height >= window.frame.height }) ?? window.screen {
+                let area = screen.visibleFrame
+                window.setFrameOrigin(NSPoint(x: max(area.minX, min(window.frame.minX, area.maxX - window.frame.width)),
+                                              y: max(area.minY, area.maxY - window.frame.height)))
+            }
+        case "screens":
+            for screen in NSScreen.screens {
+                print("screen frame=\(screen.frame) visible=\(screen.visibleFrame) scale=\(screen.backingScaleFactor)")
+            }
+            fflush(stdout)
+        case "window-front":
+            window?.orderFrontRegardless()
+        case "window-back":
+            window?.orderBack(nil)
+        case "render-state":
+            guard let view = model.host?.focusedTerminal?.view else { return }
+            let caret = view.subviews.first { String(describing: type(of: $0)) == "CaretView" }
+            print("render-state active=\(NSApp.isActive) ordered=\(window?.isVisible ?? false) mini=\(window?.isMiniaturized ?? false) activeSpace=\(window?.isOnActiveSpace ?? false) level=\(window?.level.rawValue ?? 0) window=\(String(describing: window?.frame)) hidden=\(NSApp.isHidden) visible=\(window?.occlusionState.contains(.visible) ?? false) key=\(window?.isKeyWindow ?? false) focus=\(view.hasFocus) frame=\(view.bounds) cells=\(view.terminal.cols)x\(view.terminal.rows) font=\(view.font.pointSize) cursor=\(view.terminal.options.cursorStyle) caretAnimations=\(caret?.layer?.animationKeys() ?? []) snapshotNext=\(String(describing: snapshotTimer?.fireDate))")
+            fflush(stdout)
+        case "window-size":
+            let size = argument.split(separator: " ").compactMap { Double($0) }
+            if size.count == 2 { window?.setContentSize(NSSize(width: size[0], height: size[1])) }
+        case "metal-snapshot":
+            guard let view = model.host?.focusedTerminal?.view,
+                  let metal = view.subviews.first(where: { $0 is MTKView }) as? MTKView,
+                  let dir = AgentDeckEnv.nonEmpty("SNAPSHOT"), let device = metal.device else { return }
+            metal.framebufferOnly = false
+            metal.releaseDrawables()
+            guard let drawable = metal.currentDrawable else { return }
+            let texture = drawable.texture
+            drawable.addPresentedHandler { _ in
+                let rowBytes = (texture.width * 4 + 255) & ~255
+                guard let queue = device.makeCommandQueue(), let command = queue.makeCommandBuffer(),
+                      let buffer = device.makeBuffer(length: rowBytes * texture.height, options: .storageModeShared),
+                      let blit = command.makeBlitCommandEncoder() else { return }
+                blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0, sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+                          sourceSize: MTLSize(width: texture.width, height: texture.height, depth: 1),
+                          to: buffer, destinationOffset: 0, destinationBytesPerRow: rowBytes,
+                          destinationBytesPerImage: rowBytes * texture.height)
+                blit.endEncoding()
+                command.commit()
+                command.waitUntilCompleted()
+                let data = Data(bytes: buffer.contents(), count: rowBytes * texture.height)
+                DispatchQueue.main.async {
+                    guard let provider = CGDataProvider(data: data as CFData),
+                          let image = CGImage(width: texture.width, height: texture.height, bitsPerComponent: 8,
+                                              bitsPerPixel: 32, bytesPerRow: rowBytes,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                              bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue
+                                                | CGImageAlphaInfo.premultipliedFirst.rawValue),
+                                              provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+                    else { return }
+                    let url = URL(fileURLWithPath: dir).appendingPathComponent("metal.png")
+                    try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
+                    metal.framebufferOnly = true
+                    print("metal-snapshot \(url.path)")
+                    fflush(stdout)
+                }
+            }
+            view.drawMetalFrameNow()
+        case "terminal-select":
+            guard let view = model.host?.focusedTerminal?.view, let row = Int(argument) else { return }
+            view.selection.select(row: view.terminal.buffer.yDisp + row)
+            print("terminal-select \(view.selection.debugDescription)")
+            fflush(stdout)
+        case "renderer-stats":
+            guard let view = model.host?.focusedTerminal?.view else { return }
+            let gpu = (view.subviews.first { $0 is MTKView } as? MTKView)?.device?.currentAllocatedSize ?? 0
+            let caretHidden = view.subviews.first { String(describing: type(of: $0)) == "CaretView" }?.isHidden
+            print("renderer-stats metal=\(view.isUsingMetalRenderer) gpuAllocatedBytes=\(gpu) caretHidden=\(String(describing: caretHidden)) status=\(view.metalRendererStatus)")
+            fflush(stdout)
+        case "renderer":
+            guard let view = model.host?.focusedTerminal?.view else { return }
+            do {
+                try view.setUseMetal(argument == "metal")
+                print("renderer metal=\(view.isUsingMetalRenderer) status=\(view.metalRendererStatus)")
+            } catch { print("renderer error=\(error)") }
+            fflush(stdout)
         case "drawstats":
             // drawstats <초>: 그 시간 동안 그리기 시간 통계(출력만으로 그려지는 경우 측정)
             let seconds = Double(argument) ?? 3
             var stats: [Double] = []
+            var fullDraws = 0
+            let height = model.host?.focusedTerminal?.view.bounds.height ?? 0
             TerminalView.lineCacheHits = 0
             TerminalView.lineCacheMisses = 0
-            TerminalView.drawTrace = { ms, _ in stats.append(ms) }
+            TerminalView.drawTrace = { ms, rect in
+                stats.append(ms)
+                if rect.height >= height - 1 { fullDraws += 1 }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
                 TerminalView.drawTrace = nil
                 let sorted = stats.sorted()
                 func pct(_ p: Double) -> Double { sorted.isEmpty ? 0 : sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] }
-                print(String(format: "drawstats draws=%d avg=%.2fms p50=%.2f p90=%.2f max=%.2f cache hit=%d miss=%d", stats.count,
+                print(String(format: "drawstats draws=%d(full %d) avg=%.2fms p50=%.2f p90=%.2f max=%.2f cache hit=%d miss=%d", stats.count, fullDraws,
                              stats.reduce(0, +) / Double(max(stats.count, 1)), pct(0.5), pct(0.9), sorted.last ?? 0,
                              TerminalView.lineCacheHits, TerminalView.lineCacheMisses))
                 fflush(stdout)

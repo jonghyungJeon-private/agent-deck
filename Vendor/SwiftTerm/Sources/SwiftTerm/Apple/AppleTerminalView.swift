@@ -197,12 +197,39 @@ private func cachedCTLine(_ text: NSAttributedString) -> CTLine {
     return line
 }
 
+// AgentDeck patch: 세대가 달라도 같은 셀은 재사용한다. 원시 메모리의 padding 은 비교하지 않는다.
+struct RowRenderContent {
+    let cells: [CharData]
+    let wrapped: Bool
+    let mode: BufferLine.RenderLineMode
+    let bidi: BidiPresentationState
+
+    init(line: BufferLine) {
+        cells = line.getData()
+        wrapped = line.isWrapped
+        mode = line.renderMode
+        bidi = line.bidiState
+    }
+
+    func matches(_ line: BufferLine) -> Bool {
+        guard line.images == nil, cells.count == line.count, wrapped == line.isWrapped,
+              mode == line.renderMode, bidi == line.bidiState else { return false }
+        for col in cells.indices {
+            let a = cells[col], b = line[col]
+            if a.code != b.code || a.width != b.width || a.attribute != b.attribute
+                || a.payload.code != b.payload.code { return false }
+        }
+        return true
+    }
+}
+
 // Holds the information used to render a line
 /// AgentDeck patch: cachedLineInfo 가 담아 두는 한 줄
 final class LineInfoCacheEntry {
     weak var line: BufferLine?
-    let generation: UInt64
-    let recycle: UInt64
+    var generation: UInt64
+    let content: RowRenderContent
+    var recycle: UInt64
     let cols: Int
     let selection: Range<Int>?
     let blinkVisible: Bool
@@ -217,6 +244,7 @@ final class LineInfoCacheEntry {
     init(line: BufferLine, generation: UInt64, recycle: UInt64, cols: Int, selection: Range<Int>?, blinkVisible: Bool,
          commandActive: Bool, linkRange: Range<Int>?, info: ViewLineInfo) {
         self.line = line
+        self.content = RowRenderContent(line: line)
         self.generation = generation
         self.recycle = recycle
         self.cols = cols
@@ -321,6 +349,9 @@ extension TerminalView {
     func resetCaches ()
     {
         lineInfoCache.removeAll()
+#if os(macOS)
+        lineCacheEpoch &+= 1
+#endif
         self.attributes = [:]
         self.urlAttributes = [:]
         self.colors = Array(repeating: nil, count: 256)
@@ -656,6 +687,9 @@ extension TerminalView {
     func colorsChanged ()
     {
         lineInfoCache.removeAll()
+#if os(macOS)
+        lineCacheEpoch &+= 1
+#endif
         urlAttributes = [:]
         attributes = [:]
         clearCGColorCache()
@@ -1385,24 +1419,26 @@ extension TerminalView {
 
     /// AgentDeck patch: 줄 내용이 그대로면 지난번에 만든 글자 묶음을 다시 쓴다.
     /// 스크롤은 줄 내용이 아니라 보이는 위치만 바꾸므로, 화면 전체를 다시 그려도 대부분 다시 만들 필요가 없다.
-    /// 줄 객체·세대 번호·열 수·선택 영역·깜박임·링크 밑줄이 같을 때만 쓰고, 오른쪽→왼쪽 글자·그림이 있는 줄은 담지 않는다.
+    /// 세대가 달라도 독립 행의 내용·표시 상태가 같으면 쓴다. BiDi·그림은 담지 않는다.
     func cachedLineInfo(row: Int, line: BufferLine, cols: Int) -> (info: ViewLineInfo, entry: LineInfoCacheEntry?) {
         let selection = selectedColumnsRange(row: row, cols: cols)
         let linkRange = linkHighlightRange?.first(where: { $0.row == row })?.range
-        guard Self.lineCacheEnabled else { return (buildAttributedString(row: row, line: line, cols: cols), nil) }
+        guard Self.lineCacheEnabled else {
+            lineInfoCache.removeValue(forKey: ObjectIdentifier(line))
+            return (buildAttributedString(row: row, line: line, cols: cols), nil)
+        }
         let key = ObjectIdentifier(line)
-        if let entry = lineInfoCache[key], entry.line === line, entry.generation == line.generation,
-           entry.recycle == line.recycleGeneration, entry.cols == cols, entry.selection == selection,
-           entry.blinkVisible == textBlinkVisible, entry.commandActive == commandActive, entry.linkRange == linkRange {
-            entry.lastUsed = lineCacheTick
-            Self.lineCacheHits &+= 1
+        if let entry = reusableLineEntry(row: row, line: line, cols: cols) {
             return (entry.info, entry)
         }
         Self.lineCacheMisses &+= 1
         let info = buildAttributedString(row: row, line: line, cols: cols)
         guard line.images == nil, info.kittyPlaceholders.isEmpty,
               !TerminalBidi.mayNeedBidi(line: line, cols: cols, terminal: terminal)
-        else { return (info, nil) }
+        else {
+            lineInfoCache.removeValue(forKey: key)
+            return (info, nil)
+        }
         // 가볍게: 화면 줄 수의 두 배 남짓만 둔다(스크롤로 막 지나간 줄까지). 넘으면 이번·직전 그리기에 안 쓰인 줄을 버린다.
         if lineInfoCache.count > max(64, terminal.rows * 2) {
             let keepFrom = lineCacheTick &- 1
@@ -1415,6 +1451,89 @@ extension TerminalView {
         lineInfoCache[key] = entry
         return (info, entry)
     }
+
+    private func independentRow(_ row: Int, line: BufferLine) -> Bool {
+        let lines = terminal.displayBuffer.lines
+        return !line.isWrapped && (row + 1 >= lines.count || !lines[row + 1].isWrapped)
+    }
+
+    private func reusableLineEntry(row: Int, line: BufferLine, cols: Int) -> LineInfoCacheEntry? {
+        guard Self.lineCacheEnabled, let entry = lineInfoCache[ObjectIdentifier(line)],
+              entry.line === line, entry.cols == cols,
+              entry.selection == selectedColumnsRange(row: row, cols: cols),
+              entry.blinkVisible == textBlinkVisible, entry.commandActive == commandActive,
+              entry.linkRange == linkHighlightRange?.first(where: { $0.row == row })?.range,
+              (entry.generation == line.generation && entry.recycle == line.recycleGeneration)
+                || (independentRow(row, line: line) && entry.content.matches(line)) else { return nil }
+        entry.generation = line.generation
+        entry.recycle = line.recycleGeneration
+        entry.lastUsed = lineCacheTick
+        Self.lineCacheHits &+= 1
+        return entry
+    }
+
+#if os(macOS)
+    // feed 조각마다 복사하지 않고, 모인 출력과 마지막 렌더 결과를 비교한다.
+    private func contentDirtyRows(_ range: ClosedRange<Int>) -> [Int]? {
+        let buffer = terminal.displayBuffer
+        guard Self.lineCacheEnabled, buffer.yDisp == buffer.yBase,
+              outputViewport == outputViewportKey(), outputRowVersions.count == terminal.rows,
+              terminal.kittyGraphicsState.placementsByKey.isEmpty else { return nil }
+#if canImport(MetalKit)
+        guard metalView == nil else { return nil }
+#endif
+        var dirty: [Int] = []
+        for row in range {
+            let absolute = buffer.yDisp + row
+            guard absolute >= 0, absolute < buffer.lines.count else { return nil }
+            let line = buffer.lines[absolute]
+            guard line.images == nil, line.renderMode == .single, independentRow(absolute, line: line),
+                  outputRowVersions[row].line == ObjectIdentifier(line) else { return nil }
+            if let entry = lineInfoCache[ObjectIdentifier(line)], outputRowVersions[row].matches(entry),
+               reusableLineEntry(row: absolute, line: line, cols: buffer.cols) != nil { continue }
+            // BiDi 는 문단 전체가 바뀔 수 있다.
+            if TerminalBidi.mayNeedBidi(line: line, cols: buffer.cols, terminal: terminal) { return nil }
+            dirty.append(row)
+        }
+        return dirty
+    }
+
+    private func invalidateOutput(_ fallback: CGRect, rows: ClosedRange<Int>) {
+        guard rows.lowerBound >= 0, rows.upperBound < terminal.rows,
+              let dirty = contentDirtyRows(rows) else {
+            setNeedsDisplay(fallback)
+            return
+        }
+        for row in dirty {
+            let bottom = frame.height - CGFloat(row + 1) * cellDimension.height
+            let rect = CGRect(x: 0, y: row == terminal.rows - 1 ? 0 : bottom, width: frame.width,
+                              height: row == terminal.rows - 1 ? bottom + cellDimension.height : cellDimension.height)
+            setNeedsDisplay(rect)
+        }
+    }
+
+    private func outputViewportKey() -> OutputViewport {
+        let buffer = terminal.displayBuffer
+        return OutputViewport(buffer: ObjectIdentifier(buffer), yBase: buffer.yBase, yDisp: buffer.yDisp,
+                              cols: buffer.cols, rows: buffer.rows, size: bounds.size,
+                              kittyGraphics: !terminal.kittyGraphicsState.placementsByKey.isEmpty, cacheEpoch: lineCacheEpoch)
+    }
+
+    private func rememberOutputViewport() {
+        let buffer = terminal.displayBuffer
+        outputViewport = outputViewportKey()
+        outputRowVersions = (0..<terminal.rows).compactMap { row in
+            let absolute = buffer.yDisp + row
+            guard absolute >= 0, absolute < buffer.lines.count else { return nil }
+            let line = buffer.lines[absolute]
+            return OutputRowVersion(line: ObjectIdentifier(line), generation: line.generation,
+                                    recycle: line.recycleGeneration,
+                                    selection: selectedColumnsRange(row: absolute, cols: buffer.cols),
+                                    blinkVisible: textBlinkVisible, commandActive: commandActive,
+                                    linkRange: linkHighlightRange?.first(where: { $0.row == absolute })?.range)
+        }
+    }
+#endif
 
     /// AgentDeck patch(시험용): 보이는 줄마다 캐시에 담긴 글자와 지금 버퍼로 새로 만든 글자가 같은지 센다.
     /// (같은 줄 수, 다른 줄 수, 캐시에 있던 줄 수)
@@ -2441,6 +2560,9 @@ extension TerminalView {
             return
         }
         updateCursorPosition()
+#if os(macOS)
+        defer { rememberOutputViewport() }
+#endif
         guard let (rowStart, rowEnd) = terminal.getUpdateRange () else {
             if notifyUpdateChanges {
                 let buffer = terminal.displayBuffer
@@ -2560,10 +2682,10 @@ extension TerminalView {
             lastRenderedCursor = (x: buffer.x, y: buffer.yBase + buffer.y, hidden: terminal.cursorHidden)
             requestMetalDisplay()
         } else {
-            setNeedsDisplay(region)
+            invalidateOutput(region, rows: redrawStart...redrawEnd)
         }
 #else
-        setNeedsDisplay(region)
+        invalidateOutput(region, rows: redrawStart...redrawEnd)
 #endif
         #else
         // TODO iOS: need to update the code above, but will do that when I get some real

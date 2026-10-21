@@ -339,6 +339,34 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// AgentDeck patch: 줄별 글자 묶음 캐시(cachedLineInfo)
     var lineInfoCache: [ObjectIdentifier: LineInfoCacheEntry] = [:]
     var lineCacheTick: UInt64 = 0
+    struct OutputViewport: Equatable {
+        let buffer: ObjectIdentifier
+        let yBase: Int
+        let yDisp: Int
+        let cols: Int
+        let rows: Int
+        let size: CGSize
+        let kittyGraphics: Bool
+        let cacheEpoch: UInt64
+    }
+    var outputViewport: OutputViewport?
+    // AgentDeck patch: 캡처가 캐시를 먼저 채워도 화면 갱신 판정은 바뀌지 않는다.
+    struct OutputRowVersion {
+        let line: ObjectIdentifier
+        let generation: UInt64
+        let recycle: UInt64
+        let selection: Range<Int>?
+        let blinkVisible: Bool
+        let commandActive: Bool
+        let linkRange: Range<Int>?
+
+        func matches(_ entry: LineInfoCacheEntry) -> Bool {
+            entry.generation == generation && entry.recycle == recycle && entry.selection == selection
+                && entry.blinkVisible == blinkVisible && entry.commandActive == commandActive && entry.linkRange == linkRange
+        }
+    }
+    var outputRowVersions: [OutputRowVersion] = []
+    var lineCacheEpoch: UInt64 = 0
     /// 진단용 캐시 적중·실패 수
     public static var lineCacheHits = 0
     public static var lineCacheMisses = 0
@@ -1005,11 +1033,18 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     }
 
     /// Controls weather to use high ansi colors, if false terminal will use bold text instead of high ansi colors
-    public var useBrightColors: Bool = true
+    public var useBrightColors: Bool = true {
+        didSet {
+            resetCaches() // AgentDeck patch: 내용이 같아도 표시 옵션이 바뀌면 다시 그린다.
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
 
     /// Controls whether this view applies the terminal's BiDi presentation state.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {
+            resetCaches()
             terminal.updateFullScreen()
             queuePendingDisplay()
             updateCursorPosition()
@@ -1019,6 +1054,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// When true, block element (U+2580-U+259F) and box drawing (U+2500-U+257F) characters use custom rendering.
     public var customBlockGlyphs: Bool = true {
         didSet {
+            resetCaches()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1027,6 +1063,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// When true, custom block/box glyphs use anti-aliasing instead of pixel-aligned edges.
     public var antiAliasCustomBlockGlyphs: Bool = false {
         didSet {
+            resetCaches()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1059,6 +1096,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             _selectedTextBackgroundColor = newValue
+            resetCaches()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1072,6 +1110,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
         set {
             _selectedTextForegroundColor = newValue
+            resetCaches()
             terminal.updateFullScreen()
             queuePendingDisplay()
         }
@@ -1216,6 +1255,7 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     /// Controls link highlighting and link activation behavior.
     public var linkHighlightMode: LinkHighlightMode = .hoverWithModifier {
         didSet {
+            resetCaches()
             linkHighlightRange = nil
             updateLinkHighlightTracking()
             terminal.updateFullScreen()
