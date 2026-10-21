@@ -100,6 +100,7 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
 
     func exited() {
         view.feed(text: "\r\n\u{1b}[2m[셸이 끝났습니다]\u{1b}[0m\r\n")
+        findBar.contentChanged()
     }
 
     var size: (cols: Int, rows: Int) {

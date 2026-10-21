@@ -19,7 +19,7 @@ final class TerminalPaneSurface: NSView {
     override func layout() {
         super.layout()
         let height = bar.superview == nil ? 0 : min(TermAppearance.scaled(38), bounds.height)
-        terminal.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - height))
+        terminal.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
         bar.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 }
@@ -32,9 +32,25 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
     private let caseButton = NSButton(checkboxWithTitle: "Aa", target: nil, action: nil)
     private var refreshWork: DispatchWorkItem?
     private var caseSensitive = false
-    private var matches: [BufferLineSearch.Match] = []
+    private var cursor = BufferSearchCursor()
+    private var index = BufferSearchIndex()
+    private var queryWork: DispatchWorkItem?
     private var cachedQuery = ""
+    private var cachedCase = false
     private var bufferChanged = true
+    private var bufferIdentity: ObjectIdentifier?
+    private var trimmedRows = 0
+    private struct CachedRow {
+        let line: BufferLine
+        let generation: UInt64
+        let columns: Int
+        let continues: Bool
+        let nextStartsWide: Bool
+        let row: BufferLineSearch.Row
+    }
+    private var rowCache: [ObjectIdentifier: CachedRow] = [:]
+    private var extractedRows = 0
+    private var recountMilliseconds: Double = 0
     private var controls: [NSView] = []
 
     init(terminal: TerminalView) {
@@ -83,7 +99,8 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
         terminal.window?.makeFirstResponder(field)
         field.selectText(nil)
         if let query { field.stringValue = query }
-        search(reset: true)
+        if query != nil || cachedQuery != field.stringValue { search(reset: true) }
+        else { recount(reset: false, scroll: false) }
     }
 
     func applyFont() {
@@ -109,65 +126,134 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
         field.frame = NSRect(x: u(10), y: (h - u(22)) / 2, width: max(24, x - u(18)), height: u(22))
     }
 
-    func search(reset: Bool = false, backwards: Bool = false) {
-        refreshWork?.cancel(); refreshWork = nil
-        guard superview != nil else { return }
-        let query = field.stringValue
-        if reset || query.isEmpty { terminal.clearSearch() }
-        if reset || bufferChanged || cachedQuery != query {
-            matches = bufferMatches(query)
-            cachedQuery = query
-            bufferChanged = false
-        }
-        let options = SearchOptions(caseSensitive: caseSensitive)
-        if !query.isEmpty {
-            if backwards { terminal.findPrevious(query, options: options) }
-            else { terminal.findNext(query, options: options) }
-        }
-        let start = terminal.selection.start
-        let index = terminal.selection.active ? matches.firstIndex(where: { $0.start.row == start.row && $0.start.column == start.col }).map { $0 + 1 } ?? 0 : 0
-        let summary = (index: index, total: matches.count)
-        count.stringValue = "\(summary.index)/\(summary.total)"
-        count.textColor = !query.isEmpty && summary.total == 0 ? TermAppearance.red : TermAppearance.textDim
-        count.toolTip = "\(summary.total)개 일치"
+    var fieldHasFocus: Bool {
+        guard let editor = field.currentEditor() as? NSTextView else { return false }
+        return terminal.window?.firstResponder === editor
     }
 
-    private func bufferMatches(_ query: String) -> [BufferLineSearch.Match] {
-        guard !query.isEmpty else { return [] }
+    func search(reset: Bool = false, backwards: Bool = false) {
+        guard superview != nil, (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+        queryWork?.cancel(); queryWork = nil
+        let changed = cachedQuery != field.stringValue || cachedCase != caseSensitive
+        recount(reset: reset || changed, scroll: false)
+        if !reset && !changed { cursor.move(backwards: backwards) }
+        applyHighlight(scroll: true)
+        updateCount()
+    }
+
+    private func syncBuffer() {
+        let buffer = terminal.getTerminal().buffer
+        let identity = ObjectIdentifier(buffer)
+        let trimmed = buffer.totalLinesTrimmed
+        if identity != bufferIdentity || trimmed < trimmedRows {
+            rowCache.removeAll(); index = BufferSearchIndex(); cursor = BufferSearchCursor()
+            bufferIdentity = identity
+        } else {
+            cursor.trimRows(trimmed - trimmedRows)
+        }
+        trimmedRows = trimmed
+    }
+
+    private func recount(reset: Bool, scroll: Bool) {
+        let started = ProcessInfo.processInfo.systemUptime
+        defer { recountMilliseconds = (ProcessInfo.processInfo.systemUptime - started) * 1000 }
+        refreshWork?.cancel(); refreshWork = nil
+        syncBuffer()
+        if reset { cachedQuery = field.stringValue; cachedCase = caseSensitive }
+        if !cachedQuery.isEmpty {
+            if reset || bufferChanged {
+                let matches = index.find(cachedQuery, rows: bufferRows(), caseSensitive: cachedCase)
+                let engine = terminal.getTerminal()
+                let preferred = reset || cursor.anchor == nil ? engine.buffer.yDisp + min(2, engine.rows - 1) : nil
+                cursor.replace(matches, preferredRow: preferred)
+            }
+        } else { cursor.replace([]) }
+        bufferChanged = false
+        applyHighlight(scroll: scroll)
+        updateCount()
+    }
+
+    private func applyHighlight(scroll: Bool) {
         let engine = terminal.getTerminal()
-        var rows: [String] = []
-        var wrapped: Set<Int> = []
-        var widths: [Character: Int] = [:]
+        guard let match = cursor.current, !cachedQuery.isEmpty,
+              engine.bufferLine(atRow: match.start.row) != nil,
+              engine.bufferLine(atRow: match.end.row) != nil else {
+            terminal.selection.selectNone()
+            return
+        }
+        terminal.selection.setSearchSelection(start: Position(col: match.start.column, row: match.start.row),
+                                             end: Position(col: match.end.column, row: match.end.row))
+        guard scroll, !engine.isCurrentBufferAlternate else { return }
+        let top = engine.buffer.yDisp
+        let covered = Int(ceil(bounds.height / max(1, terminal.bounds.height / CGFloat(engine.rows))))
+        if match.start.row < top + covered || match.end.row >= top + engine.rows {
+            terminal.scrollTo(row: max(0, match.start.row - max(covered, engine.rows / 2)))
+        } else {
+            // 맨 아래에서 찾기를 시작했어도 이후 출력이 화면을 따라 내리지 않게 고정한다.
+            terminal.scrollTo(row: top)
+        }
+    }
+
+    private func updateCount() {
+        let total = cursor.matches.count
+        count.stringValue = "\(cursor.currentIndex.map { $0 + 1 } ?? 0)/\(total)"
+        count.textColor = !cachedQuery.isEmpty && total == 0 ? TermAppearance.red : TermAppearance.textDim
+        count.toolTip = "\(total)개 일치"
+    }
+
+    private struct Cell: BufferSearchCell {
+        let data: CharData
+        let engine: Terminal
+        var searchCharacter: Character? {
+            let ch = engine.getCharacter(for: data)
+            return ch == "\u{0}" ? nil : ch
+        }
+        var searchWidth: Int { Int(data.width) }
+    }
+
+    private func bufferRows() -> [BufferLineSearch.Row] {
+        let engine = terminal.getTerminal()
+        var rows: [BufferLineSearch.Row] = []
+        rows.reserveCapacity(PaneTerminal.scrollback + engine.rows)
+        var nextCache: [ObjectIdentifier: CachedRow] = [:]
+        nextCache.reserveCapacity(rowCache.count)
+        extractedRows = 0
         var row = 0
         while let line = engine.bufferLine(atRow: row) {
-            if line.isWrapped { wrapped.insert(row) }
+            let key = ObjectIdentifier(line)
             let next = engine.bufferLine(atRow: row + 1)
-            var text = ""
-            for col in 0..<line.count {
-                let cell = line[col]
-                if cell.width == 0 { continue }
-                // 넓은 글자가 다음 줄로 넘어가며 남긴 빈 칸은 검색에 넣지 않는다.
-                let character = engine.getCharacter(for: cell)
-                if col == line.count - 1, character == "\u{0}", next?.isWrapped == true, next?[0].width == 2 { continue }
-                let ch: Character = character == "\u{0}" ? " " : character
-                widths[ch] = Int(cell.width)
-                text.append(ch)
+            let continues = next?.isWrapped == true
+            let nextStartsWide = next.map { $0.count > 0 && $0[0].width == 2 } ?? false
+            let columns = min(line.count, engine.cols)
+            let cached: CachedRow
+            if let old = rowCache[key], old.line === line, old.generation == line.generation,
+               old.columns == columns, old.continues == continues, old.nextStartsWide == nextStartsWide {
+                cached = old
+            } else {
+                let extracted = BufferLineSearch.extract(count: columns, wrapped: line.isWrapped,
+                    continues: continues, nextStartsWide: nextStartsWide, cellAt: { Cell(data: line[$0], engine: engine) })
+                cached = CachedRow(line: line, generation: line.generation, columns: columns,
+                                   continues: continues, nextStartsWide: nextStartsWide, row: extracted)
+                extractedRows += 1
             }
-            if next?.isWrapped != true { while text.last == " " { text.removeLast() } }
-            rows.append(text)
+            rows.append(cached.row); nextCache[key] = cached
             row += 1
         }
-        return BufferLineSearch.find(query, rows: rows, wrapped: wrapped, caseSensitive: caseSensitive,
-                                   width: { widths[$0] ?? BufferLineSearch.cellWidth($0) })
+        rowCache = nextCache
+        return rows
     }
 
-    /// 출력이 몰려도 찾기 막대가 열려 있을 때 한 번만 갱신한다.
+    /// feed가 지운 강조만 바로 복원한다. 개수 갱신은 모아서 하고 화면은 옮기지 않는다.
     func contentChanged() {
         bufferChanged = true
-        guard superview != nil, !field.stringValue.isEmpty, refreshWork == nil else { return }
+        guard superview != nil else { return }
+        syncBuffer()
+        applyHighlight(scroll: false)
+        guard !cachedQuery.isEmpty, refreshWork == nil else { return }
         let work = DispatchWorkItem { [weak self] in
-            self?.refreshWork = nil
-            self?.search(reset: true)
+            guard let self else { return }
+            self.refreshWork = nil
+            self.recount(reset: false, scroll: false)
         }
         refreshWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
@@ -175,7 +261,8 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
 
     @objc func close() {
         refreshWork?.cancel(); refreshWork = nil
-        terminal.clearSearch()
+        queryWork?.cancel(); queryWork = nil
+        terminal.selection.selectNone()
         removeFromSuperview()
         surface?.needsLayout = true
         terminal.window?.makeFirstResponder(terminal)
@@ -188,15 +275,28 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
         search(reset: true)
     }
     @objc private func toggleCase() { setCaseSensitive(caseButton.state == .on) }
-    func controlTextDidChange(_ obj: Notification) { search(reset: true) }
+    func controlTextDidChange(_ obj: Notification) {
+        queryWork?.cancel(); queryWork = nil
+        guard (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.queryWork = nil
+            self?.search(reset: true)
+        }
+        queryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
             search(backwards: NSApp.currentEvent?.modifierFlags.contains(.shift) == true)
-        case #selector(NSResponder.cancelOperation(_:)): close()
+        case #selector(NSResponder.cancelOperation(_:)):
+            guard fieldHasFocus, !textView.hasMarkedText(),
+                  let event = NSApp.currentEvent, event.type == .keyDown, event.keyCode == 53,
+                  event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return false }
+            close()
         default: return false
         }
         return true
     }
-    var debugSummary: String { "terminal-find active=\(terminal.selection.active) selected=[\(terminal.selection.getSelectedText())] row=\(terminal.selection.start.row) col=\(terminal.selection.start.col) viewport=\(terminal.getTerminal().buffer.yDisp) query=\(field.stringValue) count=\(count.stringValue) case=\(caseSensitive) visible=\(superview != nil)" }
+    var debugSummary: String { "terminal-find active=\(terminal.selection.active) selected=[\(terminal.selection.getSelectedText())] row=\(terminal.selection.start.row) col=\(terminal.selection.start.col) viewport=\(terminal.getTerminal().buffer.yDisp) query=\(field.stringValue) count=\(count.stringValue) case=\(caseSensitive) visible=\(superview != nil) fieldFocus=\(fieldHasFocus) size=\(terminal.getTerminal().rows)x\(terminal.getTerminal().cols) extracted=\(extractedRows) groups=\(index.rebuiltGroups) recountMs=\(String(format: "%.2f", recountMilliseconds))" }
 }

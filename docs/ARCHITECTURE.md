@@ -92,6 +92,15 @@ AgentDeck.app/Contents/MacOS/
   모델·프로필·권한 등의 원래 옵션과 `CODEX_HOME`을 이어받고, 첫 질문·`--last`·`--worktree`는 다시 실행하지 않는다.
   예전 Claude 전용 배치 파일도 그대로 읽는다.
 
+## 터미널 찾기
+
+- ⌘F·⌘G·⇧⌘G는 현재 화면 종류로 나눠 보낸다. Markdown 미리보기와 설정 창에서는 편집기의 숨은 텍스트 뷰로 보내지 않는다.
+- 일반 버퍼는 scrollback+화면, Claude 등의 대체 버퍼는 현재 화면만 검색한다. 데몬의 지난 출력 전체 검색은 지원하지 않는다.
+- TermLayout의 셀 추출·검색 인덱스·커서가 개수와 강조를 함께 정한다. 실제 셀 열을 기록하므로 출력한 공백·한글·줄바꿈에서도 같은 범위를 쓴다.
+- 행 객체와 generation·열 수·다음 줄의 wrap/넓은 글자 여부로 추출 결과를 캐시하고, 바뀌지 않은 논리 줄은 검색 결과까지 재사용한다.
+- 검색어 변경은 100ms 모으고 IME 조합 중에는 적용하지 않는다. 출력 직후 강조만 복원하고, 150ms 모은 갱신은 개수·기존 앵커 이후의 일치만 맞춘다. 출력 갱신으로 스크롤하지 않는다.
+- 찾기 막대는 overlay라 PTY 행·열을 바꾸지 않는다. Esc는 수정 키 없이 검색 칸에 포커스가 있을 때만 닫는다.
+
 ## 데몬 띄우기(launchd 작업)
 
 **setsid 로는 데몬이 살아남지 못한다.** 예전에는 앱이 `posix_spawn` + `POSIX_SPAWN_SETSID` 로 데몬을 띄웠다. setsid 는 세션·프로세스 묶음만 바꾸고
@@ -235,7 +244,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
     spaces 목록에 나오지 않는다. 연 파일·커서 위치는 `term/layout.json`(`editors`)에 저장돼 앱을 다시 켜면 다시 열린다.
   - 탭·분할 테두리 제목 = 파일 이름, 저장 안 했으면 뒤에 ●. 아래 상태 줄에 줄:열·UTF-8·줄 끝(LF/CRLF)·언어.
   - 단축키: ⌘S 저장(파일 메뉴, 키 위치로 받아 한글 입력 중에도 — ⌘⇧S 는 그대로 spaces), ⌘F 찾기 막대·⌥⌘F 바꾸기·⌘G/⌘⇧G 다음/이전,
-    ⌘Z/⌘⇧Z 되돌리기(문서마다 따로, 탭을 옮겨도 이어짐), ⌘X 잘라내기. 찾기·되돌리기·잘라내기는 편집기에서만 켜져 터미널의 키는 그대로 터미널로 간다.
+    ⌘Z/⌘⇧Z 되돌리기(문서마다 따로, 탭을 옮겨도 이어짐), ⌘X 잘라내기. 되돌리기·잘라내기는 편집기에서만 켜지고, 찾기는 지금 화면 종류로 보낸다.
     ⌘W·⌘D·크게 보기 등 화면 단축키는 편집기에도 그대로(⌘W 는 편집기만 닫음, ⌘[ ⌘] 는 뒤로/앞으로). Enter 는 윗줄 들여쓰기를 잇는다. 줄바꿈 없음(가로 스크롤).
   - 코드 이동(IntelliJ 식, LSP 없이 이름 단위 — 가볍게). 메뉴 **이동**에도 있다. 단축키는 키 위치로 받아 한글 입력 중에도 된다.
     - **⌘B / ⌘+클릭** 선언으로: 커서(누른 곳) 아래 이름의 선언으로 간다. 후보가 여럿이면 작은 목록(종류·코드 줄·상대 경로:줄, ↑↓ ↩ esc·클릭).
@@ -331,7 +340,8 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
   세션 이동 시험: `action next-attention`·`switcher <이름·폴더>`·`popup`·`popup-key <up|down|enter|esc>`. `chord cmd+j|cmd+k`는 실제 단축키 경로.
-  터미널 찾기 시험: `terminal-find <글>`·`terminal-find-state`(개수·선택 문자열·칸·스크롤)·`terminal-find-case on|off`·`terminal-find-close`.
+  터미널 찾기 시험: `terminal-find <글>`·`terminal-find-state`(개수·선택 문자열·칸·스크롤)·`terminal-find-case on|off`·`terminal-find-close`. `terminal-click`은 터미널 가운데에 실제 마우스 이벤트를 넣고, `pane-find-menu`는 찾기 메뉴의 켜짐을 출력한다.
+  창 포커스 시험은 `settings key`·`main-key`, 메뉴 실행 경로는 `pane-find-menu-action pane-find`를 쓴다.
   이동 시험 명령: `goto [<줄>:<열>]`·`usages [<줄>:<열>]`·`symbol <글>`·`popup`(목록 내용)·`popup-key <up|down|enter|esc>`·
   `cmd-click <줄>:<열>`·`cmd-hover <줄>:<열>`(밑줄 확인)·`nav-back`·`nav-forward`·`nav-state`·`index-state`·`index-build <루트>`(색인 시간·메모리).
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·

@@ -48,6 +48,11 @@ final class TerminalHostController: NSViewController {
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             if let self, event.window === self.view.window, let id = self.container.paneId(at: event.locationInWindow) {
                 self.model.focus(pane: id, fromClick: true)
+                if let pane = self.terminals[id], let content = event.window?.contentView,
+                   let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
+                   hit === pane.view || hit.isDescendant(of: pane.view) {
+                    event.window?.makeFirstResponder(pane.view)
+                }
             }
             return event
         } as Any)

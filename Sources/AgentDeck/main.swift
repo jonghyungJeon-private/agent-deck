@@ -90,6 +90,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.representedObject as? String {
+        case "pane-find", "pane-find-next", "pane-find-previous":
+            guard NSApp.keyWindow === window else { return false }
+            if let editor = model.host?.focusedEditor { return editor.preview == nil && editor.textView != nil }
+            guard let pane = model.host?.focusedTerminal else { return false }
+            return menuItem.representedObject as? String == "pane-find" || pane.findBar.superview != nil
+                || !pane.findBar.field.stringValue.isEmpty
         case "save":
             return model.focusedIsEditor
         case "markdown-preview":
@@ -312,9 +318,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 pane.findBar.search(backwards: event.modifierFlags.contains(.shift))
                 return nil
             }
-            if event.keyCode == 53, self.model.host?.sessionSwitcher.popup == nil,
+            if event.keyCode == 53,
+               event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               self.model.host?.sessionSwitcher.popup == nil,
                self.model.host?.navigator.popup == nil, let pane = self.model.host?.focusedTerminal,
-               pane.findBar.superview != nil, !pane.view.hasMarkedText(),
+               pane.findBar.superview != nil, pane.findBar.fieldHasFocus,
                (pane.findBar.field.currentEditor() as? NSTextView)?.hasMarkedText() != true {
                 pane.findBar.close()
                 return nil
@@ -336,6 +344,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return nil
             }
             guard let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)] else { return event }
+            if ["pane-find-next", "pane-find-previous"].contains(action),
+               let pane = self.model.host?.focusedTerminal, pane.findBar.superview == nil,
+               pane.findBar.field.stringValue.isEmpty { return event }
             self.perform(action)
             return nil
         }
@@ -367,15 +378,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// 메뉴·단축키·시험 명령: 도구 창 동작(tool-…)은 도구 창 관리자가, 나머지는 모델이 맡는다
     private func perform(_ action: String) {
         if action.hasPrefix("pane-find") {
-            if let editor = model.host?.focusedEditor?.textView {
+            model.host?.sessionSwitcher.close(restoreFocus: true)
+            model.host?.navigator.closePopup(restoreFocus: true)
+            if let editor = model.host?.focusedEditor {
+                guard editor.preview == nil, let textView = editor.textView else { return }
                 switch action {
-                case "pane-find": editor.editorFind(nil)
-                case "pane-find-next": editor.editorFindNext(nil)
-                default: editor.editorFindPrevious(nil)
+                case "pane-find": textView.editorFind(nil)
+                case "pane-find-next": textView.editorFindNext(nil)
+                default: textView.editorFindPrevious(nil)
                 }
             } else if let pane = model.host?.focusedTerminal {
                 if action == "pane-find" { pane.findBar.show() }
-                else { pane.findBar.search(backwards: action == "pane-find-previous") }
+                else {
+                    if pane.findBar.superview == nil {
+                        guard !pane.findBar.field.stringValue.isEmpty else { return }
+                        pane.findBar.show()
+                    }
+                    pane.findBar.search(backwards: action == "pane-find-previous")
+                }
             }
         } else if action.hasPrefix("font:") {
             TermAppearance.adjustFontSize(String(action.dropFirst(5)))
@@ -405,6 +425,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     @objc private func menuAction(_ sender: NSMenuItem) {
         guard let action = sender.representedObject as? String else { return }
+        if action.hasPrefix("pane-find"), NSApp.keyWindow !== window { return }
         // 설정 창 같은 다른 창이 앞에 있으면 ⌘W 는 그 창을 닫는다(터미널 화면을 닫지 않게)
         if ["close", "close-tab"].contains(action), let key = NSApp.keyWindow, key !== window {
             key.performClose(nil)
@@ -528,6 +549,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if v.count == 2, let kind = AgentKind(rawValue: v[0]) { model.newAgent(kind, cwd: v[1]) }
         case "settings":
             settingsWindow.show()
+            if argument == "key" { NSApp.windows.first { $0.windowNumber == settingsWindow.windowNumber }?.makeKey() }
             print("settings window=\(settingsWindow.windowNumber ?? -1)")
             fflush(stdout)
         case "footer-settings":
@@ -712,6 +734,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "terminal-find":
             host.focusedTerminal?.findBar.show(query: argument)
             say(host.focusedTerminal?.findBar.debugSummary ?? "terminal-find none")
+        case "main-key": window?.makeKey()
+        case "pane-find-menu":
+            for menu in NSApp.mainMenu?.items.compactMap(\.submenu) ?? [] {
+                for item in menu.items where (item.representedObject as? String)?.hasPrefix("pane-find") == true {
+                    say("pane-find-menu \(item.representedObject ?? "-") enabled=\(validateMenuItem(item)) mainKey=\(NSApp.keyWindow === window)")
+                }
+            }
+        case "pane-find-menu-action":
+            for menu in NSApp.mainMenu?.items.compactMap(\.submenu) ?? [] {
+                if let item = menu.items.first(where: { $0.representedObject as? String == argument }) { menuAction(item) }
+            }
+        case "terminal-click":
+            if let view = host.focusedTerminal?.view, let window = view.window {
+                let location = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+                for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: kind, location: location, modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                        context: nil, eventNumber: 0, clickCount: 1, pressure: kind == .leftMouseDown ? 1 : 0) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+            }
         case "terminal-find-state":
             say(host.focusedTerminal?.findBar.debugSummary ?? "terminal-find none")
         case "terminal-find-case": host.focusedTerminal?.findBar.setCaseSensitive(argument == "on")
@@ -834,11 +878,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                          "up": NSUpArrowFunctionKey, "down": NSDownArrowFunctionKey]
             if let code = names[key] { key = String(UnicodeScalar(code)!); flags.insert([.function, .numericPad]) }
             if key == "enter" { key = "\r" }
+            if key == "esc" { key = "\u{1b}" }
             if key == "f7" { key = String(UnicodeScalar(NSF7FunctionKey)!); flags.insert(.function) }
             let shifted = ["[": "{", "]": "}", "d": "D", "=": "+", "e": "E", "s": "S", "v": "V", "b": "B", "o": "O"]
             let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
             // 실제 키보드(US 배열)의 키 코드
-            let codes: [String: UInt16] = ["d": 2, "t": 17, "e": 14, "s": 1, "v": 9, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
+            let codes: [String: UInt16] = ["\u{1b}": 53, "d": 2, "t": 17, "e": 14, "s": 1, "v": 9, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
                                            "j": 38, "ㅓ": 38, "k": 40, "ㅏ": 40, "f": 3, "ㄹ": 3, "g": 5, "ㅎ": 5, "b": 11, "o": 31, String(UnicodeScalar(NSF7FunctionKey)!): 98,
                                            "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
                                            String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,

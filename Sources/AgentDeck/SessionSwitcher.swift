@@ -38,7 +38,7 @@ extension TermModel {
     func nextAttention() {
         host?.sessionSwitcher.close(restoreFocus: false)
         host?.navigator.closePopup(restoreFocus: false)
-        guard let id = attentionCycle.next(sessionTargets) else {
+        guard let id = attentionCycle.next(sessionTargets, focused: selectedId) else {
             host?.sessionSwitcher.hint("확인할 세션이 없습니다")
             return
         }
@@ -53,12 +53,19 @@ final class SessionSwitcher {
     private var candidates: [SessionTarget] = []
     private var mouseMonitor: Any?
     private var hintLabel: NSTextField?
+    private weak var previousResponder: NSResponder?
+    private weak var previousField: NSTextField?
     init(host: TerminalHostController) { self.host = host }
     deinit { if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) } }
 
     func show() {
-        close(restoreFocus: false)
+        close(restoreFocus: true)
         host.navigator.closePopup(restoreFocus: false)
+        previousResponder = host.view.window?.firstResponder
+        if let bar = host.focusedTerminal?.findBar, bar.fieldHasFocus { previousField = bar.field }
+        else if let editor = previousResponder as? NSTextView, editor.isFieldEditor {
+            previousField = editor.delegate as? NSTextField
+        } else { previousField = nil }
         candidates = host.model.sessionTargets
         let popup = NavigatorPopupView(title: "세션 빠른 전환", searchable: true, placeholder: "세션 이름 · 폴더 · 작업 트리 검색")
         self.popup = popup
@@ -99,7 +106,9 @@ final class SessionSwitcher {
 
     func scaleChanged() {
         guard let query = popup?.field.stringValue else { return }
+        let responder = previousResponder, field = previousField
         show()
+        previousResponder = responder; previousField = field
         popup?.field.stringValue = query
         filter(query)
     }
@@ -113,10 +122,18 @@ final class SessionSwitcher {
     }
 
     func close(restoreFocus: Bool) {
-        popup?.removeFromSuperview(); popup = nil
+        guard let popup else { return }
+        popup.removeFromSuperview(); self.popup = nil
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
-        if restoreFocus { host.focusPane() }
+        if restoreFocus {
+            if let field = previousField, field.window === host.view.window {
+                field.window?.makeFirstResponder(field)
+            } else if let responder = previousResponder as? NSView, responder.window === host.view.window {
+                responder.window?.makeFirstResponder(responder)
+            } else { host.focusPane() }
+        }
+        previousResponder = nil; previousField = nil
     }
 
     func hint(_ text: String) {

@@ -62,7 +62,7 @@ public struct AttentionCycle {
     private var last: String?
     public init() {}
 
-    public mutating func next(_ items: [SessionTarget]) -> String? {
+    public mutating func next(_ items: [SessionTarget], focused: String? = nil) -> String? {
         let ids = SessionNavigation.attention(items).map(\.id)
         guard !ids.isEmpty else { previous = []; last = nil; return nil }
         var target = ids[0]
@@ -72,6 +72,9 @@ public struct AttentionCycle {
             // 확인한 완료가 목록에서 빠져도 그 다음 대상으로 이어 간다.
             let tail = Array(previous.dropFirst(i + 1)) + Array(previous.prefix(i))
             target = tail.first(where: { ids.contains($0) }) ?? ids[0]
+        }
+        if target == focused, ids.count > 1, let i = ids.firstIndex(of: target) {
+            target = ids[(i + 1) % ids.count]
         }
         previous = ids; last = target
         return target

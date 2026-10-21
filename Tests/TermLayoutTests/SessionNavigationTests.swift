@@ -18,6 +18,13 @@ final class SessionNavigationTests: XCTestCase {
         XCTAssertEqual(cycle.next([target("only", "error")]), "only")
         XCTAssertEqual(cycle.next([target("only", "error")]), "only")
     }
+    func testCycleSkipsFocusedFirstTarget() {
+        let items = [target("waiting", "waiting"), target("error", "error")]
+        var cycle = AttentionCycle()
+        XCTAssertEqual(cycle.next(items, focused: "waiting"), "error")
+        XCTAssertEqual(cycle.next(items, focused: "error"), "waiting")
+        XCTAssertEqual(cycle.next([items[0]], focused: "waiting"), "waiting")
+    }
     func testKoreanSubstringAndNameRanking() {
         let items = [target("a", "", name: "한글 검색", folder: "/tmp/작업트리"),
                      target("b", "waiting", name: "다른 이름", folder: "/tmp/한글")]

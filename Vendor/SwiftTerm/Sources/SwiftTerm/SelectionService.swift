@@ -241,6 +241,18 @@ public class SelectionService: CustomDebugStringConvertible {
         setActiveAndNotify()
     }
     
+    /// AgentDeck: 검색 범위의 끝은 배타적이므로 마지막 칸 뒤(cols)까지 허용한다.
+    public func setSearchSelection(start: Position, end: Position) {
+        let buffer = terminal.displayBuffer
+        let lastRow = max(0, buffer.lines.count - 1)
+        self.start = Position(col: max(0, min(start.col, buffer.cols - 1)), row: max(0, min(start.row, lastRow)))
+        self.end = Position(col: max(0, min(end.col, buffer.cols)), row: max(0, min(end.row, lastRow)))
+        selectionMode = .character
+        wordSelectionAnchor = nil
+        rowSelectionAnchor = nil
+        setActiveAndNotify()
+    }
+
     /**
      * Starts selection, the range is determined by the last start position
      */
