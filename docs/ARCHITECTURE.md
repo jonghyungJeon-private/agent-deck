@@ -208,7 +208,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   단축키(Ghostty 기본값, 한글 입력 중에도 키 위치로 동작):
   ⌘T 새 탭 · ⌘D 오른쪽으로 나누기 · ⌘⇧D 아래로 나누기 · ⌘W 화면 닫기(셸이 아닌 프로그램이 돌면 묻는다) · ⌘⌥W 탭 닫기 ·
   ⌘[ ⌘] 이전/다음 화면(편집기 화면에선 뒤로/앞으로 — 아래 "코드 이동") · ⌘⌥방향키 그쪽 화면으로 · ⌘⇧↩ 화면 크게 보기/되돌리기 · ⌘⌃= 크기 같게 · ⌘⌃방향키 나눈 선 옮기기 ·
-  ⌘⇧[ ⌘⇧] 또는 ⌃Tab ⌃⇧Tab 이전/다음 탭 · ⌘1~8 탭, ⌘9 마지막 탭 · ⌥⇧⌘← ⌥⇧⌘→ 지금 탭을 왼쪽/오른쪽으로 한 칸. 새 탭·분할은 지금 화면의 폴더에서 열린다.
+  ⌘K 화면 지우기(터미널만: 화면·뒤로 보기를 지우고 Ctrl-L 전송 — 데몬 replay 버퍼는 안 지워져 탭 전환 후 지운 내용이 다시 보일 수 있음. 후속: 데몬에 replay 비우기 프레임 추가) · ⌘P 세션 빠른 전환 · ⌘⇧[ ⌘⇧] 또는 ⌃Tab ⌃⇧Tab 이전/다음 탭 · ⌘1~8 탭, ⌘9 마지막 탭 · ⌥⇧⌘← ⌥⇧⌘→ 지금 탭을 왼쪽/오른쪽으로 한 칸. 새 탭·분할은 지금 화면의 폴더에서 열린다.
 - 탭·화면 옮기기(배치만 바뀌어 셸·claude 는 다시 뜨지 않는다, 터미널·편집기 둘 다):
   탭을 끌어 순서를 바꾼다(끄는 탭이 마우스를 따라가고 다른 탭이 비켜 선다, 조금만 움직이고 놓으면 클릭). 순서는 `layout.json` 에 남고 ⌘1~9 도 따른다.
   탭을 탭 줄 밖으로 끌어 지금 탭의 화면 위에 놓으면 가장 가까운 가장자리 쪽 절반이 강조색으로 보이고, 놓으면 그 화면을 나눠 탭째(분할 나무 그대로) 들어간다.
@@ -339,7 +339,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   `AGENTDECK_DEBUG_NAME=<이름>` 이면 그 이름의 알림만 받는다(기본 `dev.agentdeck.debug`, 시험 앱을 여럿 띄울 때 서로의 명령을 받지 않게).
   편집기 시험 명령: `open-path <절대 경로>[|right|down]`·`editor-type <글>`(`\n` 줄바꿈)·`editor-select <줄>[:<열>]`·`editor-save`·`editor-undo`·
   `editor-state`·`editors`·`editor-answer <save|discard|cancel>`(다음 저장 확인 창 대신 쓸 답)·`editor-banner <reload|overwrite>`·`editor-find`·`editor-snap <png>`.
-  세션 이동 시험: `action next-attention`·`switcher <이름·폴더>`·`popup`·`popup-key <up|down|enter|esc>`. `chord cmd+j|cmd+k`는 실제 단축키 경로.
+  세션 이동 시험: `action next-attention`·`switcher <이름·폴더>`·`popup`·`popup-key <up|down|enter|esc>`. `chord cmd+j|cmd+p`는 실제 단축키 경로(⌘K 는 화면 지우기).
   터미널 찾기 시험: `terminal-find <글>`·`terminal-find-state`(개수·선택 문자열·칸·스크롤)·`terminal-find-case on|off`·`terminal-find-close`. `terminal-click`은 터미널 가운데에 실제 마우스 이벤트를 넣고, `pane-find-menu`는 찾기 메뉴의 켜짐을 출력한다.
   창 포커스 시험은 `settings key`·`main-key`, 메뉴 실행 경로는 `pane-find-menu-action pane-find`를 쓴다.
   이동 시험 명령: `goto [<줄>:<열>]`·`usages [<줄>:<열>]`·`symbol <글>`·`popup`(목록 내용)·`popup-key <up|down|enter|esc>`·

@@ -98,6 +98,18 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
         }
     }
 
+    /// ⌘K 화면 지우기(Ghostty clear_screen): 보이는 화면과 뒤로 보기를 지우고 커서를 맨 위로 보낸 뒤,
+    /// Ctrl-L 을 보내 셸·화면 프로그램이 자기 화면을 다시 그리게 한다. 모드(대체 화면 등)는 건드리지 않는다.
+    /// 데몬이 보관한 지난 출력(replay)은 그대로라, 탭을 갔다 오면 지운 내용이 다시 보일 수 있다(docs/ARCHITECTURE.md).
+    func clearScreen() {
+        guard !replaying, !restoring else { return }
+        view.clearScrollback()
+        view.feed(byteArray: Array("\u{1b}[H\u{1b}[2J".utf8)[...])
+        view.scrollTo(row: 0)
+        client.input(id, [0x0c][...])
+        findBar.contentChanged()
+    }
+
     func exited() {
         view.feed(text: "\r\n\u{1b}[2m[셸이 끝났습니다]\u{1b}[0m\r\n")
         findBar.contentChanged()

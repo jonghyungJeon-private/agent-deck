@@ -96,6 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let pane = model.host?.focusedTerminal else { return false }
             return menuItem.representedObject as? String == "pane-find" || pane.findBar.superview != nil
                 || !pane.findBar.field.stringValue.isEmpty
+        case "clear-screen":
+            return NSApp.keyWindow === window && model.host?.focusedTerminal != nil
         case "save":
             return model.focusedIsEditor
         case "markdown-preview":
@@ -194,6 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(shell, "화면 닫기", "close", "w")
         addAction(shell, "탭 닫기", "close-tab", "w", [.command, .option])
         shell.addItem(.separator())
+        addAction(shell, "화면 지우기", "clear-screen", "k")
+        shell.addItem(.separator())
         addAction(shell, "이름 바꾸기…", "rename", "")
         addAction(shell, "화면을 새 탭으로 꺼내기", "extract-pane", "")
         addSubmenu(main, shell)
@@ -201,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // 이동(IntelliJ 식). ⌘[ ⌘] 는 편집기 화면에서만 뒤로·앞으로(터미널에선 이전·다음 화면)
         let navigate = NSMenu(title: "이동")
         addAction(navigate, "다음 확인할 세션", "next-attention", "j")
-        addAction(navigate, "세션 빠른 전환…", "session-switcher", "k")
+        addAction(navigate, "세션 빠른 전환…", "session-switcher", "p")
         navigate.addItem(.separator())
         addAction(navigate, "선언으로 이동", "goto-declaration", "b")
         addAction(navigate, "사용 위치 찾기", "find-usages", String(UnicodeScalar(NSF7FunctionKey)!), [.option])
@@ -263,7 +267,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private static let shortcuts: [ShortcutKey: String] = {
         var map: [ShortcutKey: String] = [
             ShortcutKey(38, .command): "next-attention",
-            ShortcutKey(40, .command): "session-switcher",
+            ShortcutKey(35, .command): "session-switcher",
+            ShortcutKey(40, .command): "clear-screen",
             ShortcutKey(3, .command): "pane-find",
             ShortcutKey(5, .command): "pane-find-next",
             ShortcutKey(5, [.command, .shift]): "pane-find-previous",
@@ -344,6 +349,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return nil
             }
             guard let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)] else { return event }
+            // ⌘K 화면 지우기는 터미널 화면에서만. 편집기 등 다른 화면이면 그대로 보낸다.
+            if action == "clear-screen", self.model.host?.focusedTerminal == nil { return event }
             if ["pane-find-next", "pane-find-previous"].contains(action),
                let pane = self.model.host?.focusedTerminal, pane.findBar.superview == nil,
                pane.findBar.field.stringValue.isEmpty { return event }
@@ -884,7 +891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let chars = flags.contains(.shift) ? (shifted[key] ?? key) : key
             // 실제 키보드(US 배열)의 키 코드
             let codes: [String: UInt16] = ["\u{1b}": 53, "d": 2, "t": 17, "e": 14, "s": 1, "v": 9, "w": 13, "[": 33, "]": 30, "=": 24, "\r": 36,
-                                           "j": 38, "ㅓ": 38, "k": 40, "ㅏ": 40, "f": 3, "ㄹ": 3, "g": 5, "ㅎ": 5, "b": 11, "o": 31, String(UnicodeScalar(NSF7FunctionKey)!): 98,
+                                           "j": 38, "ㅓ": 38, "k": 40, "ㅏ": 40, "p": 35, "ㅔ": 35, "f": 3, "ㄹ": 3, "g": 5, "ㅎ": 5, "b": 11, "o": 31, String(UnicodeScalar(NSF7FunctionKey)!): 98,
                                            "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "9": 25,
                                            String(UnicodeScalar(NSLeftArrowFunctionKey)!): 123,
                                            String(UnicodeScalar(NSRightArrowFunctionKey)!): 124,

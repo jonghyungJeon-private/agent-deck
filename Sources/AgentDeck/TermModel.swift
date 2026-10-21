@@ -1213,6 +1213,7 @@ final class TermModel: ObservableObject {
         switch parts.first {
         case "next-attention": nextAttention()
         case "session-switcher": host?.sessionSwitcher.show()
+        case "clear-screen": host?.focusedTerminal?.clearScreen()
         case "new-tab": newPane()
         case "split-right": newPane(split: .horizontal)
         case "split-down": newPane(split: .vertical)
