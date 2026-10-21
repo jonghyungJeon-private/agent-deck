@@ -868,11 +868,12 @@ struct AgentRowView: View {
     }
 }
 
-/// 도크 맨 아래 상태 줄: 새 버전·오류·메모리·버전·데몬 연결. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
+/// 도크 맨 아래 상태 줄: 새 버전·오류·요금제 사용량·메모리·버전·데몬 연결. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
 struct StatusFooterView: View {
     @ObservedObject var model: TermModel
     @ObservedObject private var updates: UpdateNotifier
     @ObservedObject private var launch: LaunchSettings
+    @ObservedObject private var usage: UsageStore
     @ObservedObject private var scaling = UIScaleModel.shared
     private var ui: UIScale { scaling.scale }
 
@@ -880,6 +881,7 @@ struct StatusFooterView: View {
         _model = ObservedObject(wrappedValue: model)
         _launch = ObservedObject(wrappedValue: model.launch)
         _updates = ObservedObject(wrappedValue: model.updates)
+        _usage = ObservedObject(wrappedValue: model.usage)
     }
 
     private static let versionLabel: String = {
@@ -909,6 +911,8 @@ struct StatusFooterView: View {
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
+            if let claude = usage.claude { UsageLineView(line: claude) }
+            if let codex = usage.codex { UsageLineView(line: codex) }
             Text("앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))")
             HStack(alignment: .center, spacing: ui(6)) {
                 Text(Self.versionLabel)

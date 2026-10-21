@@ -260,6 +260,8 @@ final class TermModel: ObservableObject {
     let notifier = Notifier()
     /// 새 버전 알림(하루 한 번까지, 켤 때·앞으로 나올 때만)
     let updates = UpdateNotifier()
+    /// 상태 줄의 Claude·Codex 요금제 사용량(2초 갱신에 얹음)
+    let usage = UsageStore()
     /// 알림을 보낸 상태(세션별 "세션#상태 번호", 번호 없는 예전 기록은 "상태@시각") — 같은 상태로 두 번 보내지 않는다
     private var notified: [String: String] = [:]
     private var notifyPrimed = false
@@ -291,6 +293,7 @@ final class TermModel: ObservableObject {
         }
         if let error = DataLocation.migrationError { lastError = "예전 데이터를 새 위치로 옮기지 못했습니다(다음에 켤 때 다시 시도): \(error)" }
         reconnect()
+        usage.refresh()
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -421,6 +424,7 @@ final class TermModel: ObservableObject {
 
     private func tick() {
         appFootprint = Memory.footprint()
+        usage.refresh()
         if client.isConnected { client.list() } else { reconnect() }
     }
 
