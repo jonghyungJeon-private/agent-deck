@@ -352,7 +352,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     var outputViewport: OutputViewport?
     // AgentDeck patch: 캡처가 캐시를 먼저 채워도 화면 갱신 판정은 바뀌지 않는다.
     struct OutputRowVersion {
-        let line: ObjectIdentifier
+        // 주소 재사용으로 다른 줄과 혼동하지 않도록 ObjectIdentifier 대신 약한 참조로 비교한다.
+        weak var line: BufferLine?
         let generation: UInt64
         let recycle: UInt64
         let selection: Range<Int>?
@@ -366,6 +367,8 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
     var outputRowVersions: [OutputRowVersion] = []
+    /// 마지막으로 알린 선택의 절대 행 범위(선택 해제 때 지울 행)
+    var paintedSelectionRows: ClosedRange<Int>?
     var lineCacheEpoch: UInt64 = 0
     /// 진단용 캐시 적중·실패 수
     public static var lineCacheHits = 0
@@ -2792,7 +2795,20 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
             return
         }
         #endif
-        needsDisplay = true
+        // AgentDeck patch: 이전·새 선택이 걸친 행만 다시 그린다. 찾기 막대가 열려 출력마다 선택을
+        // 다시 적용해도 화면 전체를 다시 그리지 않게 한다.
+        guard let selection, cellDimension != nil else {
+            needsDisplay = true
+            return
+        }
+        let newRows: ClosedRange<Int>? = selection.active
+            ? min(selection.start.row, selection.end.row)...max(selection.start.row, selection.end.row) : nil
+        let yDisp = terminal.displayBuffer.yDisp
+        for rows in [paintedSelectionRows, newRows].compactMap({ $0 }) {
+            let first = max(0, rows.lowerBound - yDisp), last = min(terminal.rows - 1, rows.upperBound - yDisp)
+            if first <= last { setNeedsDisplay(rowInvalidationRect(first).union(rowInvalidationRect(last))) }
+        }
+        paintedSelectionRows = newRows
     }
     
     func cut (sender: Any?) {}

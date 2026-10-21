@@ -67,7 +67,7 @@
 ## 동일 내용 재전송의 행 재사용 — AgentDeck patch
 
 `Apple/AppleTerminalView.swift` 의 `RowRenderContent`·`reusableLineEntry`·`contentDirtyRows`,
-`Mac/MacTerminalView.swift` 의 viewport 기록을 추가했다. 1차의 glyph/좌표 캐시·draw 행 경계 계산·
+`Mac/MacTerminalView.swift` 의 viewport 기록·선택 행 무효화를 추가했다. 1차의 glyph/좌표 캐시·draw 행 경계 계산·
 caret clip·minimumDisplayInterval/비포커스 제한 변경은 효과가 작아 모두 철회했다.
 
 - 기존 줄 객체 인덱스와 세대 번호는 빠른 경로로만 쓴다. 세대/재사용 세대가 달라도 셀 code(결합 글자 ID 포함)·
@@ -77,16 +77,23 @@ caret clip·minimumDisplayInterval/비포커스 제한 변경은 효과가 작�
   Mac 의 customBlockGlyphs·antiAliasCustomBlockGlyphs·useBrightColors·bidiHostPolicy·선택색·링크 표시 방식 변경도 캐시를 비워
   내용 비교가 표시 옵션 변경을 생략하지 않게 한다.
   선택·검색 선택 API(`SelectionService.setSelection`)는 수정하지 않는다. 출력이 선택을 해제하는 기존 동작도 그대로다.
+  `selectionChanged` 는 화면 전체 대신 마지막으로 알린 선택과 새 선택이 걸친 행(각각 아래 한 행 포함)만 무효화한다.
+  찾기 막대가 출력마다 `setSearchSelection` 을 다시 적용해도 최적화가 유지된다. Metal 경로는 그대로다.
 - 각 PTY 조각 앞뒤로 화면 전체를 복사하지 않는다. 60fps 로 모인 feed 의 updateDisplay 에서 마지막 렌더 snapshot 과
   후보 행을 비교하고, 같으면 그 행의 rect 를 무효화하지 않는다.
   마지막 updateDisplay 의 행 세대/선택/강조 버전을 따로 기록해, 오프스크린 캡처나 캐시 진단이
-  캐시를 먼저 채웠더라도 실제 창의 갱신을 누락하지 않는다. 표시 옵션/색 캐시를 비우면 별도 epoch 도 바꾼다. 바뀐 행만 각각 무효화하며 마지막 행의 아래 여백도 포함한다.
-  updateCursorPosition·접근성·delegate 알림은 생략하지 않고, 선택/IME/caret 자체 갱신 경로는 그대로 쓴다.
+  캐시를 먼저 채웠더라도 실제 창의 갱신을 누락하지 않는다. 행 기록은 주소 재사용 충돌을 피하려고 줄 객체를 약한 참조(`===`)로 비교한다.
+  표시 옵션/색 캐시를 비우면 별도 epoch 도 바꾼다. 바뀐 행만 각각 무효화하되 기존 영역 갱신처럼 아래 한 행까지 덮어
+  (마지막 행이면 아래 여백) 칸 아래로 넘친 글자·밑줄의 잔상을 지운다.
+  updateCursorPosition·접근성·delegate 알림은 생략하지 않고, IME/caret 자체 갱신 경로는 그대로 쓴다.
 - 버퍼/viewport·크기·행 객체 배치가 바뀐 경우, 스크롤백·이어진 문단(soft wrap 포함)·BiDi·double-height/width·이미지/Kitty 는 기존 영역 갱신으로 돌아간다.
   캐시할 수 없는 행을 그리면 그 객체의 오래된 항목도 지우고, Kitty placement 가 모두 사라지는 전환도 전체 갱신한다.
   Metal 은 새 무효화 최적화를 쓰지 않는다. 줄 캐시는 기존 화면 두 배 남짓의 상한을 유지하고 snapshot 은 그 항목과 함께 사라진다.
   반복 타이머·glyph bitmap·GPU 자원은 추가하지 않는다.
-- 시험: `RenderingTests` 의 동일 재전송(EL 뒤 재작성 포함)→cache hit/무효화 0, 한 셀→해당 행 rect 하나,
-  속성만 변경→무효화/새 캐시, 검색 강조 유지/해제·수동 선택·한글 폭·밑줄 속성·부분/전체 렌더 픽셀 비교.
+- 주 화면 TUI 는 출력이 스크롤백을 늘려 viewport 가 바뀌므로 기존 영역 전체 갱신으로 돌아간다. 효과는 대체 화면 위주다.
+- 시험: `RenderingTests` 의 동일 재전송(EL 뒤 재작성 포함)→cache hit/rect·전체 무효화 0, 한 셀→해당 행+아래 행 rect 하나,
+  속성만 변경→무효화/새 캐시, 검색 강조 유지/해제·수동 선택·한글 폭·밑줄 속성·부분/전체 렌더 픽셀 비교,
+  아래로 넘친 글자의 잔상, 찾기 막대 흐름(출력이 선택 해제→`setSearchSelection` 재적용), 선택 이동/해제의 행 무효화.
+  시험 하위 클래스는 `setNeedsDisplay(_:)` 와 `needsDisplay = true` 를 모두 기록한다.
 
 추가 순서 시험: feed → offscreen draw → updateDisplay 에서 실제 창 무효화가 남는지, 옵션 변경 뒤 캡처가 먼저 일어나도 다시 그리는지 확인한다.

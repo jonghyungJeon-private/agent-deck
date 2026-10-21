@@ -1488,7 +1488,7 @@ extension TerminalView {
             guard absolute >= 0, absolute < buffer.lines.count else { return nil }
             let line = buffer.lines[absolute]
             guard line.images == nil, line.renderMode == .single, independentRow(absolute, line: line),
-                  outputRowVersions[row].line == ObjectIdentifier(line) else { return nil }
+                  outputRowVersions[row].line === line else { return nil }
             if let entry = lineInfoCache[ObjectIdentifier(line)], outputRowVersions[row].matches(entry),
                reusableLineEntry(row: absolute, line: line, cols: buffer.cols) != nil { continue }
             // BiDi 는 문단 전체가 바뀔 수 있다.
@@ -1504,12 +1504,16 @@ extension TerminalView {
             setNeedsDisplay(fallback)
             return
         }
-        for row in dirty {
-            let bottom = frame.height - CGFloat(row + 1) * cellDimension.height
-            let rect = CGRect(x: 0, y: row == terminal.rows - 1 ? 0 : bottom, width: frame.width,
-                              height: row == terminal.rows - 1 ? bottom + cellDimension.height : cellDimension.height)
-            setNeedsDisplay(rect)
-        }
+        for row in dirty { setNeedsDisplay(rowInvalidationRect(row)) }
+    }
+
+    /// 화면 행 하나의 무효화 영역. 기존 영역 갱신처럼 아래 한 행(마지막 행이면 아래 여백)까지 덮어,
+    /// 칸 아래로 넘친 글자·밑줄의 잔상이 남지 않게 한다.
+    func rowInvalidationRect(_ row: Int) -> CGRect {
+        let height = cellDimension.height
+        let top = frame.height - CGFloat(row) * height
+        let bottom = row >= terminal.rows - 1 ? 0 : max(0, top - 2 * height)
+        return CGRect(x: 0, y: bottom, width: frame.width, height: top - bottom)
     }
 
     private func outputViewportKey() -> OutputViewport {
@@ -1526,7 +1530,7 @@ extension TerminalView {
             let absolute = buffer.yDisp + row
             guard absolute >= 0, absolute < buffer.lines.count else { return nil }
             let line = buffer.lines[absolute]
-            return OutputRowVersion(line: ObjectIdentifier(line), generation: line.generation,
+            return OutputRowVersion(line: line, generation: line.generation,
                                     recycle: line.recycleGeneration,
                                     selection: selectedColumnsRange(row: absolute, cols: buffer.cols),
                                     blinkVisible: textBlinkVisible, commandActive: commandActive,

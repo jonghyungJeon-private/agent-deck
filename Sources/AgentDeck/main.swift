@@ -1080,11 +1080,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard let view = model.host?.focusedTerminal?.view,
                   let metal = view.subviews.first(where: { $0 is MTKView }) as? MTKView,
                   let dir = AgentDeckEnv.nonEmpty("SNAPSHOT"), let device = metal.device else { return }
+            // 진단용으로 잠시 끈 framebufferOnly 는 어느 경로로 끝나도 원래 값으로 돌린다.
+            let framebufferOnly = metal.framebufferOnly
+            var handedOff = false
+            defer { if !handedOff { metal.framebufferOnly = framebufferOnly } }
             metal.framebufferOnly = false
             metal.releaseDrawables()
             guard let drawable = metal.currentDrawable else { return }
+            handedOff = true
             let texture = drawable.texture
             drawable.addPresentedHandler { _ in
+                defer { DispatchQueue.main.async { metal.framebufferOnly = framebufferOnly } }
                 let rowBytes = (texture.width * 4 + 255) & ~255
                 guard let queue = device.makeCommandQueue(), let command = queue.makeCommandBuffer(),
                       let buffer = device.makeBuffer(length: rowBytes * texture.height, options: .storageModeShared),
@@ -1108,7 +1114,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     else { return }
                     let url = URL(fileURLWithPath: dir).appendingPathComponent("metal.png")
                     try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: url)
-                    metal.framebufferOnly = true
                     print("metal-snapshot \(url.path)")
                     fflush(stdout)
                 }

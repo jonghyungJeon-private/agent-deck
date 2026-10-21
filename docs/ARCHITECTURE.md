@@ -156,83 +156,45 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
 기본은 CoreText/CoreGraphics 다. 세대 번호가 바뀌어도 셀 내용·폭·색/스타일/밑줄·payload 와 행 표시 상태가
 정확히 같으면 기존 CTLine 을 재사용한다. 해시 충돌을 피하려고 셀 snapshot 을 논리 값으로 비교한다.
 선택·검색 강조·깜박임·링크는 별도 조건이며 글꼴/색/표시 옵션 변경은 캐시를 비운다.
-원래 약 60fps 일회성 coalescing 뒤 마지막 렌더와 내용이 같은 행의 무효화를 생략하고, 바뀐 행 rect 만 요청한다.
+원래 약 60fps 일회성 coalescing 뒤 마지막 렌더와 내용이 같은 행의 무효화를 생략하고, 바뀐 행만 요청한다.
+각 행의 rect 는 그 아래 한 행(마지막 행이면 아래 여백)까지 덮어 칸 아래로 넘친 글자·밑줄 잔상을 지운다.
+선택이 바뀌면 이전·새 선택이 걸친 행만 다시 그려, 찾기 막대가 출력마다 검색 범위를 다시 적용해도 전체를 다시 그리지 않는다.
 캡처가 캐시를 먼저 채워도 창 갱신을 생략하지 않도록 마지막 updateDisplay 의 행 버전과 cache epoch 를 따로 기록한다.
 스크롤백·viewport/크기/행 배치 변경·이어진 문단·BiDi·이미지/Kitty 는 보수적인 기존 영역 갱신을 유지한다.
-커서·선택·IME·접근성·delegate 알림은 기존 경로를 쓴다. 자세한 조건과 시험은 Vendor/SwiftTerm/PATCHES.md 에 있다.
+커서·IME·접근성·delegate 알림은 기존 경로를 쓴다. 자세한 조건과 시험은 Vendor/SwiftTerm/PATCHES.md 에 있다.
 1차 glyph/좌표 캐시·draw 행 경계·caret clip·minimumDisplayInterval/비포커스 제한 변경은 대형 효과가 작아 모두 철회했다.
-기존 drawTerminalContents 본문과 CaretView·TerminalHostController 는 기준 코드 그대로다.
+Metal 경로는 이 최적화를 쓰지 않는다.
 
-재현기는 `scripts/render-benchmark.py` 다. QA 앱 하나만 별도 bundle ID/데이터/가짜 CLI 와 한 번짜리 launchd opener 로
-실행한다. 매 실행 직후 정확한 QA 묶음 경로의 lsappinfo 에서 launchd 실행·ppid 1·relatedCoalitionPIDs 와 coalition
-구성원을 확인하고 사용자 데몬/자손이 포함되면 진행하지 않는다. 실제 claude/codex 는 실행하지 않는다.
+재현기는 `scripts/render-benchmark.py` 다. 별도 bundle ID·데이터 폴더·가짜 CLI 로 띄운 QA 앱 하나에서만 돌리고,
+사용 중인 앱·데몬이나 실제 claude/codex 는 건드리지 않는다.
 
 ```bash
-/usr/bin/python3 <worktree>/scripts/render-benchmark.py full-frame --control <worktree>/.qa/<시험>/mode --fps 12 --variant full
+/usr/bin/python3 <worktree>/scripts/render-benchmark.py full-frame --control <mode 파일> --fps 12 --variant full
 python3 scripts/render-benchmark.py sample <QA앱PID> <출력.csv> --seconds 30
 ```
 
-full-frame 은 실제 PTY 크기를 쓰며 한글·Latin·굵은 글씨·상자 선·256색으로 채운 대체 화면을 12fps 로 전송한다.
+full-frame 은 실제 PTY 크기를 쓰며 한글·Latin·굵은 글씨·상자 선·256색으로 채운 **대체 화면**을 12fps 로 전송한다.
 `full` 은 같은 본문 전체를 다시 보내고 스피너/프레임 번호는 매번, 상태 번호는 2초마다 바꾼다.
 `spinner` 는 본문은 처음 한 번만 보내고 이후 두 상태 행만 보낸다. `thirty` 는 전체를 재전송하면서 본문 25행과
-두 상태 행(27/89행)을 바꾼다. mode 에 `quit` 을 쓰면 셸로 돌아오며 mode.pid·mode.full.json 에 PID·셀 수·fps·바이트 수를 남긴다.
-작은 animate 의 idle 은 Python 이 18Hz 로 도는 정적 TUI 이므로 셸 idle 측정에 쓰지 않는다. burst 는 약 50MiB 출력이다.
+두 상태 행을 바꾼다. mode 파일에 `quit` 을 쓰면 셸로 돌아온다.
+주 지표는 ps 누적 TIME 차이 / 실제 경과 시간 ×100(한 코어 100%)이고, 전환 뒤 30초 안정화하며 1초 간격 표본을 남긴다.
+± 는 회차 평균의 표본 표준편차다. ps %cpu 는 감쇠 평균이라 주 지표로 쓰지 않는다.
 
-측정 때 snapshot off 를 재전송하고 render-state 의 snapshotNext 가 먼 미래인지 확인한다. 전환 뒤 30초 안정화하며
-빌드·테스트·캡처·프로파일링은 측정 밖에서 한다. 주 지표는 ps 누적 TIME 차이 / 실제 경과 시간 ×100 이다.
-1초 간격 끝점을 포함해 30초는 31개, 60초는 61개 표본을 CSV/JSON 에 남긴다. 한 코어가 100% 이며 ± 는 회차 평균의
-표본 표준편차(n−1)다. ps %cpu 는 감쇠 평균이어서 짧은 구간 비교의 주 지표로 쓰지 않는다.
-대형 측정은 sample 의 --notifier/--debug-channel/--state-log 로 매초 render-state 를 남기고 all_visible 을 검사한다.
+대체 화면 시험은 Claude Code 의 `"tui": "fullscreen"` 과 같은 조건이다. 주 화면에 그리는 TUI 는 출력이 스크롤백을 늘리면서
+viewport(yBase)가 바뀌므로 내용 비교를 쓰지 못하고 기존 영역 전체 갱신으로 돌아간다. 이 경우 아래 감소 폭을 기대하지 않는다.
 
-2026-10-21 최종 비교(Apple M3 Pro·18GiB·macOS 27.0.1, release -j 2): 기준은 main 4ff2b18 렌더 코드와 공통 QA 명령,
-수정은 content-based row reuse 다. 재개 시 연결 화면이 1920×1080·1배율 하나로 바뀌어 이전 13pt·2배율 표본과 섞지 않고
-양쪽 모두 새로 측정했다. 대형은 JetBrains Mono/D2Coding **8pt·321×89칸**, 창 1621×1030pt/터미널 1621×980pt 로 화면 안에
-배치했다. window-pin·window-position 0 0·terminal-grid 321 89 를 쓰고 key/focus/visible/activeSpace=true 를 확인했다.
-원래 요청의 13pt·6K 화면에서 최종 수정본의 비교 측정은 미검증이다. 이 결과를 그 조건의 수치로 해석하지 않는다.
+결과(2026-10-21, Apple M3 Pro, release, 8pt·321×89칸, 기준 main 4ff2b18 대비). 13pt·6K 화면 조건은 미검증이다.
 
-| 부하 (각 3×30초) | 기준 ΔCPU 초 (1/2/3회) | 수정 ΔCPU 초 (1/2/3회) | 기준 CPU % 평균±SD | 수정 CPU % 평균±SD | 감소 |
-|---|---|---|---:|---:|---:|
-| 전체 재전송·같은 본문 | 19.24 / 19.24 / 19.25 | 6.73 / 6.66 / 6.72 | 64.10±0.02 | 22.33±0.13 | 65.2% |
-| 스피너/상태 두 행만 전송 | 2.59 / 2.63 / 2.68 | 2.45 / 2.59 / 2.54 | 8.77±0.15 | 8.42±0.24 | 4.1% |
-| 전체 재전송·약 30% 변경 | 19.06 / 19.09 / 19.06 | 13.54 / 13.54 / 13.50 | 63.53±0.06 | 45.07±0.08 | 29.1% |
+| 부하 (각 3×30초) | 기준 CPU % 평균±SD | 수정 CPU % 평균±SD | 감소 |
+|---|---:|---:|---:|
+| 전체 재전송·같은 본문 | 64.10±0.02 | 22.33±0.13 | 65.2% |
+| 스피너/상태 두 행만 전송 | 8.77±0.15 | 8.42±0.24 | 4.1% |
+| 전체 재전송·약 30% 변경 | 63.53±0.06 | 45.07±0.08 | 29.1% |
 
-같은 본문 전체 재전송은 **65.2% 감소**해 이 조건에서 25% 목표를 넘었다. 약 30% 행 변경도 29.1% 감소했다.
-스피너 변형은 4.1% 감소에 그쳐 큰 개선을 확인하지 못했다. 새 내용의 조판/그리기와 ANSI 파싱 비용은 남는다.
-대형 전 회차는 31/31 표본에서 visible=true 였고 실제 전송은 약 12fps 였다.
-시간 측정 밖의 5초 drawstats 에서 전체 재전송은 기준 평균 41.89ms·전체 그리기 60회·cache hit/miss 0/5340,
-수정 평균 0.68ms·전체 그리기 0회·hit/miss 5334/63 이었다. hit 은 무효화 판정과 draw 재사용을 합한 수다.
-양쪽 verify-cache 는 89행 모두 일치했다. 이번에는 더 큰 렌더 변경을 추가하지 않았다.
-
-idle 은 13pt·80×40칸, 1200×788pt 창의 실제 zsh 프롬프트다. 보임은 key/focus=true 와 caret opacity 애니메이션,
-숨김은 NSApp.hide 뒤 visible=false·caret 애니메이션 없음을 확인했다.
-
-| idle (각 5×60초) | 기준 ΔCPU 초 (1–5회) | 수정 ΔCPU 초 (1–5회) | 기준 CPU % 평균±SD | 수정 CPU % 평균±SD |
-|---|---|---|---:|---:|
-| 보이는 프롬프트·깜박이는 커서 | 0.54 / 0.54 / 0.51 / 0.52 / 0.55 | 0.53 / 0.55 / 0.56 / 0.52 / 0.53 | 0.89±0.03 | 0.90±0.03 |
-| 숨긴 창 | 0.83 / 0.88 / 0.84 / 0.89 / 0.87 | 0.69 / 0.69 / 0.68 / 0.66 / 0.69 | 1.44±0.04 | 1.14±0.02 |
-
-보이는 idle 의 차이 +0.010%p 는 회차 변동폭 안이며 idle 회귀를 확인하지 못했다. 숨김은 0.30%p 낮았다.
-예전 0.59→1.72% 는 안정화 5초 뒤 단일 30초 ps 감쇠 평균이어서 idle 회귀 근거로 쓰지 않는다.
-원래 coalescing 은 출력 때만 예약하는 일회성이며 새 반복 타이머/display link 를 추가하지 않았다.
-
-다섯 시각 비교는 content-delivery-reference/visual 과 content-delivery/visual 의
-01-static, 02-selection, 03-ime, 04-resize, 05-scrollback 각각 *-window.png·*-terminal.png 다.
-한글 폭/굵기·상자 선·256색·커서·선택·한글 조합 overlay·크기 변경·스크롤 위치를 눈으로 확인했다.
-AppKit bitmap 으로 비교한 10쌍 모두 픽셀 차이 0 이다(content/visual-comparison.txt).
-창 캡처는 기존 helper 가 layer 배경색을 빼며 보조 terminal.png 합성은 CoreText 글자가 빠지거나 아래 여백에 중복 흔적을 남길 수 있어,
-글자/행/스크롤 시각 판정은 window.png 를 쓴다. 실제 키보드 IME 후보 창·실제 Claude·WindowServer CPU/GPU 메모리는 미측정이다.
-
-Metal 은 이번에 다시 측정하지 않았고 기본은 CoreText 다. 앞선 115×40칸 작은 시험에서는 CPU 시간 7.25%,
-Metal 리소스 60,637,184바이트(57.8MiB)로 CoreText 보다 이점이 없었다. IME/caret 소유권 검증이 끝나지 않아
-일반 opt-in 설정과 기본값 전환은 보류한다. 셰이더 bundle 복사는 빌드 스크립트에 유지한다.
-
-원자료는 worktree 의 .qa/renderperf 아래 content-delivery-reference 와 content-delivery,
-집계는 content/delivery-results.json 이다(git 제외). 최종 비교에서 제외한 이전/중단 자료는 보존한다.
-재개한 opener 20/21 의 앱 PID 19164/24601 은 모두 ppid 1·launchd=true·relatedCoalitionPIDs=[] 이며 사용자 데몬/자손과
-겹치지 않았다. 사용자 세션이 정리했다고 알린 직전 QA 90635 는 다시 signal 하지 않았다.
-각 launch-check.txt 와 launches.json 에 안전 확인/정리를 기록한다.
-최종 cleanup-audit.json 에서 정확한 QA 앱 경로가 없고, scratch 에 기록된 opener/daemon plist 42개의 label 이 모두 내려갔음을 확인했다.
-기록한 benchmark producer 와 직접 띄운 display assertion 도 종료했다.
+새 내용의 조판/그리기와 ANSI 파싱 비용은 남는다. idle(13pt·80×40칸 zsh 프롬프트, 각 5×60초)은
+보이는 창 0.89→0.90%·숨긴 창 1.44→1.14% 로 변동폭 안이며 새 반복 타이머/display link 는 없다.
+변경 전후 시각 비교(정적·선택·IME·크기 변경·스크롤백)는 픽셀 차이가 없었다.
+Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 전환을 보류한다.
 
 ## 자세한 동작
 
