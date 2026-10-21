@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${CONFIG:-release}"
-VERSION="${VERSION:-0.4.2}"
+VERSION="${VERSION:-0.5.0}"
 [[ "$(uname -m)" == arm64 ]] || { echo "Apple Silicon(arm64) 에서 빌드하세요" >&2; exit 1; }
 BUNDLE_ID="${BUNDLE_ID:-dev.agentdeck.app}"
 swift build -j 2 -c "$CONFIG" --product AgentDeckDaemon
