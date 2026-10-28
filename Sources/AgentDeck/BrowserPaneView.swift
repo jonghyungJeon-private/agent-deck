@@ -4,13 +4,22 @@ import ImageIO
 import TermWire
 
 /// 브라우저 화면: 에이전트 화면(owner)의 브라우저(abx 세션)를 CDP screencast 로 받아 그린다.
-/// 지금은 보기만 한다(사람 입력은 다음 단계). 브라우저는 에이전트가 `abx` 를 처음 쓸 때 창 없이 뜬다.
+/// 사람은 머리 줄의 "제어 가져오기"(abx handoff)로 제어를 받은 동안에만 클릭·키보드로 조작한다
+/// (AI 가 쥐고 있을 때 보낸 입력은 버리고, Chrome 의 입력 잠금도 막는다). "AI 에게 돌려주기" = abx resume.
+/// 브라우저는 에이전트가 `abx` 를 처음 쓸 때 창 없이 뜬다.
 final class BrowserPaneView: NSView {
     let owner: String
     private let header = NSTextField(labelWithString: "")
-    private let screen = NSView()
+    private let controlButton = NSButton(title: "", target: nil, action: nil)
+    private let screen = BrowserScreenView()
     private let placeholder = NSTextField(wrappingLabelWithString: "")
     private var feed: BrowserFeed?
+    /// 마지막 상태의 제어권(입력을 보낼지 정한다)
+    private(set) var control: AbxStatus.Control?
+    /// 제어 가져오기·돌려주기를 abx 에 보내 답을 기다리는 중
+    private var requesting = false
+    /// 마지막 프레임의 페이지 크기(CSS 픽셀) — 칸의 점을 페이지 좌표로 바꿀 때
+    private(set) var viewport: CGSize = .zero
 
     init(owner: String, frame: NSRect) {
         self.owner = owner
@@ -21,19 +30,29 @@ final class BrowserPaneView: NSView {
         header.font = .systemFont(ofSize: TermAppearance.scaled(11))
         header.textColor = TermAppearance.textDim
         header.lineBreakMode = .byTruncatingMiddle
+        header.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        controlButton.bezelStyle = .inline
+        controlButton.controlSize = .small
+        controlButton.font = .systemFont(ofSize: TermAppearance.scaled(11))
+        controlButton.target = self
+        controlButton.action = #selector(toggleControl)
+        controlButton.isHidden = true
+        screen.pane = self
         screen.wantsLayer = true
         screen.layer?.contentsGravity = .resizeAspect
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textDim
-        for view in [header, screen, placeholder] {
+        for view in [header, controlButton, screen, placeholder] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            header.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            header.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            screen.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 4),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: controlButton.leadingAnchor, constant: -8),
+            controlButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            controlButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            screen.topAnchor.constraint(equalTo: controlButton.bottomAnchor, constant: 3),
             screen.leadingAnchor.constraint(equalTo: leadingAnchor),
             screen.trailingAnchor.constraint(equalTo: trailingAnchor),
             screen.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -45,6 +64,9 @@ final class BrowserPaneView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 키보드를 받을 뷰(TerminalHostController 가 포커스를 줄 곳)
+    var focusTarget: NSView { screen }
 
     /// 칸이 화면에 놓였다(TerminalHostController.render). 창이 실제로 보일 때만 스트림을 돈다.
     func attach() {
@@ -63,7 +85,8 @@ final class BrowserPaneView: NSView {
 
     /// 시험 명령 `browsers` 가 찍는 상태
     var debugState: String {
-        "owner=\(owner.prefix(4)) placed=\(placed) visible=\(windowVisible) streaming=\(feed != nil) frames=\(framesShown)"
+        "owner=\(owner.prefix(4)) placed=\(placed) visible=\(windowVisible) streaming=\(feed != nil) frames=\(framesShown) "
+            + "control=\(control?.rawValue ?? "-") viewport=\(Int(viewport.width))x\(Int(viewport.height))"
     }
     private var observers: [NSObjectProtocol] = []
 
@@ -93,16 +116,13 @@ final class BrowserPaneView: NSView {
         if placed && windowVisible { startFeed() } else { stopFeed() }
     }
 
-    // 보기만 하는 칸: 키보드는 받아서 버린다(골라 둔 채 친 글이 옆 터미널로 가지 않게)
-    override var acceptsFirstResponder: Bool { true }
-    override func keyDown(with event: NSEvent) {}
-
     private func startFeed() {
         guard feed == nil else { return }
         let feed = BrowserFeed(owner: owner)
         feed.onState = { [weak self] state in self?.show(state) }
-        feed.onImage = { [weak self] image in
+        feed.onImage = { [weak self] image, viewport in
             self?.screen.layer?.contents = image
+            self?.viewport = viewport
             self?.placeholder.isHidden = true
             self?.framesShown += 1
         }
@@ -111,6 +131,7 @@ final class BrowserPaneView: NSView {
     }
 
     private func stopFeed() {
+        screen.releaseInput()
         feed?.stop()
         feed = nil
     }
@@ -122,12 +143,13 @@ final class BrowserPaneView: NSView {
             placeholder.stringValue = text
             placeholder.isHidden = false
             screen.layer?.contents = nil
+            setControl(nil)
         case .live(let status):
             let control: String
             switch status.control {
             case .agent: control = "AI 작업 중"
-            case .user: control = "사용자에게 넘김" + (status.handoff.map { " — \($0)" } ?? "")
-            case .switching: control = "넘기는 중…"
+            case .user: control = "내가 조작 중" + (status.handoff.map { " — \($0)" } ?? "")
+            case .switching: control = "넘겨받는 중… (AI 가 하던 동작이 끝나길 기다림)"
             case .idle: control = "쉬는 중"
             }
             let tab = status.activeTab
@@ -136,6 +158,281 @@ final class BrowserPaneView: NSView {
             let title = tab.flatMap { tab in tab.url.contains(tab.title) ? nil : tab.title }
             header.stringValue = [control, title, tab?.url].compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: " · ") + tabs
+            setControl(status.control)
+        }
+    }
+
+    private func setControl(_ control: AbxStatus.Control?) {
+        // 사용자 제어가 끝나면(에이전트가 abx resume 했을 때 포함) 누르던 버튼·조합 중인 글자를 정리한다
+        if self.control == .user, control != .user { screen.releaseInput() }
+        self.control = control
+        controlButton.isHidden = control == nil
+        controlButton.isEnabled = !requesting && control != .switching
+        controlButton.title = control == .user ? "AI 에게 돌려주기" : "제어 가져오기"
+    }
+
+    /// 돌려주는 중: abx resume 이 끝나기 전부터 입력을 막는다(돌려준 뒤 AI 동작에 사람 입력이 섞이지 않게)
+    private var givingBack = false
+
+    @objc private func toggleControl() {
+        guard let feed, !requesting else { return }
+        requesting = true
+        controlButton.isEnabled = false
+        let done: () -> Void = { [weak self] in
+            self?.requesting = false
+            self?.givingBack = false
+            self?.setControl(self?.control)
+        }
+        if control == .user {
+            screen.releaseInput() // 누르던 버튼·조합 중 글자를 먼저 정리하고
+            givingBack = true     // 이 순간부터 입력을 버린 뒤
+            feed.giveBack(completion: done) // 돌려준다
+        } else {
+            feed.takeControl(completion: done)
+            window?.makeFirstResponder(screen)
+        }
+    }
+
+    /// 메뉴·시험 명령용
+    func takeControl() { if control != .user { toggleControl() } }
+    func giveBack() { if control == .user { toggleControl() } }
+
+    // MARK: - 입력 (BrowserScreenView 가 부른다)
+
+    /// 사람이 제어를 가진 동안만 보낸다(그 밖에는 버림)
+    var acceptsInput: Bool { control == .user && !givingBack && feed != nil }
+
+    func send(_ method: String, _ params: [String: Any]) {
+        guard acceptsInput else { return }
+        feed?.input(method, params)
+    }
+
+    /// 정리용 입력(누르던 버튼 떼기·조합 취소): 제어가 막 넘어간 뒤에도 보낸다 — 남겨 두면 다음 조작에 섞인다
+    func sendCleanup(_ method: String, _ params: [String: Any]) {
+        feed?.cleanup(method, params)
+    }
+
+    /// 화면 뷰의 점(위가 0) → 페이지 CSS 좌표
+    func cssPoint(_ point: CGPoint) -> CGPoint? {
+        ViewportTransform(bounds: screen.bounds.size, viewport: viewport).cssPoint(point)
+    }
+
+    /// 페이지 CSS 좌표 → 창 좌표(시험 명령 `browser-click` 이 실제 마우스 이벤트를 만들 때)
+    func windowPoint(css: CGPoint) -> NSPoint? {
+        let rect = ViewportTransform(bounds: screen.bounds.size, viewport: viewport).imageRect
+        guard rect.width > 0 else { return nil }
+        let local = NSPoint(x: rect.minX + css.x * rect.width / viewport.width, y: rect.minY + css.y * rect.height / viewport.height)
+        return screen.convert(local, to: nil)
+    }
+
+    /// 포커스가 실제로 있는 요소(그림자 DOM·같은 출처 iframe 안까지)를 찾는 식의 앞부분
+    private static let focusedJS = """
+      const deep = () => { let doc = document, el = doc.activeElement;
+        for (;;) {
+          if (el && el.shadowRoot && el.shadowRoot.activeElement) { el = el.shadowRoot.activeElement; continue; }
+          if (el && el.tagName === 'IFRAME') { try { doc = el.contentDocument; el = doc.activeElement; continue; } catch (e) {} }
+          return { doc: el ? el.ownerDocument : doc, el };
+        } };
+      const { doc, el } = deep();
+      const field = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.selectionStart != null;
+      // 비밀번호 칸은 Chrome 처럼 복사·잘라내기를 거절한다(클립보드에 평문으로 남지 않게)
+      if (el && el.tagName === 'INPUT' && el.type === 'password') return null;
+      const text = field ? el.value.substring(el.selectionStart, el.selectionEnd) : String(doc.getSelection());
+    """
+
+    /// 선택한 글(입력 칸 안의 선택 포함)을 macOS 클립보드로. cut 이면 같은 계산 안에서 지운다
+    /// (읽기와 지우기 사이에 다른 입력이 끼어 엉뚱한 선택을 지우지 않게).
+    func copySelection(cut: Bool = false) {
+        guard acceptsInput, let feed else { return }
+        let js = "(() => {" + Self.focusedJS + (cut ? "if (text) doc.execCommand('delete');" : "") + "return text; })()"
+        feed.evaluate(js) { [weak self] value in
+            // 그 사이 스트림이 바뀌었거나(멈춤·다시 시작) 제어가 넘어갔으면 버린다
+            guard let self, self.feed === feed, let text = value as? String, !text.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+}
+
+/// 브라우저 그림을 그리고 사람 입력을 받는 뷰. 키보드는 macOS 입력기(NSTextInputClient)를 거쳐
+/// 확정 글자 → `Input.insertText`(영문 한 글자는 키 이벤트), 조합 중 글자 → `Input.imeSetComposition`,
+/// 편집 명령(줄바꿈·지우기·화살표…) → 키 이벤트로 보낸다. 제어가 없으면 받아서 버린다(옆 터미널로 새지 않게).
+final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
+    weak var pane: BrowserPaneView?
+    private var marked = ""
+    private var pressedButton: BrowserInput.Button = .none
+    private var lastMove = Date.distantPast
+    private var tracking: NSTrackingArea?
+
+    override var isFlipped: Bool { true } // 위가 0(페이지 좌표와 같은 방향)
+    override var acceptsFirstResponder: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    /// 누르던 버튼을 떼고 조합 중 글자를 지운다(제어를 돌려줄 때·스트림을 멈출 때). 제어 확인 없이 보낸다.
+    func releaseInput() {
+        if pressedButton != .none, let pane {
+            pane.sendCleanup("Input.dispatchMouseEvent", BrowserInput.mouse(.released, at: lastCSS ?? .zero, button: pressedButton))
+        }
+        pressedButton = .none
+        if !marked.isEmpty {
+            pane?.sendCleanup("Input.imeSetComposition", ["text": "", "selectionStart": 0, "selectionEnd": 0])
+            marked = ""
+            inputContext?.discardMarkedText()
+        }
+    }
+
+    // MARK: 마우스
+
+    private func modifiers(_ flags: NSEvent.ModifierFlags) -> BrowserInput.Modifiers {
+        var m: BrowserInput.Modifiers = []
+        if flags.contains(.option) { m.insert(.alt) }
+        if flags.contains(.control) { m.insert(.control) }
+        if flags.contains(.command) { m.insert(.meta) }
+        if flags.contains(.shift) { m.insert(.shift) }
+        return m
+    }
+
+    /// 마지막으로 보낸 페이지 좌표 — 누른 채 그림 밖(여백·칸 밖)에서 떼어도 떼기는 반드시 보낸다
+    private var lastCSS: CGPoint?
+
+    private func mouse(_ event: NSEvent, _ kind: BrowserInput.MouseKind, _ button: BrowserInput.Button) {
+        guard let pane, pane.acceptsInput else { return }
+        let inside = pane.cssPoint(convert(event.locationInWindow, from: nil))
+        let dragging = button != .none && kind != .pressed
+        guard let point = inside ?? (dragging ? lastCSS : nil) else { return }
+        lastCSS = point
+        pane.send("Input.dispatchMouseEvent",
+                  BrowserInput.mouse(kind, at: point, button: button, clickCount: max(event.clickCount, 1),
+                                     modifiers: modifiers(event.modifierFlags)))
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        lastClick = convert(event.locationInWindow, from: nil)
+        pressedButton = .left
+        mouse(event, .pressed, .left)
+    }
+    override func mouseUp(with event: NSEvent) { mouse(event, .released, .left); pressedButton = .none }
+    override func mouseDragged(with event: NSEvent) { mouse(event, .moved, .left) }
+    override func rightMouseDown(with event: NSEvent) { pressedButton = .right; mouse(event, .pressed, .right) }
+    override func rightMouseUp(with event: NSEvent) { mouse(event, .released, .right); pressedButton = .none }
+    override func rightMouseDragged(with event: NSEvent) { mouse(event, .moved, .right) }
+    override func otherMouseDown(with event: NSEvent) { pressedButton = .middle; mouse(event, .pressed, .middle) }
+    override func otherMouseUp(with event: NSEvent) { mouse(event, .released, .middle); pressedButton = .none }
+
+    override func mouseMoved(with event: NSEvent) {
+        // 마우스를 올리기만 한 움직임(hover)은 초당 30번까지
+        guard Date().timeIntervalSince(lastMove) > 1.0 / 30 else { return }
+        lastMove = Date()
+        mouse(event, .moved, .none)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard let pane, pane.acceptsInput,
+              let point = pane.cssPoint(convert(event.locationInWindow, from: nil)) else { return }
+        pane.send("Input.dispatchMouseEvent",
+                  BrowserInput.wheel(at: point, scrollingDeltaX: event.scrollingDeltaX, scrollingDeltaY: event.scrollingDeltaY,
+                                     precise: event.hasPreciseScrollingDeltas, modifiers: modifiers(event.modifierFlags)))
+    }
+
+    // MARK: 키보드
+
+    /// 지금 처리 중인 키(입력기 없이 친 글자를 키 이벤트로 보내려고)
+    private var currentKey: NSEvent?
+
+    override func keyDown(with event: NSEvent) {
+        guard pane?.acceptsInput == true else { return }
+        currentKey = event
+        defer { currentKey = nil }
+        interpretKeyEvents([event])
+    }
+
+    func insertText(_ string: Any, replacementRange: NSRange) {
+        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        let wasComposing = !marked.isEmpty
+        marked = ""
+        guard let pane, !text.isEmpty else { return }
+        // 조합 없이 친 영문·숫자·기호 한 글자는 keydown·keypress 까지 일어나게 키 이벤트로
+        if !wasComposing, let key = currentKey, key.characters == text,
+           let events = BrowserInput.character(text, keyCode: key.keyCode, modifiers: modifiers(key.modifierFlags)) {
+            events.forEach { pane.send("Input.dispatchKeyEvent", $0) }
+        } else {
+            pane.send("Input.insertText", ["text": text])
+        }
+    }
+
+    /// 조합 중 글자 안의 선택(입력기가 정한 것, UTF-16)
+    private var markedSelection = NSRange(location: 0, length: 0)
+
+    func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text = (string as? NSAttributedString)?.string ?? (string as? String) ?? ""
+        marked = text
+        markedSelection = selectedRange
+        pane?.send("Input.imeSetComposition", [
+            "text": text, "selectionStart": selectedRange.location, "selectionEnd": selectedRange.location + selectedRange.length,
+        ])
+    }
+
+    func unmarkText() {
+        // 조합 중이던 글자를 그대로 확정
+        guard !marked.isEmpty else { return }
+        let text = marked
+        marked = ""
+        pane?.send("Input.insertText", ["text": text])
+    }
+
+    override func doCommand(by selector: Selector) {
+        guard let pane, let (key, mods, commands) = BrowserInput.command(selector: NSStringFromSelector(selector)) else { return }
+        // 실제로 누른 수정 키를 지킨다(⇧⏎ 줄바꿈이 그냥 ⏎ 전송이 되지 않게)
+        let pressed = currentKey.map { modifiers($0.modifierFlags) } ?? []
+        BrowserInput.press(key, modifiers: mods.union(pressed), commands: commands).forEach { pane.send("Input.dispatchKeyEvent", $0) }
+    }
+
+    func hasMarkedText() -> Bool { !marked.isEmpty }
+    func markedRange() -> NSRange { marked.isEmpty ? NSRange(location: NSNotFound, length: 0) : NSRange(location: 0, length: marked.utf16.count) }
+    func selectedRange() -> NSRange { marked.isEmpty ? NSRange(location: 0, length: 0) : markedSelection }
+    func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+    func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+    func characterIndex(for point: NSPoint) -> Int { NSNotFound }
+
+    /// 입력기 후보 창 자리: 마지막으로 누른 곳 근처(페이지의 실제 커서 자리는 아직 모른다)
+    private var lastClick: NSPoint?
+    func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        let local = lastClick ?? NSPoint(x: bounds.midX, y: bounds.midY)
+        let rect = NSRect(x: local.x, y: local.y, width: 1, height: 18)
+        return window?.convertToScreen(convert(rect, to: nil)) ?? rect
+    }
+
+    // MARK: 편집 메뉴(⌘A ⌘C ⌘X ⌘V ⌘Z)
+
+    @objc override func selectAll(_ sender: Any?) { shortcut("selectAll") }
+    @objc func undo(_ sender: Any?) { shortcut("undo") }
+    @objc func redo(_ sender: Any?) { shortcut("redo") }
+    @objc func copy(_ sender: Any?) { pane?.copySelection() }
+    @objc func cut(_ sender: Any?) { pane?.copySelection(cut: true) }
+    @objc func paste(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
+        pane?.send("Input.insertText", ["text": text])
+    }
+
+    private func shortcut(_ command: String) {
+        BrowserInput.shortcut(command)?.forEach { pane?.send("Input.dispatchKeyEvent", $0) }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(selectAll(_:)), #selector(undo(_:)), #selector(redo(_:)), #selector(copy(_:)), #selector(cut(_:)), #selector(paste(_:)):
+            return pane?.acceptsInput == true
+        default:
+            return true
         }
     }
 }
@@ -151,7 +448,8 @@ final class BrowserFeed {
     }
 
     var onState: ((State) -> Void)?
-    var onImage: ((CGImage) -> Void)?
+    /// 그릴 그림과 그 프레임의 페이지 크기(CSS 픽셀)
+    var onImage: ((CGImage, CGSize) -> Void)?
 
     private let session: AbxSession
     private let watchDirs: [String]
@@ -169,6 +467,12 @@ final class BrowserFeed {
     private var pendingRefresh = false
     private var frames = LatestFrameQueue<ScreencastFrame>()
     private var stopped = false
+    /// 마지막 상태의 제어권(사람 입력·새 탭 따라가기)
+    private var control: AbxStatus.Control?
+    /// 돌려주는 중(abx resume 을 보냄)
+    private var releasing = false
+    /// 사람이 조작하다 연 탭 — 사람이 제어하는 동안은 abx 가 기억한 활성 탭보다 이것을 보여 준다
+    private var userTarget: String?
 
     init(owner: String) {
         let env = BrowserBinding.environment(pane: owner, browser: nil)
@@ -249,9 +553,11 @@ final class BrowserFeed {
             publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았어요\n(이 화면의 claude·codex 가 abx 를 쓰면 여기에 보여요)"))
             return
         }
+        control = status.control
+        if control != .user { userTarget = nil }
         publish(.live(status))
         if url != connectedURL { connect(url, status: status) }
-        else { follow(status.activeTab?.targetId) }
+        else { follow(userTarget ?? status.activeTab?.targetId) }
     }
 
     // MARK: - CDP
@@ -274,7 +580,10 @@ final class BrowserFeed {
                 guard let transport else { return } // 다음 상태 읽기에서 다시 시도
                 let client = CDPClient(transport: transport)
                 let stream = ScreencastStream(client: client)
-                client.onEvent = { [weak stream] event in stream?.handle(event) }
+                client.onEvent = { [weak self, weak stream] event in
+                    if stream?.handle(event) == true { return }
+                    if event.method == "Target.targetCreated" { self?.queue.async { self?.opened(event.params) } }
+                }
                 client.onClose = { [weak self, weak client] in
                     self?.queue.async {
                         guard let self, let client, self.client === client else { return }
@@ -286,6 +595,7 @@ final class BrowserFeed {
                 self.client = client
                 self.stream = stream
                 self.connectedURL = url
+                client.post("Target.setDiscoverTargets", ["discover": true])
                 self.follow(status.activeTab?.targetId)
             }
         }
@@ -300,6 +610,69 @@ final class BrowserFeed {
             guard let pages = await stream.pages(),
                   let pick = ScreencastStream.choose(wanted: target, current: stream.currentTarget, open: pages) else { return }
             try? await stream.show(target: pick)
+        }
+    }
+
+    /// 사람이 조작하다 연 새 탭(링크의 target=_blank 등)은 바로 따라간다.
+    /// AI 가 연 탭은 abx 가 활성 탭으로 알려 주므로(상태) 여기서는 따라가지 않는다.
+    private func opened(_ params: [String: Any]) {
+        guard control == .user, let info = params["targetInfo"] as? [String: Any], info["type"] as? String == "page",
+              let target = info["targetId"] as? String, let stream,
+              info["openerId"] as? String == stream.currentTarget else { return }
+        userTarget = target
+        Task { try? await stream.show(target: target) }
+    }
+
+    // MARK: - 사람 입력·제어
+
+    /// 사람 입력을 지금 보는 탭에 보낸다. 제어가 사람에게 있을 때만(뷰도 거르지만 상태가 막 바뀐 경우까지),
+    /// 돌려주는 중에는 버린다.
+    func input(_ method: String, _ params: [String: Any]) {
+        queue.async { [self] in
+            guard control == .user, !releasing else { return }
+            stream?.post(method, params)
+        }
+    }
+
+    /// 정리용 입력(버튼 떼기·조합 취소)은 제어와 상관없이 보낸다
+    func cleanup(_ method: String, _ params: [String: Any]) {
+        queue.async { [self] in stream?.post(method, params) }
+    }
+
+    func evaluate(_ expression: String, completion: @escaping (Any?) -> Void) {
+        queue.async { [self] in
+            guard let stream else { return }
+            Task {
+                let value = await stream.evaluate(expression)
+                DispatchQueue.main.async { completion(value) }
+            }
+        }
+    }
+
+    /// 제어 가져오기 = `abx handoff`. 에이전트가 하던 동작이 다음 단계에서 멈출 때까지 기다릴 수 있다(그동안 상태는 switching).
+    func takeControl(completion: @escaping () -> Void) {
+        abx(["handoff", "사용자가 브라우저를 직접 조작하는 중 — 끝나면 abx resume"], timeout: 330, completion: completion)
+    }
+
+    /// AI 에게 돌려주기 = `abx resume`. 부른 순간부터 사람 입력을 버린다(resume 이 끝나고 상태를 다시 읽기 전에도).
+    func giveBack(completion: @escaping () -> Void) {
+        queue.async { [self] in releasing = true }
+        abx(["resume"], timeout: 30) { [weak self] in
+            self?.queue.async { self?.releasing = false }
+            completion()
+        }
+    }
+
+    private func abx(_ arguments: [String], timeout: TimeInterval, completion: @escaping () -> Void) {
+        queue.async { [self] in
+            guard let runner else { DispatchQueue.main.async(execute: completion); return }
+            let session = self.session
+            // 오래 걸릴 수 있어 상태 읽기(queue)를 막지 않게 따로 돌린다
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                _ = try? runner.run(arguments, session: session, timeout: timeout)
+                self?.queue.async { self?.refresh() }
+                DispatchQueue.main.async(execute: completion)
+            }
         }
     }
 
@@ -326,7 +699,7 @@ final class BrowserFeed {
             let image = CGImageSourceCreateWithData(frame.jpeg as CFData, nil)
                 .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
             if let image {
-                DispatchQueue.main.async { self?.onImage?(image) }
+                DispatchQueue.main.async { self?.onImage?(image, frame.viewport) }
             }
             self?.queue.async {
                 guard let self, let next = self.frames.finish() else { return }

@@ -64,6 +64,14 @@ final class CDPClientTests: XCTestCase {
         }
     }
 
+    func testPostKeepsCallOrder() {
+        let t = FakeTransport()
+        let client = CDPClient(transport: t)
+        for i in 0..<50 { client.post("Input.insertText", ["text": "\(i)"], sessionId: "S") }
+        XCTAssertEqual(t.sent.compactMap { ($0["params"] as? [String: Any])?["text"] as? String }, (0..<50).map(String.init))
+        t.reply(t.sent[0]["id"] as! Int, [:]) // 짝 없는 응답은 조용히 버린다
+    }
+
     func testEventsCarryTheirSession() {
         let t = FakeTransport()
         let client = CDPClient(transport: t)
@@ -188,5 +196,68 @@ final class AbxStatusTests: XCTestCase {
         let s = AbxSession(name: "ad-1", socketDir: "/tmp/s", stateDir: "/tmp/st", profileDir: "/tmp/p")
         XCTAssertEqual(s.environment["ABX_STATE_DIR"], "/tmp/st")
         XCTAssertEqual(s.environment["ABX_SESSION"], "ad-1")
+    }
+}
+
+final class BrowserInputTests: XCTestCase {
+    func testMouseAndDrag() {
+        let down = BrowserInput.mouse(.pressed, at: CGPoint(x: 10, y: 20), button: .left, clickCount: 2, modifiers: .shift)
+        XCTAssertEqual(down["type"] as? String, "mousePressed")
+        XCTAssertEqual(down["buttons"] as? Int, 1)
+        XCTAssertEqual(down["clickCount"] as? Int, 2)
+        XCTAssertEqual(down["modifiers"] as? Int, 8)
+        let drag = BrowserInput.mouse(.moved, at: .zero, button: .left)
+        XCTAssertEqual(drag["buttons"] as? Int, 1) // 누른 채 움직임
+        XCTAssertEqual(BrowserInput.mouse(.released, at: .zero, button: .left)["buttons"] as? Int, 0)
+    }
+
+    func testWheelFlipsSignAndScalesLines() {
+        // 트랙패드(정밀)로 내용을 위로 올림(+) = 아래로 스크롤 → CDP delta 는 −
+        let precise = BrowserInput.wheel(at: .zero, scrollingDeltaX: 0, scrollingDeltaY: 12, precise: true)
+        XCTAssertEqual(precise["deltaY"] as? CGFloat, -12)
+        let lines = BrowserInput.wheel(at: .zero, scrollingDeltaX: 0, scrollingDeltaY: -1, precise: false)
+        XCTAssertEqual(lines["deltaY"] as? CGFloat, 40)
+    }
+
+    func testEditingSelectors() {
+        let enter = BrowserInput.command(selector: "insertNewline:")!
+        XCTAssertEqual(enter.key, BrowserInput.enter)
+        XCTAssertEqual(enter.commands, []) // 폼 제출은 DOM 키로
+        let word = BrowserInput.command(selector: "deleteWordBackward:")!
+        XCTAssertEqual(word.key, BrowserInput.backspace)
+        XCTAssertEqual(word.modifiers, .alt)
+        XCTAssertEqual(word.commands, ["deleteWordBackward"])
+        let select = BrowserInput.command(selector: "moveWordLeftAndModifySelection:")!
+        XCTAssertEqual(select.key, BrowserInput.left)
+        XCTAssertEqual(select.modifiers, [.alt, .shift])
+        XCTAssertEqual(select.commands, ["moveWordLeftAndModifySelection"])
+        XCTAssertNil(BrowserInput.command(selector: "noSuchCommand:"))
+        // 페이지·스크롤 키는 Chrome 편집 명령 이름이 달라 키 동작에만 맡긴다
+        XCTAssertEqual(BrowserInput.command(selector: "pageUpAndModifySelection:")?.commands, [])
+        XCTAssertEqual(BrowserInput.command(selector: "pageUpAndModifySelection:")?.modifiers, .shift)
+    }
+
+    func testPressAndCharacters() {
+        let events = BrowserInput.press(BrowserInput.enter)
+        XCTAssertEqual(events.map { $0["type"] as? String }, ["keyDown", "keyUp"])
+        XCTAssertEqual(events[0]["text"] as? String, "\r")
+        XCTAssertEqual(BrowserInput.press(BrowserInput.left)[0]["type"] as? String, "rawKeyDown")
+        let a = BrowserInput.character("a")!
+        XCTAssertEqual(a[0]["text"] as? String, "a")
+        XCTAssertEqual(a[0]["windowsVirtualKeyCode"] as? Int, 65)
+        XCTAssertNil(BrowserInput.character("한")) // 입력기 글자는 insertText
+        // Shift+A: 글자는 "A", Shift 는 그대로, 자리(code)는 KeyA
+        let shiftA = BrowserInput.character("A", keyCode: 0, modifiers: .shift)!
+        XCTAssertEqual(shiftA[0]["key"] as? String, "A")
+        XCTAssertEqual(shiftA[0]["code"] as? String, "KeyA")
+        XCTAssertEqual(shiftA[0]["modifiers"] as? Int, 8)
+        // 기호: Shift+/ = "?" 는 Slash 자리, VK 191
+        let question = BrowserInput.character("?", keyCode: 44, modifiers: .shift)!
+        XCTAssertEqual(question[0]["code"] as? String, "Slash")
+        XCTAssertEqual(question[0]["windowsVirtualKeyCode"] as? Int, 191)
+        XCTAssertNil(BrowserInput.character("ab"))
+        let all = BrowserInput.shortcut("selectAll")!
+        XCTAssertEqual(all[0]["commands"] as? [String], ["selectAll"])
+        XCTAssertEqual(all[0]["modifiers"] as? Int, 4)
     }
 }

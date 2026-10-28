@@ -88,6 +88,21 @@ public final class ScreencastStream {
         _ = try? await client.send("Target.detachFromTarget", ["sessionId": session], timeout: 2)
     }
 
+    /// 지금 보는 탭에 명령을 보낸다(입력 이벤트처럼 순서만 지키면 되는 것). 보는 탭이 없으면 버린다.
+    /// 같은 연결로 보낸 요청은 보낸 순서대로 처리된다.
+    public func post(_ method: String, _ params: [String: Any]) {
+        guard let session = lock.locked({ sessionId }) else { return }
+        client.post(method, params, sessionId: session)
+    }
+
+    /// 지금 보는 탭에서 식을 계산한다(값으로 받음). 못 하면 nil.
+    public func evaluate(_ expression: String) async -> Any? {
+        guard let session = lock.locked({ sessionId }),
+              let result = try? await client.send("Runtime.evaluate", ["expression": expression, "returnByValue": true], sessionId: session)
+        else { return nil }
+        return (result["result"] as? [String: Any])?["value"]
+    }
+
     /// 열린 페이지(탭)들의 target id(브라우저가 아는 순서). 못 읽으면 nil.
     public func pages() async -> [String]? {
         guard let result = try? await client.send("Target.getTargets"),

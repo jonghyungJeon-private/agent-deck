@@ -1257,6 +1257,8 @@ final class TermModel: ObservableObject {
         case "split-right": newPane(split: .horizontal)
         case "split-down": newPane(split: .vertical)
         case "browser": openBrowser()
+        case "browser-take": host?.focusedBrowser?.takeControl()
+        case "browser-give": host?.focusedBrowser?.giveBack()
         case "close": closeFocused()
         case "close-tab": closeTab()
         case "rename": renameFocused()

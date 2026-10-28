@@ -50,7 +50,7 @@ final class TerminalHostController: NSViewController {
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
             if let self, event.window === self.view.window, let id = self.container.paneId(at: event.locationInWindow) {
                 self.model.focus(pane: id, fromClick: true)
-                if let browser = self.browserViews[id] { event.window?.makeFirstResponder(browser) }
+                if let browser = self.browserViews[id] { event.window?.makeFirstResponder(browser.focusTarget) }
                 if let pane = self.terminals[id], let content = event.window?.contentView,
                    let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
                    hit === pane.view || hit.isDescendant(of: pane.view) {
@@ -238,7 +238,7 @@ final class TerminalHostController: NSViewController {
             return
         }
         if let browser = focusedBrowser {
-            if browser.window?.firstResponder !== browser { browser.window?.makeFirstResponder(browser) }
+            if browser.window?.firstResponder !== browser.focusTarget { browser.window?.makeFirstResponder(browser.focusTarget) }
             return
         }
         guard let pane = focusedTerminal, let window = pane.view.window, window.firstResponder !== pane.view else { return }
@@ -256,7 +256,7 @@ final class TerminalHostController: NSViewController {
     }
 
     /// 지금 화면의 뷰(도구 창에서 Esc 로 돌아갈 곳)
-    var focusedPaneView: NSView? { focusedEditor?.focusTarget ?? focusedBrowser ?? focusedTerminal?.view }
+    var focusedPaneView: NSView? { focusedEditor?.focusTarget ?? focusedBrowser?.focusTarget ?? focusedTerminal?.view }
 
     /// 앱을 끌 때: 보이는 편집기 커서를 기억
     func rememberEditorCursors() {
@@ -363,6 +363,14 @@ final class TerminalHostController: NSViewController {
 
     /// 한글 입력기(IME)가 하는 것과 같은 순서로 조합 중 글자 → 확정 글자를 넣는다.
     func simulateIME(composing: [String], commit: String) {
+        if let browser = focusedBrowser?.focusTarget as? BrowserScreenView {
+            for text in composing {
+                browser.setMarkedText(text, selectedRange: NSRange(location: text.utf16.count, length: 0),
+                                      replacementRange: NSRange(location: NSNotFound, length: 0))
+            }
+            browser.insertText(commit, replacementRange: NSRange(location: NSNotFound, length: 0))
+            return
+        }
         guard let terminalView = focusedTerminal?.view else { return }
         for text in composing {
             terminalView.setMarkedText(text, selectedRange: NSRange(location: text.utf16.count, length: 0),

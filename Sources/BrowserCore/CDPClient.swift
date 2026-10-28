@@ -63,9 +63,18 @@ public final class CDPClient {
         }
     }
 
-    /// 응답을 기다리지 않는 요청(프레임 확인처럼 자주 보내는 것)
+    /// 응답을 기다리지 않는 요청(프레임 확인·사람 입력). 부른 순서 그대로 보낸다 — 입력은 순서가 바뀌면 안 된다
+    /// (조합 중 글자 → 확정이 뒤바뀌면 글자가 겹친다). 응답은 짝이 없으니 버려진다.
     public func post(_ method: String, _ params: [String: Any] = [:], sessionId: String? = nil) {
-        Task { _ = try? await send(method, params, sessionId: sessionId) }
+        lock.lock()
+        if closed { lock.unlock(); return }
+        nextId += 1
+        var message: [String: Any] = ["id": nextId, "method": method, "params": params]
+        lock.unlock()
+        if let sessionId { message["sessionId"] = sessionId }
+        guard let data = try? JSONSerialization.data(withJSONObject: message),
+              let text = String(data: data, encoding: .utf8) else { return }
+        transport.send(text)
     }
 
     public func close() {

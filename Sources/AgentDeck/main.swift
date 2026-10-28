@@ -909,6 +909,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 isARepeat: false, keyCode: codes[key] ?? 0) {
                 NSApp.sendEvent(event)
             }
+        case "browser-click":
+            // browser-click <x> <y>: 지금 브라우저 화면의 페이지 좌표(CSS)를 실제 마우스 클릭으로
+            let v = argument.split(separator: " ").compactMap { Double($0) }
+            guard v.count == 2, let window, let point = model.host?.focusedBrowser?.windowPoint(css: CGPoint(x: v[0], y: v[1])) else { return }
+            for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                if let event = NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    window.sendEvent(event)
+                }
+            }
         case "browsers":
             // 브라우저 화면: 주인 화면 앞 4자·화면에 놓임·창이 보임·스트림 도는 중·받은 프레임 수
             for (id, view) in model.host?.browserViews ?? [:] {
