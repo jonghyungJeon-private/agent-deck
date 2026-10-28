@@ -29,6 +29,11 @@ public struct BackgroundTask: Codable, Equatable, Sendable {
             return .agent
         case "dream", "auto-mode scan", "auto_mode_scan", "memory import", "local_memory_import":
             return .ignored
+        // monitor_ws(ID "s" + 8자): 아티팩트 댓글 감시·실시간 화면 연결. 아티팩트를 게시하면 세션 끝까지 열려 있는
+        // 연결이라 맡긴 일이 아니다(Claude Code 의 백그라운드 대기 판단에도 들지 않는다). 세면 일이 다 끝나도
+        // "오케스트레이션 중"이 남는다. 이미 저장된 기록도 ID 로 판단되므로 다음 새로 고침에 바로 풀린다.
+        case "monitor" where id.count == 9 && id.hasPrefix("s"):
+            return .ignored
         default:
             return .shell
         }
@@ -47,12 +52,15 @@ struct BackgroundTaskList: Decodable {
         var id: String?
         var type: String?
         var status: String?
-        enum CodingKeys: String, CodingKey { case id, type, status }
+        /// 모니터가 무엇을 지켜보는지(사람이 띄운 모니터·MCP 모니터에는 있다)
+        var watches = false
+        enum CodingKeys: String, CodingKey { case id, type, status, command, server, tool }
         init(from decoder: Decoder) throws {
             let c = try? decoder.container(keyedBy: CodingKeys.self)
             id = try? c?.decode(String.self, forKey: .id)
             type = try? c?.decode(String.self, forKey: .type)
             status = try? c?.decode(String.self, forKey: .status)
+            watches = [CodingKeys.command, .server, .tool].contains { c?.contains($0) == true }
         }
     }
 
@@ -65,6 +73,8 @@ struct BackgroundTaskList: Decodable {
             guard let id = entry.id, !id.isEmpty, entry.status.map({ $0 == "running" || $0 == "pending" }) ?? true
             else { continue }
             let task = BackgroundTask(id: id, type: entry.type ?? "")
+            // 지켜보는 대상(command·server·tool)이 없는 모니터는 아티팩트 연결(monitor_ws) — ID 규칙이 바뀌어도 거른다
+            if task.type == "monitor", !entry.watches { continue }
             if task.kind != .ignored { tasks.append(task) }
         }
         self.tasks = tasks
