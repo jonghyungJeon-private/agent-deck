@@ -103,6 +103,27 @@ public final class ScreencastStream {
         return (result["result"] as? [String: Any])?["value"]
     }
 
+    /// 지금 보는 탭의 창을 넓혀·줄여 페이지 크기(CSS 픽셀)를 `size` 로 맞춘다. 창 크기 = 페이지 + 창 테두리(주소창 자리 등)
+    /// 이므로 지금 차이를 재서 더한다. 같은 창의 탭은 모두 같은 크기가 된다. 성공하면 true.
+    @discardableResult
+    public func fit(to size: CGSize) async -> Bool {
+        guard let target = currentTarget,
+              let window = try? await client.send("Browser.getWindowForTarget", ["targetId": target]),
+              let windowId = window["windowId"] as? Int,
+              let inset = await evaluate("[outerWidth - innerWidth, outerHeight - innerHeight]") as? [Int], inset.count == 2
+        else { return false }
+        let bounds: [String: Any] = ["width": Int(size.width.rounded()) + inset[0], "height": Int(size.height.rounded()) + inset[1],
+                                     "windowState": "normal"]
+        return (try? await client.send("Browser.setWindowBounds", ["windowId": windowId, "bounds": bounds])) != nil
+    }
+
+    /// 탭의 주소·제목
+    public func info(target: String) async -> (url: String, title: String)? {
+        guard let result = try? await client.send("Target.getTargetInfo", ["targetId": target]),
+              let info = result["targetInfo"] as? [String: Any] else { return nil }
+        return (info["url"] as? String ?? "", info["title"] as? String ?? "")
+    }
+
     /// 열린 페이지(탭)들의 target id(브라우저가 아는 순서). 못 읽으면 nil.
     public func pages() async -> [String]? {
         guard let result = try? await client.send("Target.getTargets"),

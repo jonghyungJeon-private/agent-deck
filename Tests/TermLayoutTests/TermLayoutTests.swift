@@ -392,16 +392,14 @@ final class BrowserPaneWorkspaceTests: XCTestCase {
         XCTAssertEqual(workspace.tabs.count, 1)
     }
 
-    func testPersistenceAndBrokenBrowserLeaves() throws {
+    func testOldBrowserLeavesAreRemovedOnLoad() throws {
+        // 예전 배치(브라우저가 분할 잎이던 때): 읽으면 브라우저 잎이 빠지고 포커스는 남은 화면으로
         let (workspace, browser) = workspaceWithBrowser()
         let decoded = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(workspace))
-        XCTAssertEqual(decoded, workspace)
-        XCTAssertEqual(decoded.browsers[browser], BrowserRecipe(owner: "A"))
-        var broken = workspace
-        broken.browsers[browser] = nil
-        let repaired = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(broken))
-        XCTAssertFalse(repaired.allPanes.contains(browser))
-        XCTAssertEqual(repaired.tabs[0].focused, "A")
+        XCTAssertFalse(decoded.allPanes.contains(browser))
+        XCTAssertEqual(decoded.browsers, [:])
+        XCTAssertEqual(decoded.tabs[0].root, .pane("A"))
+        XCTAssertEqual(decoded.tabs[0].focused, "A")
         // browsers 가 없는 예전 파일
         let old = #"{"tabs":[{"id":"t","root":{"pane":{"_0":"A"}},"focused":"A","zoomed":false}],"selected":"t"}"#
         XCTAssertEqual(try JSONDecoder().decode(Workspace.self, from: Data(old.utf8)).browsers, [:])

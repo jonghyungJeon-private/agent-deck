@@ -261,3 +261,97 @@ final class BrowserInputTests: XCTestCase {
         XCTAssertEqual(all[0]["modifiers"] as? Int, 4)
     }
 }
+
+final class AbxStateReaderTests: XCTestCase {
+    private var dir: URL!
+    private var session: AbxSession!
+
+    override func setUpWithError() throws {
+        // 소켓 경로 한도 때문에 짧은 임시 경로
+        dir = URL(fileURLWithPath: "/tmp/abxr-" + UUID().uuidString.prefix(6))
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("state"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: dir.appendingPathComponent("profile"), withIntermediateDirectories: true)
+        session = AbxSession(name: "s1", socketDir: dir.path, stateDir: dir.appendingPathComponent("state").path,
+                             profileDir: dir.appendingPathComponent("profile").path)
+    }
+
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+
+    private func write(_ name: String, _ text: String, state: Bool = false) throws {
+        try text.write(to: (state ? dir.appendingPathComponent("state") : dir).appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+
+    /// 연결을 받는 유닉스 소켓(엔진 대신)
+    private func listen(_ path: String) -> Int32 {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes); $0[bytes.count] = 0 }
+        _ = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size)) } }
+        Darwin.listen(fd, 4)
+        return fd
+    }
+
+    func testNothingRunning() {
+        let s = AbxStateReader().status(session)
+        XCTAssertFalse(s.running)
+        XCTAssertNil(s.cdpUrl)
+        XCTAssertEqual(s.control, .idle)
+        XCTAssertEqual(s.tabs, [])
+    }
+
+    func testRunningWithCdpTabsAndAgentLock() throws {
+        let server = listen(dir.appendingPathComponent("s1.sock").path)
+        defer { close(server) }
+        try write("s1.launch.json", #"{"headed":false,"profileDir":"\#(dir.appendingPathComponent("profile").path)"}"#)
+        try "5123\n/devtools/browser/abc\n".write(to: dir.appendingPathComponent("profile/DevToolsActivePort"), atomically: true, encoding: .utf8)
+        try write("s1.tabs.json", #"[{"id":"t1","targetId":"T","url":"https://a","title":"A","active":true}]"#, state: true)
+        try write("s1.lock.sock", "")
+        try write("s1.lock.pid", "\(getpid())")
+        let s = AbxStateReader().status(session)
+        XCTAssertTrue(s.running)
+        XCTAssertEqual(s.headless, true)
+        XCTAssertEqual(s.cdpUrl, "ws://127.0.0.1:5123/devtools/browser/abc")
+        XCTAssertEqual(s.activeTab?.targetId, "T")
+        XCTAssertEqual(s.control, .agent)
+    }
+
+    func testStaleFilesAreNotLife() throws {
+        try write("s1.sock", "") // 서버 없이 남은 소켓 자리
+        try write("s1.lock.sock", "")
+        try write("s1.lock.pid", "999999") // 죽은 pid
+        let s = AbxStateReader().status(session)
+        XCTAssertFalse(s.running)
+        XCTAssertEqual(s.control, .idle)
+    }
+
+    func testHandoffAndSwitching() throws {
+        try write("s1.handoff", "로그인해 주세요", state: true)
+        XCTAssertEqual(AbxStateReader().status(session).control, .user)
+        XCTAssertEqual(AbxStateReader().status(session).handoff, "로그인해 주세요")
+        try write("s1.writer", #"{"pid":\#(getpid()),"token":"x"}"#, state: true) // 아직 동작 중인 writer
+        XCTAssertEqual(AbxStateReader().status(session).control, .switching)
+    }
+}
+
+final class AbxWriterLeaseTests: XCTestCase {
+    func testOneHolderAtATimeAndStaleReclaim() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("lease-" + UUID().uuidString).path
+        defer { try? FileManager.default.removeItem(atPath: dir) }
+        let first = try XCTUnwrap(AbxWriterLease.acquire(stateDir: dir, session: "s", wait: 0))
+        XCTAssertNil(AbxWriterLease.acquire(stateDir: dir, session: "s", wait: 0.1)) // 잡혀 있음
+        // abx 가 읽는 모양: {"pid":…,"token":…}
+        let data = try XCTUnwrap(FileManager.default.contents(atPath: dir + "/s.writer"))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual((json["pid"] as? NSNumber)?.int32Value, getpid())
+        first.release()
+        let second = try XCTUnwrap(AbxWriterLease.acquire(stateDir: dir, session: "s", wait: 0))
+        second.release()
+        // 죽은 주인의 자리는 되찾는다
+        try #"{"pid":999999,"token":"dead"}"#.write(toFile: dir + "/s.writer", atomically: true, encoding: .utf8)
+        let third = try XCTUnwrap(AbxWriterLease.acquire(stateDir: dir, session: "s", wait: 0))
+        third.release()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir + "/s.writer"))
+    }
+}

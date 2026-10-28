@@ -390,6 +390,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     /// 메뉴·단축키·시험 명령: 도구 창 동작(tool-…)은 도구 창 관리자가, 나머지는 모델이 맡는다
     private func perform(_ action: String) {
+        // 브라우저 창이 앞에 있으면 ⌘W 는 그 창만 닫는다(메인 창의 터미널을 닫지 않게)
+        if action == "close" || action == "close-tab", let browser = model.browserWindows.keyController {
+            browser.close()
+            return
+        }
         if action.hasPrefix("pane-find") {
             model.host?.sessionSwitcher.close(restoreFocus: true)
             model.host?.navigator.closePopup(restoreFocus: true)
@@ -910,19 +915,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 NSApp.sendEvent(event)
             }
         case "browser-click":
-            // browser-click <x> <y>: 지금 브라우저 화면의 페이지 좌표(CSS)를 실제 마우스 클릭으로
+            // browser-click <x> <y>: 브라우저 창의 페이지 좌표(CSS)를 그 창의 실제 마우스 클릭으로
             let v = argument.split(separator: " ").compactMap { Double($0) }
-            guard v.count == 2, let window, let point = model.host?.focusedBrowser?.windowPoint(css: CGPoint(x: v[0], y: v[1])) else { return }
+            guard v.count == 2, let target = model.browserWindows.target, let browserWindow = target.window,
+                  let point = target.pane.windowPoint(css: CGPoint(x: v[0], y: v[1])) else { return }
             for kind in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
                 if let event = NSEvent.mouseEvent(with: kind, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
-                    window.sendEvent(event)
+                                                  windowNumber: browserWindow.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    browserWindow.sendEvent(event)
                 }
             }
+        case "browser-keys":
+            // 브라우저 창에 실제 키 입력과 같은 경로로 글자를 하나씩(\r = Enter)
+            guard let browserWindow = model.browserWindows.target?.window else { return }
+            for ch in argument.replacingOccurrences(of: "\\r", with: "\r") {
+                let s = String(ch)
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    if let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                    windowNumber: browserWindow.windowNumber, context: nil, characters: s,
+                                                    charactersIgnoringModifiers: s, isARepeat: false, keyCode: s == "\r" ? 36 : 0) {
+                        browserWindow.sendEvent(event)
+                    }
+                }
+            }
+        case "browser-ime":
+            // browser-ime 조합|…|확정: 브라우저 창 입력기 흉내
+            var pieces = argument.split(separator: "|").map(String.init)
+            guard let commit = pieces.popLast(), let screen = model.browserWindows.target?.pane.focusTarget as? BrowserScreenView else { return }
+            for text in pieces {
+                screen.setMarkedText(text, selectedRange: NSRange(location: text.utf16.count, length: 0),
+                                     replacementRange: NSRange(location: NSNotFound, length: 0))
+            }
+            screen.insertText(commit, replacementRange: NSRange(location: NSNotFound, length: 0))
+        case "browser-open":
+            // browser-open [화면 ID 앞부분]: 그 화면(없으면 지금 화면)의 브라우저 창
+            let owner = argument.isEmpty ? nil : model.rows.first { $0.id.hasPrefix(argument) }?.id
+            model.openBrowser(owner: owner)
+        case "browser-resize":
+            // browser-resize <너비> <높이>: 브라우저 창 크기(점)
+            let v = argument.split(separator: " ").compactMap { Double($0) }
+            guard v.count == 2, let browserWindow = model.browserWindows.target?.window else { return }
+            browserWindow.setContentSize(NSSize(width: v[0], height: v[1]))
         case "browsers":
-            // 브라우저 화면: 주인 화면 앞 4자·화면에 놓임·창이 보임·스트림 도는 중·받은 프레임 수
-            for (id, view) in model.host?.browserViews ?? [:] {
-                print("browser \(id.dropFirst(BrowserPane.prefix.count).prefix(4)) \(view.debugState)")
+            // 브라우저: 화면마다 칩 상태, 열린 창마다 주인·창 보임·스트림·받은 프레임 수·제어·페이지 크기
+            for (id, status) in model.browserStates.sorted(by: { $0.key < $1.key }) {
+                print("browser-state \(id.prefix(4)) \(BrowserIndicator(status).map { "\($0)" } ?? "-")")
+            }
+            for controller in model.browserWindows.visible {
+                print("browser-window \(controller.paneId.prefix(4)) \(controller.pane.debugState) key=\(controller.window?.isKeyWindow == true)")
             }
             print("browsers end")
             fflush(stdout)

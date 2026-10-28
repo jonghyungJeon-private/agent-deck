@@ -104,7 +104,9 @@ struct SidebarView: View {
         case .session(let row, let depth, _, let section):
             SessionRowView(row: row, depth: depth,
                            selected: row.id == model.selectedId,
-                           tabNumber: model.workspace.tabIndex(containing: row.id).map { $0 + 1 })
+                           tabNumber: model.workspace.tabIndex(containing: row.id).map { $0 + 1 },
+                           browser: model.browserIndicator(row.id),
+                           openBrowser: { model.openBrowser(owner: row.id) })
                 .onTapGesture { model.focus(pane: row.id) }
                 .onDrag {
                     spaces.drag = SpacesDrag(kind: .session, id: row.id, section: section)
@@ -573,6 +575,9 @@ struct SessionRowView: View {
     let depth: Int
     let selected: Bool
     let tabNumber: Int?
+    /// 이 세션의 브라우저(떠 있을 때만). spaces 는 상태판이라 브라우저 사용 여부도 보인다
+    var browser: BrowserIndicator? = nil
+    var openBrowser: () -> Void = {}
     @State private var hovering = false
     @Environment(\.uiScale) private var ui
 
@@ -623,6 +628,25 @@ struct SessionRowView: View {
             }
             .lineLimit(1)
             Spacer(minLength: 4)
+            if let browser {
+                // 🌐 + 상태 색(기다림은 !) — 누르면 그 세션의 브라우저 창
+                HStack(spacing: ui(2)) {
+                    Image(systemName: "globe")
+                        .font(.system(size: ui(10), weight: .semibold))
+                    if browser.needsAttention {
+                        Text("!").uiFont(10, bold: true)
+                    }
+                }
+                .foregroundStyle(Color(browser.color))
+                .padding(.horizontal, ui(4))
+                .padding(.vertical, ui(1))
+                .background(Capsule().fill(Color(browser.color).opacity(browser.needsAttention ? 0.22 : 0.12)))
+                .help("브라우저 · \(browser.label) — 눌러서 창 열기")
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("브라우저 \(browser.label)")
+                .accessibilityAddTraits(.isButton)
+                .onTapGesture(perform: openBrowser)
+            }
             if let tabNumber {
                 Text("⌘\(tabNumber)")
                     .uiFont(10)

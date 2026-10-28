@@ -41,6 +41,20 @@ final class SplitContainerView: NSView {
     var onRatioChange: (([Bool], Double) -> Void)?
 
     private var bordered: Bool { paneViews.count > 1 }
+    /// 화면 제목 줄 오른쪽 위에 다는 것(브라우저 칩). 화면이 하나면 칩이 있을 때만 얇은 제목 줄을 둔다.
+    private var chips: [String: NSView] = [:]
+
+    func setChips(_ chips: [String: NSView]) {
+        for (id, view) in self.chips where chips[id] !== view { view.removeFromSuperview() }
+        let reshaped = Set(self.chips.keys) != Set(chips.keys)
+        self.chips = chips
+        for view in chips.values { addSubview(view) } // 다시 넣으면 맨 위로(화면 뷰가 덮지 않게)
+        needsLayout = true
+        if reshaped { needsDisplay = true }
+    }
+
+    /// 화면이 하나일 때 칩 자리로 위에 제목 줄을 둘지
+    private func strip(_ id: String) -> Bool { !bordered && chips[id] != nil }
 
     func update(tree: SplitNode?, views: [String: NSView], focused: String?, titles: [String: PaneTitle]) {
         self.tree = tree
@@ -52,6 +66,7 @@ final class SplitContainerView: NSView {
         for view in views.values where view.superview !== self {
             addSubview(view)
         }
+        for view in chips.values { addSubview(view) }
         paneViews = views
         needsLayout = true
         layoutSubtreeIfNeeded()
@@ -95,7 +110,17 @@ final class SplitContainerView: NSView {
                 ? CGRect(x: rect.minX + Self.insetSide, y: rect.minY + Self.insetTop,
                          width: max(0, rect.width - Self.insetSide * 2),
                          height: max(0, rect.height - Self.insetTop - Self.insetBottom))
+                : strip(id) ? CGRect(x: rect.minX, y: rect.minY + Self.insetTop, width: rect.width,
+                                     height: max(0, rect.height - Self.insetTop))
                 : rect
+        }
+        // 칩: 제목 줄 오른쪽 끝(나눠져 있으면 위 테두리 선 위에 바탕을 깔고 놓인다)
+        for (id, chip) in chips {
+            guard let rect = frames[id] else { chip.frame = .zero; continue }
+            let size = chip.intrinsicContentSize
+            let right = bordered ? Self.insetSide + TermAppearance.scaled(8) : TermAppearance.scaled(8)
+            chip.frame = CGRect(x: rect.maxX - right - size.width, y: rect.minY + max(0, (Self.insetTop - size.height) / 2),
+                                width: size.width, height: size.height)
         }
         window?.invalidateCursorRects(for: self)
         needsDisplay = true
@@ -104,7 +129,19 @@ final class SplitContainerView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         TermAppearance.background.setFill()
         dirtyRect.fill()
-        guard bordered else { return }
+        if !bordered {
+            // 화면이 하나인데 칩이 있으면: 얇은 제목 줄에 이름(나눈 화면의 제목과 같은 글꼴)
+            for (id, rect) in frames where strip(id) {
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: TermAppearance.scaledUIFont(11), .foregroundColor: TermAppearance.textDim,
+                ]
+                let name = titles[id]?.name ?? ""
+                let size = (name as NSString).size(withAttributes: attributes)
+                (name as NSString).draw(at: NSPoint(x: rect.minX + TermAppearance.scaled(10), y: rect.minY + (Self.insetTop - size.height) / 2),
+                                        withAttributes: attributes)
+            }
+            return
+        }
         // 포커스 화면을 마지막에 그려 겹치는 데가 강조색으로 보이게
         let order = frames.keys.filter { $0 != focused } + frames.keys.filter { $0 == focused }
         for id in order {

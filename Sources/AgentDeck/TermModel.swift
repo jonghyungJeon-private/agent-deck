@@ -1,4 +1,5 @@
 import AppKit
+import BrowserCore
 import Foundation
 import SessionCore
 import TermLayout
@@ -97,11 +98,23 @@ struct FolderGroup: Identifiable, Equatable {
 final class TermModel: ObservableObject {
     @Published var rows: [PaneRow] = []
     @Published var groups: [FolderGroup] = []
-    @Published private(set) var workspace = Workspace()
+    @Published private(set) var workspace = Workspace() {
+        // 화면이 없어지면(닫기·셸이 끝남·목록에서 빠짐) 그 브라우저도 정리한다. 꺼진 화면(dormant)은 남아 있으니 그대로.
+        didSet {
+            for id in Set(oldValue.allPanes).subtracting(workspace.allPanes) where !LocalPane.isLocal(id) { stopBrowser(of: id) }
+        }
+    }
     @Published var connected = false
     @Published var daemonFootprint: UInt64 = 0
     @Published var appFootprint: UInt64 = 0
     @Published var lastError: String?
+    /// 브라우저가 떠 있는(또는 넘김이 남은) 화면의 abx 상태 — 화면 칩·spaces 목록·알림
+    @Published private(set) var browserStates: [String: AbxStatus] = [:]
+    let browserStore = BrowserStatusStore()
+    let browserWindows = BrowserWindows()
+    /// 이미 알린 브라우저 넘김(화면 → 넘김 글)
+    private var browserNotified: [String: String] = [:]
+    private var browserPrimed = false
     /// Claude Code hook 연결 상태(세션 짝짓기·이름·되살리기·상태 표시의 바탕)
     @Published var hookState: HookState = .unknown
     @Published var codexHookState: HookState = .unknown
@@ -273,7 +286,16 @@ final class TermModel: ObservableObject {
             self?.pinDirtyPreviews() // 고치면(●) 미리보기가 아니다
             self?.host?.refreshTitles()
         }
-        notifier.onOpen = { [weak self] pane in self?.focus(pane: pane) }
+        notifier.onOpen = { [weak self] pane in
+            // 브라우저 넘김 알림("browser:<화면>")은 그 화면의 브라우저 창으로
+            if pane.hasPrefix("browser:") { self?.openBrowser(owner: String(pane.dropFirst("browser:".count))) }
+            else { self?.focus(pane: pane) }
+        }
+        browserStore.panes = { [weak self] in
+            (self?.rows ?? []).filter { !$0.dormant }.map(\.id)
+        }
+        browserStore.onChange = { [weak self] states in self?.browserChanged(states) }
+        browserStore.start()
         notifier.start()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
                                                queue: .main) { [weak self] _ in self?.markSeen() }
@@ -712,7 +734,10 @@ final class TermModel: ObservableObject {
 
     /// Dock 아이콘에 확인이 필요한 화면 수
     private func updateDockBadge() {
-        let count = rows.filter { !$0.dormant && $0.status.needsAttention }.count
+        // 터미널이 기다리는 화면과 브라우저가 기다리는 화면을 합쳐 한 번씩만 센다
+        let waiting = Set(rows.filter { !$0.dormant && $0.status.needsAttention }.map(\.id))
+            .union(browserStates.compactMap { BrowserIndicator($0.value)?.needsAttention == true ? $0.key : nil })
+        let count = waiting.count
         let label = count > 0 ? "\(count)" : nil
         if NSApp.dockTile.badgeLabel != label {
             NSApp.dockTile.badgeLabel = label
@@ -831,9 +856,6 @@ final class TermModel: ObservableObject {
 
     /// 분할 테두리 제목(탭·목록과 같은 이름). 편집기는 파일 이름, 저장 안 했으면 뒤에 ●.
     func paneLabel(_ id: String) -> String {
-        if let owner = workspace.browsers[id]?.owner {
-            return "브라우저 · " + (row(owner)?.title ?? "…")
-        }
         if EditorPane.isEditor(id) {
             let name = workspace.editors[id].map { ($0.path as NSString).lastPathComponent } ?? "…"
             return editors.isDirty(id) ? name + " ●" : name
@@ -963,32 +985,69 @@ final class TermModel: ObservableObject {
     /// 지금 화면의 폴더(편집기면 그 파일이 있는 폴더) — 새 탭·분할이 여기서 열린다
     var focusedCwd: String? {
         if let id = selectedId, let path = workspace.editors[id]?.path { return (path as NSString).deletingLastPathComponent }
-        if let id = selectedId, let owner = workspace.browsers[id]?.owner { return row(owner)?.cwd }
         return focusedRow?.cwd
     }
 
     // MARK: - 브라우저
 
-    /// 지금 에이전트 화면의 브라우저를 오른쪽에 나눠 보인다(이미 보이면 그 화면으로).
-    /// 브라우저는 그 화면의 claude·codex 가 `abx` 를 쓸 때 뜬다(BrowserBinding).
-    func openBrowser() {
-        guard let owner = selectedId, !LocalPane.isLocal(owner), let index = workspace.selectedIndex else {
+    /// 화면(에이전트 세션)의 브라우저 창을 연다(이미 열려 있으면 앞으로). 없으면 지금 화면.
+    /// 브라우저는 그 화면의 claude·codex 가 `abx` 를 쓸 때 뜬다(BrowserBinding) — 창은 보기만 한다.
+    func openBrowser(owner: String? = nil) {
+        guard let owner = owner ?? selectedId, !LocalPane.isLocal(owner) else {
             NSSound.beep()
             return
         }
-        if let existing = workspace.browserPane(owner: owner) {
-            focus(pane: existing)
-            host?.focusPane()
-            return
+        browserWindows.open(owner: owner, title: row(owner)?.title ?? "…")
+    }
+
+    /// 화면의 브라우저 상태(칩·목록)
+    func browserIndicator(_ id: String) -> BrowserIndicator? {
+        browserStates[id].flatMap(BrowserIndicator.init)
+    }
+
+    private func browserChanged(_ states: [String: AbxStatus]) {
+        browserStates = states
+        browserWindows.retitle { [weak self] owner in self?.row(owner)?.title }
+        host?.refreshTitles()
+        updateDockBadge()
+        // 에이전트가 넘긴 것만 알린다(내가 가져온 것은 아님). 앱을 켠 첫 상태는 기억만.
+        for (id, status) in states {
+            guard case .waiting(let message) = BrowserIndicator(status) else {
+                // 넘김이 풀렸다(돌려줌·사용자가 받음): 알림 센터에서도 뺀다
+                if browserNotified.removeValue(forKey: id) != nil { notifier.clear(paneId: "browser:" + id) }
+                continue
+            }
+            guard browserNotified[id] != message else { continue }
+            browserNotified[id] = message
+            // 그 브라우저 창을 보고 있으면 알리지 않는다
+            if browserPrimed, !(NSApp.isActive && browserWindows.keyController?.paneId == id) {
+                notifier.post(title: "브라우저 · \(row(id)?.title ?? "")", body: message.isEmpty ? "에이전트가 브라우저 조작을 넘겼어요" : message,
+                              paneId: "browser:" + id, key: message)
+            }
         }
-        let id = BrowserPane.newId()
-        var next = workspace
-        next.browsers[id] = BrowserRecipe(owner: owner)
-        var tab = next.tabs[index]
-        tab.root = tab.root.splitting(owner, with: id, axis: .horizontal)
-        tab.zoomed = false
-        next.tabs[index] = tab // 포커스는 에이전트 화면에 둔다(계속 입력할 수 있게)
-        setWorkspace(next, render: true)
+        for id in browserNotified.keys where states[id] == nil {
+            browserNotified[id] = nil
+            notifier.clear(paneId: "browser:" + id)
+        }
+        browserPrimed = true
+    }
+
+    /// 화면이 없어지면 그 브라우저도 끈다(프로필은 남긴다 — 같은 화면을 되살리면 로그인 그대로). 창·알림도 정리.
+    /// 상태를 아직 못 읽었을 수도 있어(막 띄움) 엔진 소켓·실행 기록이 있으면 끈다. 여러 번 불려도 된다.
+    private func stopBrowser(of id: String) {
+        browserWindows.close(owner: id)
+        notifier.clear(paneId: "browser:" + id)
+        browserNotified[id] = nil
+        let env = BrowserBinding.environment(pane: id, browser: nil)
+        let session = AbxSession(name: env["ABX_SESSION"]!, socketDir: env["ABX_SOCKET_DIR"]!,
+                                 stateDir: env["ABX_STATE_DIR"]!, profileDir: env["ABX_PROFILE_DIR"]!)
+        let socket = (session.socketDir as NSString).appendingPathComponent(session.name + ".sock")
+        guard FileManager.default.fileExists(atPath: socket) else { return }
+        let helpers = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
+        DispatchQueue.global(qos: .utility).async {
+            guard let runner = AbxRunner.locate(bundleHelpers: helpers) else { return }
+            _ = try? runner.run(["down"], session: session, timeout: 15)
+        }
     }
 
     // MARK: - 편집기
@@ -1117,13 +1176,6 @@ final class TermModel: ObservableObject {
     func close(pane id: String, confirm: Bool = true) {
         if EditorPane.isEditor(id) {
             closeEditor(id, confirm: confirm)
-            return
-        }
-        if BrowserPane.isBrowser(id) {
-            // 보기만 닫는다 — 브라우저·에이전트는 그대로(다시 열면 이어 본다)
-            var next = workspace
-            next.forget(pane: id)
-            setWorkspace(next, render: true)
             return
         }
         let row = row(id)
@@ -1257,8 +1309,8 @@ final class TermModel: ObservableObject {
         case "split-right": newPane(split: .horizontal)
         case "split-down": newPane(split: .vertical)
         case "browser": openBrowser()
-        case "browser-take": host?.focusedBrowser?.takeControl()
-        case "browser-give": host?.focusedBrowser?.giveBack()
+        case "browser-take": browserWindows.keyPane?.takeControl()
+        case "browser-give": browserWindows.keyPane?.giveBack()
         case "close": closeFocused()
         case "close-tab": closeTab()
         case "rename": renameFocused()

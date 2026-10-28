@@ -349,9 +349,8 @@ public struct EditorRecipe: Codable, Equatable {
     public var isPreview: Bool { preview == true }
 }
 
-/// 브라우저 화면(데몬 화면이 아님). 분할 나무의 잎에 "browser:<UUID>" 로 들어간다.
-/// 에이전트 화면(owner) 하나의 브라우저(abx 세션)를 보여 준다. 편집기처럼 데몬 목록과 상관없이 두고,
-/// 주인 화면이 없어지면 함께 뺀다.
+/// 예전(브라우저 화면 1·2단계) 분할 잎 "browser:<UUID>". 지금 브라우저는 세션별 창이라 새로 만들지 않고,
+/// 예전 배치 파일을 읽을 때 뺀다(Workspace.init(from:)). 데몬 목록과 상관없이 두고, 주인 화면이 없어지면 함께 뺀다.
 public enum BrowserPane {
     public static let prefix = "browser:"
 
@@ -420,7 +419,10 @@ public struct Workspace: Codable, Equatable {
         browsers = try c.decodeIfPresent([String: BrowserRecipe].self, forKey: .browsers) ?? [:]
         // 파일 정보가 없는 편집기 잎·주인이 없는 브라우저 잎은 열 수 없으니 뺀다(망가진 파일)
         for pane in allPanes where EditorPane.isEditor(pane) && editors[pane] == nil { remove(pane: pane) }
-        for pane in allPanes where BrowserPane.isBrowser(pane) && browsers[pane] == nil { remove(pane: pane) }
+        // 브라우저는 이제 화면 잎이 아니라 세션별 창이다(0.6). 예전 배치의 브라우저 잎은 읽을 때 빼고
+        // 그 자리는 옆 화면이 채운다(브라우저 자체는 세션의 칩·창으로 그대로 볼 수 있다).
+        for pane in allPanes where BrowserPane.isBrowser(pane) { remove(pane: pane) }
+        browsers = [:]
         if !tabs.contains(where: { $0.id == selected }) { selected = tabs.first?.id }
     }
 

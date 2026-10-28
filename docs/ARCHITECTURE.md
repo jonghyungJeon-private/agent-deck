@@ -151,48 +151,54 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   올라간 작업을 어떻게 다루는지는 실측하지 못했다(허락 안 됨 경로를 재현하지 못했고, Dock 강제 종료는 사람이 눌러야 한다).
 - 확인: `launchctl print gui/$UID/<이름>`(state·pid), 데몬 `ps -o ppid` 가 1. 이름은 `term/dev.agentdeck.daemon.plist` 의 `Label`.
 
-## 브라우저 화면(보기·사람 조작)
+## 브라우저(세션별 창)
 
-에이전트가 `abx`(agent-browser 저장소 `packages/abx`)로 쓰는 브라우저를 터미널 옆 화면에서 본다. 설계·검증: agent-browser 저장소의
-`research/agent-deck-browser-pane.md`·`research/M0-agentdeck-report.md`.
+에이전트가 `abx`(agent-browser 저장소 `packages/abx`)로 쓰는 브라우저를 세션마다 별도 창으로 본다. 설계·검증: agent-browser 저장소의
+`research/agent-deck-browser-pane.md`·`research/M0-agentdeck-report.md`. (1·2단계에서는 분할 화면 잎이었다 — 터미널과 자리를 다투고
+페이지 크기가 칸에 묶여 0.6 에서 창으로 바꿨다. 예전 배치의 `browser:<UUID>` 잎은 읽을 때 뺀다.)
 
 - **화면 하나 = 브라우저 하나.** 데몬이 모든 화면 셸에 `ABX_*` 환경 변수를 넣는다(`TermWire/BrowserBinding`): 세션 이름 `ad-<화면 ID 앞 12자리>`,
-  소켓 `term/abx/`(경로가 길어 유닉스 소켓 한도 104바이트를 넘으면 `<TMPDIR>/agentdeck-abx-<term 경로 해시>`), 상태 `term/abx/state/`, 프로필 `term/abx-profiles/<세션>`, 로그인 템플릿 `term/abx-profiles/template`(있으면 새 프로필을 복사해 시작),
+  소켓 `term/abx/`(경로가 길어 유닉스 소켓 한도 104바이트를 넘으면 `<TMPDIR>/agentdeck-abx-<term 경로 해시>`), 상태 `term/abx/state/`,
+  프로필 `term/abx-profiles/<세션>`, 로그인 템플릿 `term/abx-profiles/template`(있으면 새 프로필을 복사해 시작),
   창 없이(`ABX_HEADLESS=1`), 사람 입력 잠금(`ABX_LOCK_INPUT=1`), 페이지 위 잠금 배너 끔(`ABX_LOCK_BANNER=0`), 브라우저 실행 파일은
   `AGENTDECK_BROWSER` → `~/.abx/browsers/<버전>/` 의 Chrome for Testing(가장 높은 버전) → 없으면 abx 가 고른다.
   화면 ID 로만 정해지므로 되살린 화면은 같은 브라우저·같은 프로필(로그인 유지)을 쓴다. 브라우저는 그 셸의 claude·codex 가 `abx` 를 처음 쓸 때 뜬다.
   이미 떠 있던 데몬이 띄운 셸에는 이 값이 없다(데몬을 새로 띄운 뒤 연 화면부터).
-- **열기:** 셸 메뉴 "브라우저 보기"(⇧⌘B) — 지금 화면(에이전트) 오른쪽에 `browser:<UUID>` 잎을 나눠 넣는다(`Workspace.browsers[잎] = BrowserRecipe(owner:)`).
-  이미 있으면 그 화면으로 간다. 편집기처럼 데몬 목록과 상관없이 두고(reconcile), 주인 화면이 없어지면 함께 뺀다(꺼진 화면이면 남긴다).
-  닫기(⌘W)는 보기만 닫는다 — 브라우저·에이전트는 그대로.
-- **보기:** `BrowserPaneView` 가 보일 때만 `BrowserFeed` 를 돌린다 — 화면에 놓였고(`TerminalHostController.render` 의 attach/detach)
-  창이 가려지지 않았고(occlusion) 앱이 숨지 않았을 때. 제어가 없을 때 친 글자는 받아서 버린다(옆 터미널로 새지 않게).
-  - 상태: `abx status --json`(파일만 읽고 브라우저를 띄우지 않는다) — abx 폴더(소켓·상태·프로필) 변경을 감시하고, 폴더가 아직 없을 수 있어 3초마다도 읽는다.
-    abx 실행 파일은 `AGENTDECK_ABX` → 앱 묶음 `Contents/Helpers/abx` → PATH·`~/.local/bin` 의 `abx`.
-  - 화면: 상태의 CDP 주소(프로필의 `DevToolsActivePort`)에 앱이 직접 붙어(`BrowserCore/CDPClient`, URLSession WebSocket)
-    abx 가 마지막으로 본 활성 탭(`targetId`)을 따라(그 탭이 이미 닫혔으면 보던 탭·첫 페이지) `Page.startScreencast`(JPEG q75, 최대 1440×900). 프레임은 받자마자 확인(ack)하고,
-    백그라운드에서 풀고, 밀리면 최신 것만 그린다(`LatestFrameQueue`). 프레임은 데몬을 거치지 않는다(터미널 연결과 섞지 않게).
-  - 머리 줄: 제어 상태(AI 작업 중·사용자에게 넘김·넘기는 중·쉬는 중)·탭 제목·주소·탭 수.
-  - 탭을 바꾸는 중에 다른 탭·멈춤이 오면 세대 번호로 늦게 붙은 연결을 뗀다. 붙는 중에 칸이 사라져도 열린 WebSocket 은 닫는다.
-- **사람 조작(2단계):** 머리 줄 오른쪽 버튼 "제어 가져오기" = `abx handoff`(에이전트가 하던 동작이 다음 단계에서 멈출 때까지
-  "넘겨받는 중", 그 뒤 abx 가 입력 잠금을 푼다), "AI 에게 돌려주기" = `abx resume`(누르던 버튼·조합 중 글자를 먼저 정리).
-  에이전트가 스스로 handoff·resume 해도 상태(파일 감시)로 바로 따라간다. 입력은 상태가 `user` 일 때만 보낸다(뷰와 feed 두 곳에서 거르고,
-  그 밖에는 Chrome 입력 잠금도 막는다). 시험 명령 `action browser-take`·`action browser-give`.
-  - `BrowserScreenView`(위가 0인 좌표): 마우스 누름·뗌·끌기·오른쪽·가운데·휠(정밀 픽셀/줄 ×40, 부호 반대)·hover(초당 30번) → `Input.dispatchMouseEvent`
-    (칸의 점 → `ViewportTransform` → CSS 좌표, 마지막 프레임의 페이지 크기 기준).
-  - 키보드는 macOS 입력기(NSTextInputClient)를 거친다: 확정 글자 → `Input.insertText`(조합 없이 친 ASCII 한 글자는 keydown·keypress 가 일어나게 키 이벤트),
-    조합 중 글자 → `Input.imeSetComposition`, 편집 명령 선택자(줄바꿈·지우기·화살표·단어/줄 이동…) → 키 이벤트 + Chrome 편집 명령(`commands`)
-    (`BrowserInput.command(selector:)`). 줄바꿈·탭·Esc 는 DOM 키로만(폼 제출 등). 후보 창은 마지막으로 누른 자리.
-  - 편집 메뉴: ⌘A·⌘Z·⇧⌘Z → 편집 명령 키, ⌘V → macOS 클립보드 글자를 `insertText`, ⌘C·⌘X → 페이지 선택(입력 칸 안 선택 포함)을 읽어 macOS 클립보드로.
-  - 입력은 `CDPClient.post` 로 부른 순서 그대로 보낸다(조합 → 확정 순서가 바뀌면 글자가 겹친다).
-  - 사람이 조작하다 연 새 탭(target=_blank, opener 가 지금 탭)은 바로 따라간다. AI 가 연 탭은 abx 상태의 활성 탭으로 따라간다.
-- 아직 없는 것: handoff 알림(목록 점·macOS 알림), 페이지 위 커서 모양·후보 창 정확한 자리, 서식·이미지 붙여넣기, viewport 고정,
-  로그인 템플릿 만들기 UI, 데몬이 브라우저를 미리 띄우기(Codex 기본 샌드박스용).
-- 시험: `swift test --filter BrowserCoreTests`(가짜 통로로 요청·응답 짝·오류·끊김·시간 초과, screencast 붙기·ack·남의 프레임 무시, 좌표·여백, 프레임 큐),
-  `BrowserPaneWorkspaceTests`(reconcile·저장·주인과 함께 빠짐), `BrowserBindingTests`(이름·경로·소켓 길이·CfT 찾기).
-  실제 확인은 위 "시험 앱은 반드시 LaunchServices 로 띄운다" 절차로 띄운 시험 앱에서 `ctl send <화면> 'abx open …'` 뒤 `action browser`,
-  시험 명령 `browsers`(칸마다 주인·놓임·창 보임·스트림·받은 프레임 수·제어·페이지 크기), `browser-click <css x> <css y>`(페이지 좌표를 실제 마우스 클릭으로),
-  `keys`·`ime 조합|…|확정`·`chord cmd+a` 는 브라우저 화면에도 그대로 들어간다. 시험 앱 창이 다른 창에 가려지면 스트림이 멈추는 것이 정상이다.
+- **상태(모든 화면, 스트림 없이):** `BrowserStatusStore`(TermModel 이 가짐)가 abx 상태 파일을 직접 읽는다(`BrowserCore/AbxStateReader` —
+  abx `status --json` 과 같은 규칙: 엔진 소켓이 연결을 받아야 실행 중, 잠금 소켓 + 살아 있는 잠금 pid 면 AI 제어, handoff 파일이면 사용자,
+  writer 가 살아 있으면 넘기는 중, 탭은 `tabs.json`). abx 폴더(소켓·상태, 모든 세션이 같이 씀) 변경 즉시 + 2초마다. 세션마다 프로세스를 띄우지 않는다.
+  `BrowserIndicator`: 브라우저 · AI 제어 중 · 내가 조작 중(앱의 "제어 가져오기" — handoff 글이 `BrowserIndicator.takeMessage`) ·
+  나를 기다림(에이전트가 넘김) · 넘겨받는 중.
+- **보이는 곳:** 화면 제목 줄 오른쪽 위의 칩(`BrowserChipView` — 🌐 + 상태, 나를 기다림은 테두리와 !). 나눈 화면은 위 테두리 선 위에,
+  화면이 하나면 칩이 있을 때만 얇은 제목 줄(이름 + 칩)을 둔다(`SplitContainerView.setChips`). spaces 목록 세션 줄에도 🌐(상태 색, 기다림은 !).
+  칩·목록 아이콘·⇧⌘B("브라우저 보기") = 그 세션의 브라우저 창.
+- **나를 기다림:** Dock 배지(터미널 대기와 합쳐 화면당 한 번), macOS 알림("브라우저 · <세션>" + 에이전트 글 — 누르면 그 창, 그 창을 보고
+  있으면 알리지 않음, 앱을 켠 첫 상태는 기억만, 같은 글은 한 번). 내가 가져온 것은 알리지 않는다.
+- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태·제목·주소·탭 수·"항상 위"·"제어 가져오기/AI 에게 돌려주기") + 화면.
+  위치·크기는 세션별로 기억(`AgentDeckBrowser-<세션>`). 닫아도(⌘W — 브라우저 창이 앞이면 그 창만) 브라우저·에이전트는 계속 돈다.
+  창이 가려지거나(occlusion)·최소화·앱 숨김이면 스트림을 멈춘다.
+- **크기:** 창 크기 = 브라우저 페이지 크기(`Browser.setWindowBounds` — 창 테두리 차이를 재서 더함). 단 AI 가 입력을 쥔 동안(잠금·넘기는 중)은
+  페이지 크기를 바꾸지 않고 그림만 비율대로 줄이고 늘린다(AI 가 본 배치·좌표가 동작 도중 바뀌지 않게). 사람 차례·쉬는 중이 되면 맞춘다.
+  그림은 따로 둔 층에 비율을 지킨 자리(`ViewportTransform.imageRect`, 마우스 좌표 변환과 같은 자리)로 그린다.
+- **정리:** 화면을 닫으면 그 브라우저도 끈다(`abx down`, 창도 닫음). 프로필은 남긴다(되살리면 로그인 그대로). 셸만 남고 claude 가 끝난 경우는 그대로 둔다.
+- **화면 받기(`BrowserFeed`, 보이는 창만):** abx 상태의 CDP 주소(프로필의 `DevToolsActivePort`)에 앱이 직접 붙어(`BrowserCore/CDPClient`)
+  abx 가 마지막으로 본 활성 탭(`targetId`)을 따라(그 탭이 이미 닫혔으면 보던 탭·첫 페이지) `Page.startScreencast`(JPEG q75, 최대 1440×900).
+  프레임은 받자마자 확인(ack)하고, 백그라운드에서 풀고, 밀리면 최신 것만 그린다. 탭 이동 중 늦게 붙은 연결은 세대 번호로 뗀다.
+  머리 줄의 주소·제목은 보이는 탭의 것(`Target.targetInfoChanged`).
+- **사람 조작:** "제어 가져오기" = `abx handoff`(에이전트 동작이 다음 단계에서 멈출 때까지 넘겨받는 중, 그 뒤 abx 가 입력 잠금을 푼다),
+  "AI 에게 돌려주기" = `abx resume`(누르던 버튼·조합 중 글자를 먼저 정리하고 누른 순간부터 입력을 버림). 입력은 상태가 `user` 일 때만.
+  - `BrowserScreenView`: 마우스(누름·뗌·끌기·오른쪽·가운데·휠·hover, 그림 밖에서 떼어도 떼기 전달) → `Input.dispatchMouseEvent`.
+  - 키보드는 macOS 입력기(NSTextInputClient): 확정 → `Input.insertText`(조합 없이 친 ASCII 한 글자는 물리 키 code·VK·Shift 를 지킨 키 이벤트),
+    조합 → `Input.imeSetComposition`, 편집 명령 선택자 → 키 + Chrome 편집 명령(실제 수정 키 유지 — ⇧⏎ 가 ⏎ 가 되지 않게).
+  - 편집 메뉴: ⌘A·⌘Z·⇧⌘Z, ⌘V(클립보드 글자), ⌘C·⌘X(그림자 DOM·같은 출처 iframe 안 선택까지, 비밀번호 칸은 거절, 잘라내기는 읽기와 지우기를 한 번에).
+  - 입력은 `CDPClient.post` 로 부른 순서 그대로 보낸다. 사람이 연 새 탭은 따라가고 사람 제어 중에는 그 탭을 유지한다.
+- 아직 없는 것: 칩 메뉴(브라우저 끄기·로그인 템플릿으로 저장·빈 프로필로 초기화), 마우스를 올렸을 때 미리보기, 앱이 꺼져 있을 때 닫힌 화면의 브라우저 정리
+  (데몬이 맡아야 한다 — 지금은 엔진이 12시간 쉬면 끝남), 후보 창 정확한 자리, 데몬이 브라우저를 미리 띄우기(Codex 기본 샌드박스용).
+- 시험: `swift test --filter BrowserCoreTests`(CDP·screencast·좌표·입력 변환·상태 파일 읽기), `BrowserPaneWorkspaceTests`(예전 브라우저 잎 빼기),
+  `BrowserBindingTests`. 실제 확인은 위 "시험 앱은 반드시 LaunchServices 로 띄운다" 절차로 띄운 시험 앱에서 `ctl send <화면> 'abx open …'` 뒤
+  시험 명령: `browser-open [화면 ID 앞부분]`(⇧⌘B 와 같음)·`browsers`(화면마다 상태, 열린 창마다 주인·보임·스트림·프레임 수·제어·페이지 크기)·
+  `action browser-take`·`action browser-give`·`browser-click <css x> <css y>`·`browser-keys <글>`(`\r` = Enter)·`browser-ime 조합|…|확정`·
+  `browser-resize <너비> <높이>`. 시험 앱 창이 다른 창에 가려지면 스트림이 멈추는 것이 정상이다.
 
 ## 터미널 그리기 성능
 

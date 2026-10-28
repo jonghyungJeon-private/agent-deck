@@ -11,6 +11,11 @@ final class BrowserPaneView: NSView {
     let owner: String
     private let header = NSTextField(labelWithString: "")
     private let controlButton = NSButton(title: "", target: nil, action: nil)
+    private let pinButton = NSButton(title: "항상 위", target: nil, action: nil)
+    /// 창에 넣었을 때: "항상 위" 를 누르면(켜짐 여부)
+    var onPin: ((Bool) -> Void)? {
+        didSet { pinButton.isHidden = onPin == nil }
+    }
     private let screen = BrowserScreenView()
     private let placeholder = NSTextField(wrappingLabelWithString: "")
     private var feed: BrowserFeed?
@@ -20,6 +25,9 @@ final class BrowserPaneView: NSView {
     private var requesting = false
     /// 마지막 프레임의 페이지 크기(CSS 픽셀) — 칸의 점을 페이지 좌표로 바꿀 때
     private(set) var viewport: CGSize = .zero
+    /// 칸에 보이는 탭의 주소·제목(사람이 검색·이동하면 abx 의 기록보다 이것이 새것)
+    private var page: (url: String, title: String)?
+    private var lastStatus: AbxStatus?
 
     init(owner: String, frame: NSRect) {
         self.owner = owner
@@ -37,19 +45,27 @@ final class BrowserPaneView: NSView {
         controlButton.target = self
         controlButton.action = #selector(toggleControl)
         controlButton.isHidden = true
+        pinButton.bezelStyle = .inline
+        pinButton.controlSize = .small
+        pinButton.font = .systemFont(ofSize: TermAppearance.scaled(11))
+        pinButton.setButtonType(.pushOnPushOff)
+        pinButton.target = self
+        pinButton.action = #selector(togglePin)
+        pinButton.isHidden = true
+        pinButton.toolTip = "다른 창보다 항상 위에 두기"
         screen.pane = self
-        screen.wantsLayer = true
-        screen.layer?.contentsGravity = .resizeAspect
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textDim
-        for view in [header, controlButton, screen, placeholder] {
+        for view in [header, pinButton, controlButton, screen, placeholder] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         NSLayoutConstraint.activate([
             header.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            header.trailingAnchor.constraint(lessThanOrEqualTo: controlButton.leadingAnchor, constant: -8),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: pinButton.leadingAnchor, constant: -8),
+            pinButton.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
+            pinButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -6),
             controlButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             controlButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             screen.topAnchor.constraint(equalTo: controlButton.bottomAnchor, constant: 3),
@@ -120,14 +136,31 @@ final class BrowserPaneView: NSView {
         guard feed == nil else { return }
         let feed = BrowserFeed(owner: owner)
         feed.onState = { [weak self] state in self?.show(state) }
+        feed.onPage = { [weak self] url, title in
+            self?.page = (url, title)
+            if let status = self?.lastStatus { self?.show(.live(status)) }
+        }
         feed.onImage = { [weak self] image, viewport in
-            self?.screen.layer?.contents = image
             self?.viewport = viewport
+            self?.screen.show(image, viewport: viewport)
             self?.placeholder.isHidden = true
             self?.framesShown += 1
         }
         self.feed = feed
         feed.start()
+        feed.fit(to: screen.bounds.size)
+    }
+
+    /// 브라우저 크기를 칸에 맞춘다(창을 끌어 크기를 바꾸는 동안은 모았다가 한 번)
+    private var fitWork: DispatchWorkItem?
+    func screenResized() {
+        fitWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.feed?.fit(to: self.screen.bounds.size)
+        }
+        fitWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     private func stopFeed() {
@@ -142,9 +175,10 @@ final class BrowserPaneView: NSView {
             header.stringValue = "브라우저"
             placeholder.stringValue = text
             placeholder.isHidden = false
-            screen.layer?.contents = nil
+            screen.show(nil, viewport: viewport)
             setControl(nil)
         case .live(let status):
+            lastStatus = status
             let control: String
             switch status.control {
             case .agent: control = "AI 작업 중"
@@ -152,11 +186,11 @@ final class BrowserPaneView: NSView {
             case .switching: control = "넘겨받는 중… (AI 가 하던 동작이 끝나길 기다림)"
             case .idle: control = "쉬는 중"
             }
-            let tab = status.activeTab
+            let shown = page ?? status.activeTab.map { ($0.url, $0.title) }
             let tabs = status.tabs.count > 1 ? " · 탭 \(status.tabs.count)개" : ""
             // 제목이 없는 페이지는 Chrome 이 주소를 제목으로 준다 — 같으면 한 번만
-            let title = tab.flatMap { tab in tab.url.contains(tab.title) ? nil : tab.title }
-            header.stringValue = [control, title, tab?.url].compactMap { $0?.isEmpty == false ? $0 : nil }
+            let title = shown.flatMap { $0.0.contains($0.1) ? nil : $0.1 }
+            header.stringValue = [control, title, shown?.0].compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: " · ") + tabs
             setControl(status.control)
         }
@@ -191,6 +225,10 @@ final class BrowserPaneView: NSView {
             feed.takeControl(completion: done)
             window?.makeFirstResponder(screen)
         }
+    }
+
+    @objc private func togglePin() {
+        onPin?(pinButton.state == .on)
     }
 
     /// 메뉴·시험 명령용
@@ -265,6 +303,51 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     private var tracking: NSTrackingArea?
 
     override var isFlipped: Bool { true } // 위가 0(페이지 좌표와 같은 방향)
+
+    /// 프레임을 그리는 층. 뷰 자신의 층(AppKit 이 관리 — 기본은 늘려 채움)이 아니라 따로 둔 층에,
+    /// 비율을 지킨 자리(ViewportTransform.imageRect — 마우스 좌표 변환과 같은 자리)를 직접 정해 그린다.
+    private let imageLayer = CALayer()
+    private var imageViewport: CGSize = .zero
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        imageLayer.contentsGravity = .resize // 자리를 이미 비율대로 정했으니 그 자리에 꼭 맞게
+        imageLayer.magnificationFilter = .linear
+        layer?.addSublayer(imageLayer)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 새 프레임(없으면 지움)
+    func show(_ image: CGImage?, viewport: CGSize) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true) // 프레임마다 서서히 바뀌는 효과 없이
+        imageLayer.contents = image
+        if viewport != imageViewport {
+            imageViewport = viewport
+            placeImage()
+        }
+        CATransaction.commit()
+    }
+
+    private func placeImage() {
+        imageLayer.frame = ViewportTransform(bounds: bounds.size, viewport: imageViewport).imageRect
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        placeImage()
+        CATransaction.commit()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed { pane?.screenResized() }
+    }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -450,6 +533,8 @@ final class BrowserFeed {
     var onState: ((State) -> Void)?
     /// 그릴 그림과 그 프레임의 페이지 크기(CSS 픽셀)
     var onImage: ((CGImage, CGSize) -> Void)?
+    /// 보고 있는 탭의 주소·제목이 바뀜
+    var onPage: ((String, String) -> Void)?
 
     private let session: AbxSession
     private let watchDirs: [String]
@@ -471,6 +556,9 @@ final class BrowserFeed {
     private var control: AbxStatus.Control?
     /// 돌려주는 중(abx resume 을 보냄)
     private var releasing = false
+    /// 칸 크기(브라우저 페이지를 이 크기로 맞춘다). 아주 작은 칸은 최소 크기로
+    private var size: CGSize?
+    static let minimumSize = CGSize(width: 320, height: 240)
     /// 사람이 조작하다 연 탭 — 사람이 제어하는 동안은 abx 가 기억한 활성 탭보다 이것을 보여 준다
     private var userTarget: String?
 
@@ -501,6 +589,7 @@ final class BrowserFeed {
     func stop() {
         onState = nil
         onImage = nil
+        onPage = nil
         queue.async { [self] in
             stopped = true
             timer?.cancel()
@@ -544,17 +633,18 @@ final class BrowserFeed {
     private func refresh() {
         guard !stopped, let runner else { return }
         watchNewDirs()
-        guard let status = try? runner.status(session) else {
-            publish(.waiting("브라우저 상태를 읽지 못했어요"))
-            return
-        }
+        // 상태는 abx 를 띄우지 않고 파일로 읽는다(AbxStateReader — abx status --json 과 같은 규칙)
+        let status = AbxStateReader().status(session)
         guard status.running, let url = status.cdpUrl else {
             disconnect()
             publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았어요\n(이 화면의 claude·codex 가 abx 를 쓰면 여기에 보여요)"))
             return
         }
+        let wasControlled = control == .agent || control == .switching
         control = status.control
         if control != .user { userTarget = nil }
+        // AI 가 쥐고 있는 동안 미뤄 둔 크기 맞추기를 이제 한다
+        if wasControlled, control == .user || control == .idle { applySize() }
         publish(.live(status))
         if url != connectedURL { connect(url, status: status) }
         else { follow(userTarget ?? status.activeTab?.targetId) }
@@ -583,6 +673,11 @@ final class BrowserFeed {
                 client.onEvent = { [weak self, weak stream] event in
                     if stream?.handle(event) == true { return }
                     if event.method == "Target.targetCreated" { self?.queue.async { self?.opened(event.params) } }
+                    if event.method == "Target.targetInfoChanged", let info = event.params["targetInfo"] as? [String: Any],
+                       let target = info["targetId"] as? String, target == stream?.currentTarget {
+                        let url = info["url"] as? String ?? "", title = info["title"] as? String ?? ""
+                        DispatchQueue.main.async { self?.onPage?(url, title) }
+                    }
                 }
                 client.onClose = { [weak self, weak client] in
                     self?.queue.async {
@@ -606,10 +701,12 @@ final class BrowserFeed {
     private func follow(_ target: String?) {
         guard let stream else { return }
         if let target, stream.currentTarget == target { return }
-        Task {
+        Task { [weak self] in
             guard let pages = await stream.pages(),
                   let pick = ScreencastStream.choose(wanted: target, current: stream.currentTarget, open: pages) else { return }
+            let changed = stream.currentTarget != pick
             try? await stream.show(target: pick)
+            if changed { self?.queue.async { self?.showing(pick) } }
         }
     }
 
@@ -620,7 +717,10 @@ final class BrowserFeed {
               let target = info["targetId"] as? String, let stream,
               info["openerId"] as? String == stream.currentTarget else { return }
         userTarget = target
-        Task { try? await stream.show(target: target) }
+        Task { [weak self] in
+            try? await stream.show(target: target)
+            self?.queue.async { self?.showing(target) }
+        }
     }
 
     // MARK: - 사람 입력·제어
@@ -639,6 +739,42 @@ final class BrowserFeed {
         queue.async { [self] in stream?.post(method, params) }
     }
 
+    /// 브라우저 페이지 크기를 칸에 맞춘다(지금 보는 탭의 창). 탭을 옮겨 가거나 다시 붙으면 또 맞춘다.
+    func fit(to size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        queue.async { [self] in
+            self.size = CGSize(width: max(size.width, Self.minimumSize.width), height: max(size.height, Self.minimumSize.height))
+            applySize()
+        }
+    }
+
+    /// AI 가 입력을 쥐고 있는 동안(잠금·넘기는 중)은 페이지 크기를 바꾸지 않는다 — AI 가 본 화면 배치·좌표가
+    /// 동작 도중에 바뀌지 않게. 그동안 그림만 창에 맞춰 줄이고 늘리며, 사람 차례·쉬는 중이 되면 맞춘다.
+    private func applySize() {
+        guard let stream, let size, stream.currentTarget != nil, control == .user || control == .idle else { return }
+        let session = self.session
+        Task {
+            // abx 의 writer 자리를 잡고 크기를 바꾼다: 그동안 에이전트 동작은 시작하지 않고, 잡은 뒤 제어를 다시 보아
+            // (그새 resume 등) AI 차례면 바꾸지 않는다 — 늦게 도착한 크기 변경이 AI 의 화면 배치를 바꾸지 않게.
+            guard let lease = AbxWriterLease.acquire(stateDir: session.stateDir, session: session.name) else { return }
+            defer { lease.release() }
+            let now = AbxStateReader().status(session).control
+            guard now == .user || now == .idle else { return }
+            await stream.fit(to: size)
+        }
+    }
+
+    /// 보는 탭이 바뀌었다: 크기를 맞추고 주소·제목을 알린다
+    private func showing(_ target: String) {
+        applySize()
+        guard let stream else { return }
+        Task { [weak self] in
+            guard let info = await stream.info(target: target),
+                  stream.currentTarget == target else { return } // 그새 다른 탭으로 옮겼으면 버린다(옛 주소가 덮지 않게)
+            DispatchQueue.main.async { self?.onPage?(info.url, info.title) }
+        }
+    }
+
     func evaluate(_ expression: String, completion: @escaping (Any?) -> Void) {
         queue.async { [self] in
             guard let stream else { return }
@@ -651,7 +787,7 @@ final class BrowserFeed {
 
     /// 제어 가져오기 = `abx handoff`. 에이전트가 하던 동작이 다음 단계에서 멈출 때까지 기다릴 수 있다(그동안 상태는 switching).
     func takeControl(completion: @escaping () -> Void) {
-        abx(["handoff", "사용자가 브라우저를 직접 조작하는 중 — 끝나면 abx resume"], timeout: 330, completion: completion)
+        abx(["handoff", BrowserIndicator.takeMessage], timeout: 330, completion: completion)
     }
 
     /// AI 에게 돌려주기 = `abx resume`. 부른 순간부터 사람 입력을 버린다(resume 이 끝나고 상태를 다시 읽기 전에도).
