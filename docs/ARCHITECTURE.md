@@ -151,6 +151,35 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   올라간 작업을 어떻게 다루는지는 실측하지 못했다(허락 안 됨 경로를 재현하지 못했고, Dock 강제 종료는 사람이 눌러야 한다).
 - 확인: `launchctl print gui/$UID/<이름>`(state·pid), 데몬 `ps -o ppid` 가 1. 이름은 `term/dev.agentdeck.daemon.plist` 의 `Label`.
 
+## 브라우저 화면(1단계: 보기만)
+
+에이전트가 `abx`(agent-browser 저장소 `packages/abx`)로 쓰는 브라우저를 터미널 옆 화면에서 본다. 설계·검증: agent-browser 저장소의
+`research/agent-deck-browser-pane.md`·`research/M0-agentdeck-report.md`.
+
+- **화면 하나 = 브라우저 하나.** 데몬이 모든 화면 셸에 `ABX_*` 환경 변수를 넣는다(`TermWire/BrowserBinding`): 세션 이름 `ad-<화면 ID 앞 12자리>`,
+  소켓 `term/abx/`(경로가 길어 유닉스 소켓 한도 104바이트를 넘으면 `<TMPDIR>/agentdeck-abx-<term 경로 해시>`), 상태 `term/abx/state/`, 프로필 `term/abx-profiles/<세션>`, 로그인 템플릿 `term/abx-profiles/template`(있으면 새 프로필을 복사해 시작),
+  창 없이(`ABX_HEADLESS=1`), 사람 입력 잠금(`ABX_LOCK_INPUT=1`), 페이지 위 잠금 배너 끔(`ABX_LOCK_BANNER=0`), 브라우저 실행 파일은
+  `AGENTDECK_BROWSER` → `~/.abx/browsers/<버전>/` 의 Chrome for Testing(가장 높은 버전) → 없으면 abx 가 고른다.
+  화면 ID 로만 정해지므로 되살린 화면은 같은 브라우저·같은 프로필(로그인 유지)을 쓴다. 브라우저는 그 셸의 claude·codex 가 `abx` 를 처음 쓸 때 뜬다.
+  이미 떠 있던 데몬이 띄운 셸에는 이 값이 없다(데몬을 새로 띄운 뒤 연 화면부터).
+- **열기:** 셸 메뉴 "브라우저 보기"(⇧⌘B) — 지금 화면(에이전트) 오른쪽에 `browser:<UUID>` 잎을 나눠 넣는다(`Workspace.browsers[잎] = BrowserRecipe(owner:)`).
+  이미 있으면 그 화면으로 간다. 편집기처럼 데몬 목록과 상관없이 두고(reconcile), 주인 화면이 없어지면 함께 뺀다(꺼진 화면이면 남긴다).
+  닫기(⌘W)는 보기만 닫는다 — 브라우저·에이전트는 그대로.
+- **보기:** `BrowserPaneView` 가 보일 때만 `BrowserFeed` 를 돌린다 — 화면에 놓였고(`TerminalHostController.render` 의 attach/detach)
+  창이 가려지지 않았고(occlusion) 앱이 숨지 않았을 때. 보기만 하는 칸이라 키보드는 받아서 버린다(고른 채 친 글이 옆 터미널로 가지 않게).
+  - 상태: `abx status --json`(파일만 읽고 브라우저를 띄우지 않는다) — abx 폴더(소켓·상태·프로필) 변경을 감시하고, 폴더가 아직 없을 수 있어 3초마다도 읽는다.
+    abx 실행 파일은 `AGENTDECK_ABX` → 앱 묶음 `Contents/Helpers/abx` → PATH·`~/.local/bin` 의 `abx`.
+  - 화면: 상태의 CDP 주소(프로필의 `DevToolsActivePort`)에 앱이 직접 붙어(`BrowserCore/CDPClient`, URLSession WebSocket)
+    abx 가 마지막으로 본 활성 탭(`targetId`)을 따라(그 탭이 이미 닫혔으면 보던 탭·첫 페이지) `Page.startScreencast`(JPEG q75, 최대 1440×900). 프레임은 받자마자 확인(ack)하고,
+    백그라운드에서 풀고, 밀리면 최신 것만 그린다(`LatestFrameQueue`). 프레임은 데몬을 거치지 않는다(터미널 연결과 섞지 않게).
+  - 머리 줄: 제어 상태(AI 작업 중·사용자에게 넘김·넘기는 중·쉬는 중)·탭 제목·주소·탭 수.
+  - 탭을 바꾸는 중에 다른 탭·멈춤이 오면 세대 번호로 늦게 붙은 연결을 뗀다. 붙는 중에 칸이 사라져도 열린 WebSocket 은 닫는다.
+- 아직 없는 것: 사람 입력(마우스·키보드·한글), 제어 가져오기/돌려주기 버튼, handoff 알림, viewport 고정, 로그인 템플릿 만들기 UI, 데몬이 브라우저를 미리 띄우기(Codex 기본 샌드박스용).
+- 시험: `swift test --filter BrowserCoreTests`(가짜 통로로 요청·응답 짝·오류·끊김·시간 초과, screencast 붙기·ack·남의 프레임 무시, 좌표·여백, 프레임 큐),
+  `BrowserPaneWorkspaceTests`(reconcile·저장·주인과 함께 빠짐), `BrowserBindingTests`(이름·경로·소켓 길이·CfT 찾기).
+  실제 확인은 위 "시험 앱은 반드시 LaunchServices 로 띄운다" 절차로 띄운 시험 앱에서 `ctl send <화면> 'abx open …'` 뒤 `action browser`,
+  시험 명령 `browsers`(칸마다 주인·놓임·창 보임·스트림·받은 프레임 수). 시험 앱 창이 다른 창에 가려지면 스트림이 멈추는 것이 정상이다.
+
 ## 터미널 그리기 성능
 
 기본은 CoreText/CoreGraphics 다. 세대 번호가 바뀌어도 셀 내용·폭·색/스타일/밑줄·payload 와 행 표시 상태가

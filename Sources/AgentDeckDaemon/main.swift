@@ -318,6 +318,8 @@ final class Daemon {
         env["COLORTERM"] = "truecolor"
         env["TERM_PROGRAM"] = "AgentDeck"
         env[AgentDeckEnv.name("PANE")] = id
+        // 이 화면의 브라우저(abx 세션). 셸에서 띄운 claude·codex 가 `abx` 를 쓰면 이 브라우저를 쓴다
+        for (key, value) in BrowserBinding.environment(pane: id) { env[key] = value }
         // 예전 이름(앱을 예전 화면 안에서 띄웠으면 남아 있다)은 빼서 다른 화면 ID 로 읽히지 않게
         env.removeValue(forKey: AgentDeckEnv.legacyName("PANE"))
         // Finder 로 띄운 앱에는 LANG 이 없다. 없으면 한글이 깨지므로 지금 언어 설정으로 채운다.

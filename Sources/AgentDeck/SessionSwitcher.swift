@@ -7,7 +7,8 @@ extension TermModel {
             tab.root.panes.map { id in
                 let row = row(id)
                 let path = workspace.editors[id]?.path
-                let folder = path.map { ($0 as NSString).deletingLastPathComponent } ?? row?.cwd ?? ""
+                let owner = workspace.browsers[id].flatMap { self.row($0.owner) } // 브라우저 화면은 주인의 폴더
+                let folder = path.map { ($0 as NSString).deletingLastPathComponent } ?? row?.cwd ?? owner?.cwd ?? ""
                 let state: String
                 switch row?.status {
                 case .waiting?: state = "waiting"

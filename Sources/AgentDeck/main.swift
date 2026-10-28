@@ -111,6 +111,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return model.host?.navigator.canGoBack ?? false
         case "nav-forward":
             return model.host?.navigator.canGoForward ?? false
+        case "browser":
+            // 에이전트(셸) 화면에서만 — 편집기·브라우저 화면에는 브라우저가 없다
+            return model.selectedId.map { !LocalPane.isLocal($0) } ?? false
         case "extract-pane":
             return (model.workspace.selectedTab?.root.panes.count ?? 0) > 1
         case "move-tab:left":
@@ -193,6 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(shell, "새 탭", "new-tab", "t")
         addAction(shell, "오른쪽으로 나누기", "split-right", "d")
         addAction(shell, "아래로 나누기", "split-down", "d", [.command, .shift])
+        addAction(shell, "브라우저 보기", "browser", "b", [.command, .shift])
         shell.addItem(.separator())
         addAction(shell, "화면 닫기", "close", "w")
         addAction(shell, "탭 닫기", "close-tab", "w", [.command, .option])
@@ -276,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ShortcutKey(17, .command): "new-tab",
             ShortcutKey(2, .command): "split-right",
             ShortcutKey(2, [.command, .shift]): "split-down",
+            ShortcutKey(11, [.command, .shift]): "browser",
             ShortcutKey(13, .command): "close",
             ShortcutKey(13, [.command, .option]): "close-tab",
             ShortcutKey(33, .command): "previous-split",
@@ -904,14 +909,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 isARepeat: false, keyCode: codes[key] ?? 0) {
                 NSApp.sendEvent(event)
             }
+        case "browsers":
+            // 브라우저 화면: 주인 화면 앞 4자·화면에 놓임·창이 보임·스트림 도는 중·받은 프레임 수
+            for (id, view) in model.host?.browserViews ?? [:] {
+                print("browser \(id.dropFirst(BrowserPane.prefix.count).prefix(4)) \(view.debugState)")
+            }
+            print("browsers end")
+            fflush(stdout)
         case "tabs":
-            // 탭 순서·분할 나무(화면 ID 앞 4자 — 편집기는 파일 이름, ~ = 미리보기, * = 포커스, > = 고른 탭)
+            // 탭 순서·분할 나무(화면 ID 앞 4자 — 편집기는 파일 이름, ~ = 미리보기, browser(주인) = 브라우저, * = 포커스, > = 고른 탭)
             func describe(_ node: SplitNode, _ focused: String) -> String {
                 switch node {
                 case .pane(let id):
                     let name = model.workspace.editors[id].map {
                         ($0.path as NSString).lastPathComponent + ($0.isPreview ? "~" : "")
-                    } ?? String(id.prefix(4))
+                    } ?? model.workspace.browsers[id].map { "browser(" + $0.owner.prefix(4) + ")" } ?? String(id.prefix(4))
                     return name + (id == focused ? "*" : "")
                 case .split(let axis, _, let first, let second):
                     return "(" + describe(first, focused) + (axis == .horizontal ? " | " : " / ") + describe(second, focused) + ")"

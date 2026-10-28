@@ -26,9 +26,12 @@ let package = Package(
         .target(name: "TermLayout"),
         // 가벼운 편집기의 화면 없는 부분: 줄 diff(git 변경 표시), 줄 끝·바이너리 판별·안전한 저장, 글자 색 훑기
         .target(name: "EditorCore"),
+        // 브라우저 칸의 화면 없는 부분: CDP 연결·screencast·abx 상태 읽기·좌표 변환
+        .target(name: "BrowserCore"),
         .executableTarget(name: "AgentDeck", dependencies: [
-            "TermWire", "SessionCore", "TermLayout", "EditorCore", .product(name: "SwiftTerm", package: "SwiftTerm"),
+            "TermWire", "SessionCore", "TermLayout", "EditorCore", "BrowserCore", .product(name: "SwiftTerm", package: "SwiftTerm"),
         ]),
+        .testTarget(name: "BrowserCoreTests", dependencies: ["BrowserCore"]),
         .testTarget(name: "TermWireTests", dependencies: ["TermWire"]),
         .testTarget(name: "TermLayoutTests", dependencies: ["TermLayout"]),
         .testTarget(name: "EditorCoreTests", dependencies: ["EditorCore"]),

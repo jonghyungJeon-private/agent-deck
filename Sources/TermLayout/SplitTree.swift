@@ -349,6 +349,32 @@ public struct EditorRecipe: Codable, Equatable {
     public var isPreview: Bool { preview == true }
 }
 
+/// 브라우저 화면(데몬 화면이 아님). 분할 나무의 잎에 "browser:<UUID>" 로 들어간다.
+/// 에이전트 화면(owner) 하나의 브라우저(abx 세션)를 보여 준다. 편집기처럼 데몬 목록과 상관없이 두고,
+/// 주인 화면이 없어지면 함께 뺀다.
+public enum BrowserPane {
+    public static let prefix = "browser:"
+
+    public static func isBrowser(_ id: String) -> Bool { id.hasPrefix(prefix) }
+
+    public static func newId() -> String { prefix + UUID().uuidString }
+}
+
+/// 브라우저 화면을 다시 열 때 필요한 것
+public struct BrowserRecipe: Codable, Equatable {
+    /// 브라우저를 쓰는 에이전트 화면(데몬 화면 id). abx 세션 이름은 이것으로 정해진다.
+    public var owner: String
+
+    public init(owner: String) {
+        self.owner = owner
+    }
+}
+
+/// 데몬이 붙잡지 않는 화면(편집기·브라우저): 데몬 목록에 없어도 지우거나 되살리지 않는다
+public enum LocalPane {
+    public static func isLocal(_ id: String) -> Bool { EditorPane.isEditor(id) || BrowserPane.isBrowser(id) }
+}
+
 /// 끌어 온 탭·화면을 놓을 곳
 public enum PaneDrop: Equatable {
     /// target 화면을 나눠 direction 쪽에
@@ -371,13 +397,15 @@ public struct Workspace: Codable, Equatable {
     public var dormant: Set<String> = []
     /// 편집기 화면별 파일
     public var editors: [String: EditorRecipe] = [:]
+    /// 브라우저 화면별 주인
+    public var browsers: [String: BrowserRecipe] = [:]
 
     public init(tabs: [TabState] = [], selected: String? = nil) {
         self.tabs = tabs
         self.selected = selected
     }
 
-    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors }
+    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors, browsers }
 
     // 예전 배치 파일(되살리기 정보 없음)도 읽는다
     public init(from decoder: Decoder) throws {
@@ -389,8 +417,10 @@ public struct Workspace: Codable, Equatable {
         daemonInstance = try c.decodeIfPresent(String.self, forKey: .daemonInstance)
         dormant = try c.decodeIfPresent(Set<String>.self, forKey: .dormant) ?? []
         editors = try c.decodeIfPresent([String: EditorRecipe].self, forKey: .editors) ?? [:]
-        // 파일 정보가 없는 편집기 잎은 열 수 없으니 뺀다(망가진 파일)
+        browsers = try c.decodeIfPresent([String: BrowserRecipe].self, forKey: .browsers) ?? [:]
+        // 파일 정보가 없는 편집기 잎·주인이 없는 브라우저 잎은 열 수 없으니 뺀다(망가진 파일)
         for pane in allPanes where EditorPane.isEditor(pane) && editors[pane] == nil { remove(pane: pane) }
+        for pane in allPanes where BrowserPane.isBrowser(pane) && browsers[pane] == nil { remove(pane: pane) }
         if !tabs.contains(where: { $0.id == selected }) { selected = tabs.first?.id }
     }
 
@@ -515,6 +545,15 @@ public struct Workspace: Codable, Equatable {
         recipes[pane] = nil
         dormant.remove(pane)
         editors[pane] = nil
+        browsers[pane] = nil
+    }
+
+    /// 브라우저 화면(나무 순서)
+    public var browserPanes: [String] { allPanes.filter(BrowserPane.isBrowser) }
+
+    /// 그 에이전트 화면의 브라우저를 보여 주는 화면
+    public func browserPane(owner: String) -> String? {
+        browserPanes.first { browsers[$0]?.owner == owner }
     }
 
     /// 편집기 화면(나무 순서)
@@ -529,7 +568,7 @@ public struct Workspace: Codable, Equatable {
     /// - 같은 데몬에서 사라진 화면(셸·claude 가 끝남)은 뺀다. keep 은 아직 만드는 중이라 둔다.
     /// - 데몬이 바뀌었으면(daemonPid 가 다름) 사라진 화면 중 되살리기 정보가 있는 것은 꺼진 화면으로 남긴다.
     /// - 어느 탭에도 없는 화면은 새 탭으로 붙인다.
-    /// - 편집기 화면(EditorPane)은 데몬과 상관없으니 그대로 둔다.
+    /// - 편집기·브라우저 화면(LocalPane)은 데몬과 상관없으니 그대로 둔다. 단 브라우저 화면은 주인 화면이 없어지면 함께 뺀다.
     @discardableResult
     public mutating func reconcile(live: [String], keep: Set<String> = [], ignore: Set<String> = [],
                                    daemonPid: Int32? = nil, daemonInstance: String? = nil) -> Bool {
@@ -543,7 +582,7 @@ public struct Workspace: Codable, Equatable {
         }
         if let daemonPid { self.daemonPid = daemonPid }
         if let daemonInstance { self.daemonInstance = daemonInstance }
-        for pane in allPanes where !liveSet.contains(pane) && !keep.contains(pane) && !EditorPane.isEditor(pane) {
+        for pane in allPanes where !liveSet.contains(pane) && !keep.contains(pane) && !LocalPane.isLocal(pane) {
             if dormant.contains(pane) { continue }
             if restarted, recipes[pane] != nil {
                 dormant.insert(pane)
@@ -552,12 +591,17 @@ public struct Workspace: Codable, Equatable {
             }
         }
         dormant.subtract(liveSet) // 되살아난 화면
+        for pane in browserPanes {
+            let owner = browsers[pane]?.owner ?? ""
+            if !allPanes.contains(owner) && !dormant.contains(owner) { forget(pane: pane) }
+        }
         let placed = Set(allPanes)
-        for pane in live where !placed.contains(pane) && !ignore.contains(pane) && !EditorPane.isEditor(pane) {
+        for pane in live where !placed.contains(pane) && !ignore.contains(pane) && !LocalPane.isLocal(pane) {
             tabs.append(TabState(root: .pane(pane), focused: pane))
         }
         recipes = recipes.filter { placed.contains($0.key) || liveSet.contains($0.key) }
         editors = editors.filter { placed.contains($0.key) }
+        browsers = browsers.filter { placed.contains($0.key) }
         if selectedIndex == nil || !tabs.contains(where: { $0.id == selected }) {
             selected = tabs.first?.id
         }

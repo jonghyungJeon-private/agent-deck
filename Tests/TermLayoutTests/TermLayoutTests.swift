@@ -352,3 +352,58 @@ final class TabMoveTests: XCTestCase {
         XCTAssertEqual(decoded.selected, id)
     }
 }
+
+final class BrowserPaneWorkspaceTests: XCTestCase {
+    /// 탭 하나: A(에이전트) | 브라우저(주인 A), 다른 탭: B
+    private func workspaceWithBrowser() -> (Workspace, String) {
+        let browser = BrowserPane.newId()
+        var workspace = Workspace(tabs: [
+            TabState(id: "t1", root: SplitNode.pane("A").splitting("A", with: browser, axis: .horizontal), focused: browser),
+            TabState(id: "t2", root: .pane("B"), focused: "B"),
+        ], selected: "t1")
+        workspace.browsers[browser] = BrowserRecipe(owner: "A")
+        return (workspace, browser)
+    }
+
+    func testReconcileKeepsBrowserWhileOwnerLivesOrSleeps() {
+        var (workspace, browser) = workspaceWithBrowser()
+        workspace.recipes["A"] = PaneRecipe(cwd: "/tmp")
+        workspace.reconcile(live: ["A", "B"], daemonPid: 1)
+        XCTAssertTrue(workspace.allPanes.contains(browser))
+        XCTAssertNil(workspace.recipes[browser])
+        // 데몬이 바뀌어 주인이 꺼진 화면이 되어도 브라우저 화면은 남는다(되살리면 같은 브라우저)
+        workspace.reconcile(live: ["B"], daemonPid: 2)
+        XCTAssertTrue(workspace.dormant.contains("A"))
+        XCTAssertTrue(workspace.allPanes.contains(browser))
+        XCTAssertFalse(workspace.dormant.contains(browser))
+        XCTAssertEqual(workspace.browserPane(owner: "A"), browser)
+    }
+
+    func testBrowserGoesWithItsOwner() {
+        var (workspace, browser) = workspaceWithBrowser()
+        workspace.reconcile(live: ["A", "B"], daemonPid: 1)
+        workspace.reconcile(live: ["B"], daemonPid: 1) // 같은 데몬에서 A 가 끝남
+        XCTAssertFalse(workspace.allPanes.contains("A"))
+        XCTAssertFalse(workspace.allPanes.contains(browser))
+        XCTAssertNil(workspace.browsers[browser])
+        XCTAssertEqual(workspace.allPanes, ["B"])
+        // 데몬이 브라우저 ID 를 알려 와도 새 탭으로 붙지 않는다
+        workspace.reconcile(live: ["B", "browser:ghost"], daemonPid: 1)
+        XCTAssertEqual(workspace.tabs.count, 1)
+    }
+
+    func testPersistenceAndBrokenBrowserLeaves() throws {
+        let (workspace, browser) = workspaceWithBrowser()
+        let decoded = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(workspace))
+        XCTAssertEqual(decoded, workspace)
+        XCTAssertEqual(decoded.browsers[browser], BrowserRecipe(owner: "A"))
+        var broken = workspace
+        broken.browsers[browser] = nil
+        let repaired = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(broken))
+        XCTAssertFalse(repaired.allPanes.contains(browser))
+        XCTAssertEqual(repaired.tabs[0].focused, "A")
+        // browsers 가 없는 예전 파일
+        let old = #"{"tabs":[{"id":"t","root":{"pane":{"_0":"A"}},"focused":"A","zoomed":false}],"selected":"t"}"#
+        XCTAssertEqual(try JSONDecoder().decode(Workspace.self, from: Data(old.utf8)).browsers, [:])
+    }
+}

@@ -831,6 +831,9 @@ final class TermModel: ObservableObject {
 
     /// 분할 테두리 제목(탭·목록과 같은 이름). 편집기는 파일 이름, 저장 안 했으면 뒤에 ●.
     func paneLabel(_ id: String) -> String {
+        if let owner = workspace.browsers[id]?.owner {
+            return "브라우저 · " + (row(owner)?.title ?? "…")
+        }
         if EditorPane.isEditor(id) {
             let name = workspace.editors[id].map { ($0.path as NSString).lastPathComponent } ?? "…"
             return editors.isDirty(id) ? name + " ●" : name
@@ -840,7 +843,7 @@ final class TermModel: ObservableObject {
 
     /// 이름 바꾸기(빈 칸이면 자동 이름으로 돌아간다)
     func rename(pane id: String) {
-        guard !EditorPane.isEditor(id), let row = row(id) else { return }
+        guard !LocalPane.isLocal(id), let row = row(id) else { return }
         let alert = NSAlert()
         alert.messageText = "이름 바꾸기"
         alert.informativeText = "탭·목록·분할 테두리에 함께 보입니다. 비우면 자동 이름(첫 질문으로 지은 제목)으로 돌아갑니다."
@@ -960,7 +963,32 @@ final class TermModel: ObservableObject {
     /// 지금 화면의 폴더(편집기면 그 파일이 있는 폴더) — 새 탭·분할이 여기서 열린다
     var focusedCwd: String? {
         if let id = selectedId, let path = workspace.editors[id]?.path { return (path as NSString).deletingLastPathComponent }
+        if let id = selectedId, let owner = workspace.browsers[id]?.owner { return row(owner)?.cwd }
         return focusedRow?.cwd
+    }
+
+    // MARK: - 브라우저
+
+    /// 지금 에이전트 화면의 브라우저를 오른쪽에 나눠 보인다(이미 보이면 그 화면으로).
+    /// 브라우저는 그 화면의 claude·codex 가 `abx` 를 쓸 때 뜬다(BrowserBinding).
+    func openBrowser() {
+        guard let owner = selectedId, !LocalPane.isLocal(owner), let index = workspace.selectedIndex else {
+            NSSound.beep()
+            return
+        }
+        if let existing = workspace.browserPane(owner: owner) {
+            focus(pane: existing)
+            host?.focusPane()
+            return
+        }
+        let id = BrowserPane.newId()
+        var next = workspace
+        next.browsers[id] = BrowserRecipe(owner: owner)
+        var tab = next.tabs[index]
+        tab.root = tab.root.splitting(owner, with: id, axis: .horizontal)
+        tab.zoomed = false
+        next.tabs[index] = tab // 포커스는 에이전트 화면에 둔다(계속 입력할 수 있게)
+        setWorkspace(next, render: true)
     }
 
     // MARK: - 편집기
@@ -1089,6 +1117,13 @@ final class TermModel: ObservableObject {
     func close(pane id: String, confirm: Bool = true) {
         if EditorPane.isEditor(id) {
             closeEditor(id, confirm: confirm)
+            return
+        }
+        if BrowserPane.isBrowser(id) {
+            // 보기만 닫는다 — 브라우저·에이전트는 그대로(다시 열면 이어 본다)
+            var next = workspace
+            next.forget(pane: id)
+            setWorkspace(next, render: true)
             return
         }
         let row = row(id)
@@ -1221,6 +1256,7 @@ final class TermModel: ObservableObject {
         case "new-tab": newPane()
         case "split-right": newPane(split: .horizontal)
         case "split-down": newPane(split: .vertical)
+        case "browser": openBrowser()
         case "close": closeFocused()
         case "close-tab": closeTab()
         case "rename": renameFocused()

@@ -1,0 +1,98 @@
+import Foundation
+
+/// 화면(에이전트) 하나 = 브라우저(abx 세션) 하나. 데몬은 화면 셸에 이 환경 변수를 넣고, 앱은 같은 값으로
+/// 그 브라우저를 찾아 보여 준다. 화면 ID 로만 정해지므로 되살린 화면(같은 ID)은 같은 브라우저·같은 프로필을 쓴다.
+/// 브라우저는 에이전트가 처음 `abx` 를 쓸 때 창 없이 뜬다(그 전에는 아무것도 띄우지 않는다).
+public enum BrowserBinding {
+    /// abx 세션 이름: "ad-" + 화면 ID 앞 12자리(48비트 — 화면 수백 개에서도 겹칠 일이 없고, 소켓 이름은 짧게)
+    public static func sessionName(pane: String) -> String {
+        "ad-" + String(pane.lowercased().filter(\.isHexDigit).prefix(12))
+    }
+
+    /// 가장 긴 소켓 이름(`<세션>.lock.sock`)
+    static let longestSocketName = "ad-" + String(repeating: "0", count: 12) + ".lock.sock"
+    /// 유닉스 소켓 경로 한도(sun_path 104바이트, 끝의 NUL 포함)
+    static let socketPathLimit = 104
+
+    /// 엔진·잠금 소켓이 있는 곳. 보통은 `term/abx`, 경로가 길어 소켓 한도를 넘으면(긴 계정 이름·AGENTDECK_TERM_HOME)
+    /// 임시 폴더의 짧은 경로(`<TMPDIR>/agentdeck-abx-<term 경로 해시>`)를 쓴다.
+    public static func socketDir(termDir: URL = TermPaths.home, temporary: String = NSTemporaryDirectory()) -> URL {
+        let preferred = termDir.appendingPathComponent("abx", isDirectory: true)
+        if fits(preferred) { return preferred }
+        let short = URL(fileURLWithPath: temporary, isDirectory: true)
+            .appendingPathComponent("agentdeck-abx-" + hash(termDir.path), isDirectory: true)
+        return fits(short) ? short : URL(fileURLWithPath: "/tmp/agentdeck-abx-" + hash(termDir.path), isDirectory: true)
+    }
+
+    static func fits(_ dir: URL) -> Bool {
+        (dir.path + "/" + longestSocketName).utf8.count < socketPathLimit
+    }
+
+    /// FNV-1a 64 앞 12자리(데몬 작업 이름과 같은 방식)
+    static func hash(_ text: String) -> String {
+        var value: UInt64 = 0xcbf29ce484222325
+        for byte in text.utf8 { value = (value ^ UInt64(byte)) &* 0x100000001b3 }
+        return String(String(value, radix: 16).leftPadding(16).prefix(12))
+    }
+
+    /// abx 상태 파일(활성 탭·handoff·잠금 소유) — 소켓과 달리 길이 한도가 없어 늘 term 아래
+    public static func stateDir(termDir: URL = TermPaths.home) -> URL {
+        termDir.appendingPathComponent("abx/state", isDirectory: true)
+    }
+
+    /// 브라우저 프로필(로그인 유지)
+    public static func profileDir(pane: String, termDir: URL = TermPaths.home) -> URL {
+        profilesDir(termDir: termDir).appendingPathComponent(sessionName(pane: pane), isDirectory: true)
+    }
+
+    /// 로그인 템플릿: 있으면 새 프로필을 여기서 복사해 시작한다(abx `ABX_PROFILE_TEMPLATE`)
+    public static func templateDir(termDir: URL = TermPaths.home) -> URL {
+        profilesDir(termDir: termDir).appendingPathComponent("template", isDirectory: true)
+    }
+
+    static func profilesDir(termDir: URL) -> URL {
+        termDir.appendingPathComponent("abx-profiles", isDirectory: true)
+    }
+
+    /// 화면 셸에 넣을 값. 브라우저는 창 없이(앱의 브라우저 화면으로 본다), 사람 입력은 잠근 채로 띄운다(배너 없이).
+    public static func environment(pane: String, termDir: URL = TermPaths.home,
+                                   browser: String? = chromeForTesting()) -> [String: String] {
+        let socketDir = socketDir(termDir: termDir)
+        var env = [
+            "ABX_SESSION": sessionName(pane: pane),
+            "ABX_SOCKET_DIR": socketDir.path,
+            "ABX_STATE_DIR": stateDir(termDir: termDir).path,
+            "ABX_PROFILE_DIR": profileDir(pane: pane, termDir: termDir).path,
+            "ABX_PROFILE_TEMPLATE": templateDir(termDir: termDir).path,
+            "ABX_HEADLESS": "1",
+            "ABX_LOCK_INPUT": "1",
+            // 잠금 상태는 브라우저 화면 머리 줄에 보인다. 페이지 위 배너(회색 덮개)는 화면 그림에 섞이므로 끈다
+            "ABX_LOCK_BANNER": "0",
+        ]
+        if let browser { env["ABX_BROWSER"] = browser }
+        return env
+    }
+
+    /// 브라우저 실행 파일: `AGENTDECK_BROWSER` → `~/.abx/browsers/<버전>/` 의 Chrome for Testing(가장 높은 버전).
+    /// 없으면 nil(abx·엔진이 설치된 Chrome 등을 찾는다).
+    public static func chromeForTesting(environment: [String: String] = ProcessInfo.processInfo.environment,
+                                        home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String? {
+        let fm = FileManager.default
+        if let path = environment[AgentDeckEnv.name("BROWSER")], fm.isExecutableFile(atPath: path) { return path }
+        let root = home.appendingPathComponent(".abx/browsers")
+        let versions = ((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
+            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
+        for version in versions {
+            let path = root.appendingPathComponent(version)
+                .appendingPathComponent("chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing").path
+            if fm.isExecutableFile(atPath: path) { return path }
+        }
+        return nil
+    }
+}
+
+private extension String {
+    func leftPadding(_ width: Int) -> String {
+        count >= width ? self : String(repeating: "0", count: width - count) + self
+    }
+}
