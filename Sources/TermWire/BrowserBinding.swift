@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// 화면(에이전트) 하나 = 브라우저(abx 세션) 하나. 데몬은 화면 셸에 이 환경 변수를 넣고, 앱은 같은 값으로
@@ -57,8 +58,10 @@ public enum BrowserBinding {
     /// 화면 셸에 넣을 값. 브라우저는 창 없이(앱의 브라우저 화면으로 본다), 사람 입력은 잠근 채로 띄운다(배너 없이).
     /// 브라우저 실행 파일은 abx 가 처음 띄울 때 고른다: `browser`(AGENTDECK_BROWSER) → 앱이 받아 확인한 Chrome for Testing
     /// (`ABX_BROWSERS_DIR`, 이미 쓴 세션은 그 브라우저 그대로) → 엔진이 찾는 Chrome.
+    /// `display`: 브라우저가 그릴 가상 화면(`ABX_BROWSER_ARGS` 의 `--screen-info`, abx 가 띄울 때 쓴다).
     public static func environment(pane: String, termDir: URL = TermPaths.home, browser: String? = explicitBrowser(),
-                                   browsersDir: URL = BrowserBinding.browsersDir()) -> [String: String] {
+                                   browsersDir: URL = BrowserBinding.browsersDir(),
+                                   display: Display? = mainDisplay()) -> [String: String] {
         let socketDir = socketDir(termDir: termDir)
         var env = [
             "ABX_SESSION": sessionName(pane: pane),
@@ -73,7 +76,35 @@ public enum BrowserBinding {
             "ABX_LOCK_BANNER": "0",
         ]
         if let browser { env["ABX_BROWSER"] = browser }
+        if let display { env["ABX_BROWSER_ARGS"] = screenInfo(display) }
         return env
+    }
+
+    /// 화면 하나(픽셀 크기와 배율)
+    public struct Display: Equatable {
+        public var pixelWidth: Int
+        public var pixelHeight: Int
+        public var scale: Double
+
+        public init(pixelWidth: Int, pixelHeight: Int, scale: Double) {
+            self.pixelWidth = pixelWidth
+            self.pixelHeight = pixelHeight
+            self.scale = scale
+        }
+    }
+
+    /// 이 Mac 의 주 화면. 창 없는 Chrome 은 기본으로 800×600·1배 화면에 그려서, 레티나 칸에 늘려 보이면 흐리고
+    /// 사이트는 작은 화면으로 안다 — 일반 Chrome 처럼 실제 화면 크기·배율로 그리게 한다. 모르면 nil(Chrome 기본값).
+    public static func mainDisplay() -> Display? {
+        guard let mode = CGDisplayCopyDisplayMode(CGMainDisplayID()), mode.width > 0, mode.height > 0 else { return nil }
+        return Display(pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight, scale: Double(mode.pixelWidth) / Double(mode.width))
+    }
+
+    /// Chrome `--screen-info={<픽셀 폭>x<픽셀 높이> devicePixelRatio=<배율>}` (논리 화면 = 픽셀 ÷ 배율)
+    public static func screenInfo(_ display: Display) -> String {
+        let scale = (display.scale * 100).rounded() / 100
+        let ratio = scale == scale.rounded() ? String(Int(scale)) : String(scale)
+        return "--screen-info={\(display.pixelWidth)x\(display.pixelHeight) devicePixelRatio=\(ratio)}"
     }
 
     /// 앱이 받아 두는 브라우저(Chrome for Testing) 폴더. abx 개발용 설치와 같은 곳을 함께 쓴다(시험용으로 AGENTDECK_BROWSERS_DIR).

@@ -556,9 +556,12 @@ final class BrowserFeed {
     private var control: AbxStatus.Control?
     /// 돌려주는 중(abx resume 을 보냄)
     private var releasing = false
-    /// 칸 크기(브라우저 페이지를 이 크기로 맞춘다). 아주 작은 칸은 최소 크기로
+    /// 브라우저 페이지 크기(칸 크기에서 `BrowserViewOptions.pageSize`)와 그 바탕인 칸 크기
     private var size: CGSize?
-    static let minimumSize = CGSize(width: 320, height: 240)
+    private var paneSize: CGSize?
+    /// 선명도·데스크톱 유지(설정 창에서 바꾸면 알림으로 받는다)
+    private var options = BrowserViewSettings.shared.options
+    private var optionsObserver: NSObjectProtocol?
     /// 사람이 조작하다 연 탭 — 사람이 제어하는 동안은 abx 가 기억한 활성 탭보다 이것을 보여 준다
     private var userTarget: String?
 
@@ -567,6 +570,26 @@ final class BrowserFeed {
         session = AbxSession(name: env["ABX_SESSION"]!, socketDir: env["ABX_SOCKET_DIR"]!,
                              stateDir: env["ABX_STATE_DIR"]!, profileDir: env["ABX_PROFILE_DIR"]!)
         watchDirs = [session.socketDir, session.stateDir, session.profileDir]
+        optionsObserver = NotificationCenter.default.addObserver(forName: BrowserViewSettings.changed, object: nil, queue: nil) {
+            [weak self] note in
+            guard let options = note.object as? BrowserViewOptions else { return }
+            self?.queue.async { self?.apply(options) }
+        }
+    }
+
+    /// 설정이 바뀜: 선명도는 screencast 를 다시 시작해(다시 붙어) 바로, 데스크톱 유지는 크기를 다시 맞춰 바로 반영
+    private func apply(_ new: BrowserViewOptions) {
+        guard !stopped, new != options else { return }
+        let old = options
+        options = new
+        if new.keepDesktop != old.keepDesktop, let paneSize {
+            size = new.pageSize(for: paneSize)
+            applySize()
+        }
+        if new.screencast != old.screencast, connectedURL != nil {
+            disconnect()
+            refresh()
+        }
     }
 
     func start() {
@@ -590,6 +613,7 @@ final class BrowserFeed {
         onState = nil
         onImage = nil
         onPage = nil
+        if let optionsObserver { NotificationCenter.default.removeObserver(optionsObserver) }
         queue.async { [self] in
             stopped = true
             timer?.cancel()
@@ -669,7 +693,7 @@ final class BrowserFeed {
                 self.connecting = false
                 guard let transport else { return } // 다음 상태 읽기에서 다시 시도
                 let client = CDPClient(transport: transport)
-                let stream = ScreencastStream(client: client)
+                let stream = ScreencastStream(client: client, settings: self.options.screencast)
                 client.onEvent = { [weak self, weak stream] event in
                     if stream?.handle(event) == true { return }
                     if event.method == "Target.targetCreated" { self?.queue.async { self?.opened(event.params) } }
@@ -691,7 +715,8 @@ final class BrowserFeed {
                 self.stream = stream
                 self.connectedURL = url
                 client.post("Target.setDiscoverTargets", ["discover": true])
-                self.follow(status.activeTab?.targetId)
+                // 다시 붙을 때(선명도 바꿈 등) 사람이 보던 탭이 있으면 그것을 계속 본다
+                self.follow(self.userTarget ?? status.activeTab?.targetId)
             }
         }
     }
@@ -743,7 +768,8 @@ final class BrowserFeed {
     func fit(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
         queue.async { [self] in
-            self.size = CGSize(width: max(size.width, Self.minimumSize.width), height: max(size.height, Self.minimumSize.height))
+            paneSize = size
+            self.size = options.pageSize(for: size)
             applySize()
         }
     }

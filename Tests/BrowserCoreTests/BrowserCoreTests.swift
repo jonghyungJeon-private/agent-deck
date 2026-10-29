@@ -623,3 +623,32 @@ final class ChromeImportTests: XCTestCase {
         XCTAssertNil(params[1]["expires"])
     }
 }
+
+final class BrowserViewOptionsTests: XCTestCase {
+    func testScreencastCapsBySharpness() {
+        XCTAssertEqual(BrowserViewOptions().screencast, ScreencastSettings(quality: 85, maxWidth: 2560, maxHeight: 1600))
+        XCTAssertEqual(BrowserViewOptions(sharpness: .standard).screencast, ScreencastSettings(quality: 75, maxWidth: 1440, maxHeight: 900))
+        XCTAssertEqual(BrowserViewOptions(sharpness: .max).screencast.maxWidth, 3840)
+    }
+
+    func testPageSizeKeepsDesktopWidthAndPaneRatio() {
+        let plain = BrowserViewOptions()
+        XCTAssertEqual(plain.pageSize(for: CGSize(width: 1937, height: 1083)), CGSize(width: 1937, height: 1083))
+        XCTAssertEqual(plain.pageSize(for: CGSize(width: 600, height: 400)), CGSize(width: 600, height: 400))
+        XCTAssertEqual(plain.pageSize(for: CGSize(width: 100, height: 50)), CGSize(width: 320, height: 240))
+        let desktop = BrowserViewOptions(keepDesktop: true)
+        // 좁은 칸: 폭 1024 로, 칸 비율 그대로(그림은 칸에 꼭 맞게 줄어든다)
+        XCTAssertEqual(desktop.pageSize(for: CGSize(width: 512, height: 400)), CGSize(width: 1024, height: 800))
+        XCTAssertEqual(desktop.pageSize(for: CGSize(width: 1400, height: 900)), CGSize(width: 1400, height: 900))
+    }
+
+    func testUnknownValuesFallBackToDefaults() throws {
+        let decoded = try JSONDecoder().decode(BrowserViewOptions.self, from: Data(#"{"sharpness":"ultra","keepDesktop":true}"#.utf8))
+        XCTAssertEqual(decoded, BrowserViewOptions(sharpness: .sharp, keepDesktop: true))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertEqual(BrowserViewOptions.load(from: url), BrowserViewOptions())
+        try BrowserViewOptions(sharpness: .max).data()!.write(to: url)
+        XCTAssertEqual(BrowserViewOptions.load(from: url).sharpness, .max)
+    }
+}

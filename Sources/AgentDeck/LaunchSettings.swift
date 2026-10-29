@@ -138,6 +138,7 @@ struct SettingsView: View {
 private struct ConnectionsSection: View {
     @ObservedObject var model: TermModel
     @ObservedObject var importer: ChromeImportModel
+    @ObservedObject var view = BrowserViewSettings.shared
     let openChromeImport: () -> Void
 
     var body: some View {
@@ -175,6 +176,23 @@ private struct ConnectionsSection: View {
                 skillRow
                 RowDivider()
                 chromeRow
+                RowDivider()
+                StatusRow(title: "선명도", detail: "브라우저는 화면 배율(레티나 2배)로 그리고, 화면 칸에는 이 크기까지 받아 보입니다. 열린 화면에도 바로 적용됩니다") {
+                    Picker("", selection: $view.options.sharpness) {
+                        Text("표준 · 1440까지(가벼움)").tag(BrowserViewOptions.Sharpness.standard)
+                        Text("선명 · 2560까지").tag(BrowserViewOptions.Sharpness.sharp)
+                        Text("최고 · 3840까지(무거움)").tag(BrowserViewOptions.Sharpness.max)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 200)
+                }
+                RowDivider()
+                StatusRow(title: "데스크톱 화면 유지", detail: "칸이 좁아도 폭 1024 이상의 데스크톱 화면으로 그리고 줄여 보입니다(끄면 좁은 칸에서 사이트가 모바일 화면으로 바뀔 수 있음)") {
+                    Toggle("", isOn: $view.options.keepDesktop)
+                        .labelsHidden()
+                        .toggleStyle(TintedSwitch(onColor: TermAppearance.accent))
+                }
                 RowDivider()
                 StatusRow(title: "Chrome 로그인 가져오기",
                           detail: "Chrome 에서 고른 사이트의 로그인(쿠키)을 에이전트 브라우저로 — 비밀번호는 가져오지 않습니다",
@@ -260,11 +278,11 @@ private struct ConnectionsSection: View {
     }
 }
 
-/// 이름 + 설명 + 상태(색) | 오른쪽 단추
+/// 이름 + 설명 + 상태(색, 없으면 생략) | 오른쪽 조작
 private struct StatusRow<Action: View>: View {
     let title: String
     let detail: String
-    let status: (String, NSColor)
+    var status: (String, NSColor)?
     @ViewBuilder let action: Action
 
     var body: some View {
@@ -277,11 +295,13 @@ private struct StatusRow<Action: View>: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(Color(TermAppearance.textDim))
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 5) {
-                    Circle().fill(Color(status.1)).frame(width: 6, height: 6)
-                    Text(status.0).foregroundStyle(Color(status.1)).fixedSize(horizontal: false, vertical: true)
+                if let status {
+                    HStack(spacing: 5) {
+                        Circle().fill(Color(status.1)).frame(width: 6, height: 6)
+                        Text(status.0).foregroundStyle(Color(status.1)).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.system(size: 11))
                 }
-                .font(.system(size: 11))
             }
             Spacer(minLength: 8)
             action

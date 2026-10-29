@@ -38,6 +38,17 @@ final class BrowserBindingTests: XCTestCase {
         XCTAssertNil(BrowserBinding.explicitBrowser(environment: [:]))
     }
 
+    /// 브라우저는 실제 화면 크기·배율로 그린다(레티나 칸에서 흐리지 않게, 사이트가 800×600 으로 알지 않게)
+    func testBrowserDrawsAtTheDisplaysScale() {
+        let retina = BrowserBinding.Display(pixelWidth: 3456, pixelHeight: 2234, scale: 2)
+        XCTAssertEqual(BrowserBinding.environment(pane: "A", browser: nil, display: retina)["ABX_BROWSER_ARGS"],
+                       "--screen-info={3456x2234 devicePixelRatio=2}")
+        XCTAssertEqual(BrowserBinding.screenInfo(.init(pixelWidth: 2880, pixelHeight: 1800, scale: 1.5)),
+                       "--screen-info={2880x1800 devicePixelRatio=1.5}")
+        // 화면을 모르면 넣지 않는다(Chrome 기본값)
+        XCTAssertNil(BrowserBinding.environment(pane: "A", browser: nil, display: nil)["ABX_BROWSER_ARGS"])
+    }
+
     func testShimRunsTheAppsAbx() throws {
         let term = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: term) }
