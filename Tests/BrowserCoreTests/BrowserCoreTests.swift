@@ -640,11 +640,15 @@ final class BrowserViewOptionsTests: XCTestCase {
         // 좁은 칸: 폭 1024 로, 칸 비율 그대로(그림은 칸에 꼭 맞게 줄어든다)
         XCTAssertEqual(desktop.pageSize(for: CGSize(width: 512, height: 400)), CGSize(width: 1024, height: 800))
         XCTAssertEqual(desktop.pageSize(for: CGSize(width: 1400, height: 900)), CGSize(width: 1400, height: 900))
+        // 해상도를 정하면 칸 크기와 상관없이 그 크기(데스크톱 유지보다 앞선다)
+        let fixed = BrowserViewOptions(resolution: .r1920x1080, keepDesktop: true)
+        XCTAssertEqual(fixed.pageSize(for: CGSize(width: 512, height: 400)), CGSize(width: 1920, height: 1080))
+        XCTAssertEqual(fixed.pageSize(for: CGSize(width: 2400, height: 1400)), CGSize(width: 1920, height: 1080))
     }
 
     func testUnknownValuesFallBackToDefaults() throws {
-        let decoded = try JSONDecoder().decode(BrowserViewOptions.self, from: Data(#"{"sharpness":"ultra","keepDesktop":true}"#.utf8))
-        XCTAssertEqual(decoded, BrowserViewOptions(sharpness: .sharp, keepDesktop: true))
+        let decoded = try JSONDecoder().decode(BrowserViewOptions.self, from: Data(#"{"sharpness":"ultra","resolution":"8k","keepDesktop":true}"#.utf8))
+        XCTAssertEqual(decoded, BrowserViewOptions(sharpness: .sharp, resolution: .fit, keepDesktop: true))
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         defer { try? FileManager.default.removeItem(at: url) }
         XCTAssertEqual(BrowserViewOptions.load(from: url), BrowserViewOptions())

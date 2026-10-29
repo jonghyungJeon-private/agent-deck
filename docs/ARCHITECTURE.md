@@ -169,8 +169,9 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   `ABX_BROWSER_ARGS="--screen-info={<픽셀 폭>x<픽셀 높이> devicePixelRatio=<배율>}"`(주 화면, `BrowserBinding.mainDisplay`)로
   일반 Chrome 처럼 실제 화면 크기·배율로 그리게 한다(abx 가 launch.json 에 남기고 띄울 때 엔진 `AGENT_BROWSER_ARGS` 로 넘김, 다음 실행부터 적용).
   페이지 크기는 지금처럼 칸(점)에 맞추고(`Browser.setWindowBounds`), 받는 그림 크기는 설정 → 브라우저 → 선명도(`term/browser-view.json`,
-  `BrowserViewOptions`): 표준 1440×900·품질 75 / 선명(기본) 2560×1600·85 / 최고 3840×2400·85. "데스크톱 화면 유지"를 켜면 칸이 폭
-  1024 보다 좁아도 칸 비율 그대로 폭 1024 로 그리고 줄여 보인다. 둘 다 열린 화면에 바로 적용(선명도는 screencast 를 다시 붙임).
+  `BrowserViewOptions`): 표준 1440×900·품질 75 / 선명(기본) 2560×1600·85 / 최고 3840×2400·85. 해상도: 칸에 맞춤(기본, 같은 크기의
+  Chrome 창과 같음) 또는 1280×800·1440×900·1920×1080 고정(그 크기로 그리고 칸에 비율 유지로 줄여 보임). "데스크톱 화면 유지"를 켜면
+  (칸에 맞춤일 때) 칸이 폭 1024 보다 좁아도 칸 비율 그대로 폭 1024 로 그리고 줄여 보인다. 모두 열린 화면에 바로 적용(선명도는 screencast 를 다시 붙임).
   사용자 에이전트(HeadlessChrome)·`navigator.webdriver` 는 그대로 둔다(에이전트 브라우저임을 숨기지 않음).
 - **`abx` 명령(앱에 든 abx):** 앱 묶음에 abx 단일 실행 파일과 엔진(`Contents/Helpers/abx`·`agent-browser`, bun --compile)과
   에이전트 안내(`Contents/Resources/abx/SKILL.md`, 넣은 판은 `VERSION`)가 든다(`scripts/build-term-proto.sh` 가 agent-browser 저장소에서 만들어 넣음).

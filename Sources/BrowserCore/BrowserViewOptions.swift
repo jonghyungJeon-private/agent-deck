@@ -12,12 +12,31 @@ public struct BrowserViewOptions: Codable, Equatable {
         case max
     }
 
+    /// 페이지 해상도(CSS 픽셀): 칸에 맞춤이거나, 정한 크기로 그리고 칸에 맞게 줄여(비율 유지) 보인다
+    public enum Resolution: String, Codable, CaseIterable {
+        case fit
+        case r1280x800 = "1280x800"
+        case r1440x900 = "1440x900"
+        case r1920x1080 = "1920x1080"
+
+        public var size: CGSize? {
+            switch self {
+            case .fit: return nil
+            case .r1280x800: return CGSize(width: 1280, height: 800)
+            case .r1440x900: return CGSize(width: 1440, height: 900)
+            case .r1920x1080: return CGSize(width: 1920, height: 1080)
+            }
+        }
+    }
+
     public var sharpness: Sharpness = .sharp
+    public var resolution: Resolution = .fit
     /// 칸이 좁아도 데스크톱 화면(폭 1024 이상)으로 그리고 그림을 줄여 보인다(좁으면 사이트가 모바일 화면으로 바뀌므로)
     public var keepDesktop = false
 
-    public init(sharpness: Sharpness = .sharp, keepDesktop: Bool = false) {
+    public init(sharpness: Sharpness = .sharp, resolution: Resolution = .fit, keepDesktop: Bool = false) {
         self.sharpness = sharpness
+        self.resolution = resolution
         self.keepDesktop = keepDesktop
     }
 
@@ -25,6 +44,7 @@ public struct BrowserViewOptions: Codable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         // 모르는 값(새 판에서 쓴 것)은 기본값으로
         sharpness = (try? c.decode(Sharpness.self, forKey: .sharpness)) ?? .sharp
+        resolution = (try? c.decode(Resolution.self, forKey: .resolution)) ?? .fit
         keepDesktop = (try? c.decode(Bool.self, forKey: .keepDesktop)) ?? false
     }
 
@@ -41,9 +61,10 @@ public struct BrowserViewOptions: Codable, Equatable {
     public static let minimumSize = CGSize(width: 320, height: 240)
     public static let desktopWidth: CGFloat = 1024
 
-    /// 칸 크기(점) → 브라우저 페이지 크기(CSS 픽셀). 아주 작은 칸은 최소 크기로, 데스크톱 유지면 폭 1024 까지
-    /// 칸 비율 그대로 키운다(여백 없이 줄여 보이게).
+    /// 칸 크기(점) → 브라우저 페이지 크기(CSS 픽셀). 해상도를 정했으면 그 크기, 아니면 칸 크기 — 아주 작은 칸은 최소 크기로,
+    /// 데스크톱 유지면 폭 1024 까지 칸 비율 그대로 키운다(여백 없이 줄여 보이게).
     public func pageSize(for pane: CGSize) -> CGSize {
+        if let fixed = resolution.size { return fixed }
         var size = pane
         if keepDesktop, size.width > 0, size.width < Self.desktopWidth {
             size = CGSize(width: Self.desktopWidth, height: (size.height * Self.desktopWidth / size.width).rounded())

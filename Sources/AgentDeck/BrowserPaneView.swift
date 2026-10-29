@@ -103,6 +103,7 @@ final class BrowserPaneView: NSView {
     var debugState: String {
         "owner=\(owner.prefix(4)) placed=\(placed) visible=\(windowVisible) streaming=\(feed != nil) frames=\(framesShown) "
             + "control=\(control?.rawValue ?? "-") viewport=\(Int(viewport.width))x\(Int(viewport.height))"
+            + " " + (feed?.debugSize ?? "")
     }
     private var observers: [NSObjectProtocol] = []
 
@@ -577,12 +578,12 @@ final class BrowserFeed {
         }
     }
 
-    /// 설정이 바뀜: 선명도는 screencast 를 다시 시작해(다시 붙어) 바로, 데스크톱 유지는 크기를 다시 맞춰 바로 반영
+    /// 설정이 바뀜: 선명도는 screencast 를 다시 시작해(다시 붙어) 바로, 해상도·데스크톱 유지는 크기를 다시 맞춰 바로 반영
     private func apply(_ new: BrowserViewOptions) {
         guard !stopped, new != options else { return }
         let old = options
         options = new
-        if new.keepDesktop != old.keepDesktop, let paneSize {
+        if let paneSize, new.pageSize(for: paneSize) != old.pageSize(for: paneSize) {
             size = new.pageSize(for: paneSize)
             applySize()
         }
@@ -738,9 +739,11 @@ final class BrowserFeed {
     /// 사람이 조작하다 연 새 탭(링크의 target=_blank 등)은 바로 따라간다.
     /// AI 가 연 탭은 abx 가 활성 탭으로 알려 주므로(상태) 여기서는 따라가지 않는다.
     private func opened(_ params: [String: Any]) {
+        // 붙자마자 Chrome 은 이미 있던 탭도 targetCreated 로 알린다 — 보던 탭이 정해지기 전(nil)이나 연 탭이 없는 탭(opener 없음)은
+        // 사람이 연 새 탭이 아니다(처음부터 사람 제어면 기존 빈 탭으로 옮겨 가 화면이 멈춘 것처럼 보였다)
         guard control == .user, let info = params["targetInfo"] as? [String: Any], info["type"] as? String == "page",
-              let target = info["targetId"] as? String, let stream,
-              info["openerId"] as? String == stream.currentTarget else { return }
+              let target = info["targetId"] as? String, let stream, let current = stream.currentTarget,
+              let opener = info["openerId"] as? String, opener == current else { return }
         userTarget = target
         Task { [weak self] in
             try? await stream.show(target: target)
@@ -764,6 +767,11 @@ final class BrowserFeed {
         queue.async { [self] in stream?.post(method, params) }
     }
 
+    /// 시험 명령 `browsers`: 맞추려는 크기와 설정
+    var debugSize: String {
+        queue.sync { "page=\(size.map { "\(Int($0.width))x\(Int($0.height))" } ?? "-") resolution=\(options.resolution.rawValue) sharpness=\(options.sharpness.rawValue)" }
+    }
+
     /// 브라우저 페이지 크기를 칸에 맞춘다(지금 보는 탭의 창). 탭을 옮겨 가거나 다시 붙으면 또 맞춘다.
     func fit(to size: CGSize) {
         guard size.width > 0, size.height > 0 else { return }
@@ -784,8 +792,9 @@ final class BrowserFeed {
             // (그새 resume 등) AI 차례면 바꾸지 않는다 — 늦게 도착한 크기 변경이 AI 의 화면 배치를 바꾸지 않게.
             guard let lease = AbxWriterLease.acquire(stateDir: session.stateDir, session: session.name) else { return }
             defer { lease.release() }
-            let now = AbxStateReader().status(session).control
-            guard now == .user || now == .idle else { return }
+            // 자리를 잡은 것은 이 앱이라, handoff 가 있으면 상태는 "넘기는 중"(writer 가 살아 있음)으로 읽힌다 — 그것도 사람 차례다
+            let now = AbxStateReader().status(session)
+            guard now.handoff != nil || now.control == .idle else { return }
             await stream.fit(to: size)
         }
     }

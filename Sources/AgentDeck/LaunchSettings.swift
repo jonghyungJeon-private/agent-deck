@@ -188,10 +188,24 @@ private struct ConnectionsSection: View {
                     .frame(width: 200)
                 }
                 RowDivider()
+                StatusRow(title: "해상도", detail: "사이트가 보는 화면 크기. 칸에 맞춤은 브라우저 창 크기 그대로(같은 크기의 Chrome 창과 같음), 정하면 그 크기로 그리고 창에 맞게 줄여 보입니다") {
+                    Picker("", selection: $view.options.resolution) {
+                        Text("칸에 맞춤").tag(BrowserViewOptions.Resolution.fit)
+                        Text("1280 × 800").tag(BrowserViewOptions.Resolution.r1280x800)
+                        Text("1440 × 900").tag(BrowserViewOptions.Resolution.r1440x900)
+                        Text("1920 × 1080").tag(BrowserViewOptions.Resolution.r1920x1080)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 200)
+                }
+                RowDivider()
                 StatusRow(title: "데스크톱 화면 유지", detail: "칸이 좁아도 폭 1024 이상의 데스크톱 화면으로 그리고 줄여 보입니다(끄면 좁은 칸에서 사이트가 모바일 화면으로 바뀔 수 있음)") {
                     Toggle("", isOn: $view.options.keepDesktop)
                         .labelsHidden()
                         .toggleStyle(TintedSwitch(onColor: TermAppearance.accent))
+                        .disabled(view.options.resolution != .fit)
+                        .opacity(view.options.resolution == .fit ? 1 : 0.4)
                 }
                 RowDivider()
                 StatusRow(title: "Chrome 로그인 가져오기",
