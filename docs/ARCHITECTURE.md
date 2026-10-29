@@ -478,6 +478,10 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
   - **hook**: `Stop` 입력에 `background_tasks`(그때 도는 일 — 상태 running·pending 만, 항목 `id`·`type`(`subagent`·`shell`·`monitor`·`workflow`·
     `teammate`·`cloud session`·`MCP task`·`dream`…)·`status`·`description`)가 온다(바이너리의 Stop 입력 만들기에서 `taskRegistry` 를 직렬화하는 것 확인,
     공식 문서 hooks "Stop input"). hook 이 이 목록을 기록(`background`)에 남긴다. `dream`·`auto-mode scan`·`memory import` 는 내부 정리라 뺀다.
+    **아티팩트 연결(monitor_ws)도 뺀다**: 세션이 아티팩트를 게시하면 Claude Code 가 그 댓글 감시·실시간 화면 연결을 세션 끝까지 열어 두고
+    Stop 목록에 `{"type":"monitor"}`(`command`·`server`·`tool` 없음, ID 는 `s` + 8자)로 넣는다. 맡긴 일이 아니고(Claude Code 의 백그라운드 대기
+    판단에도 들지 않는다) 끝났다는 파일도 남기지 않아, 세면 일이 다 끝나도 "오케스트레이션 중"이 남았다(2026-10-28 사용자 세션 4개).
+    새 hook 은 지켜보는 대상이 없는 monitor 를 목록에 넣지 않고, 이미 저장된 기록은 ID 규칙(`s` + 8자 monitor)으로 세지 않는다.
     에이전트 = subagent·teammate·workflow·cloud session, 백그라운드 = 셸·모니터·MCP 작업(모르는 종류 포함). 필드가 없는 예전 판은 예전 그대로(완료).
   - **끝남 확인(파일)**: 앱이 2초 목록 갱신 때, Stop 목록이 남은(완료·쉬는 중·입력 대기) 세션만 일마다 stat·작은 읽기 한두 번(새 타이머 없음).
     - 하위 에이전트: `~/.claude/projects/<폴더>/<세션>/subagents/agent-<id>.meta.json` 의 `"finished":true`(끝날 때 meta 를 고쳐 쓴다.
@@ -509,7 +513,7 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
   - 권한 요청 `Notification` 은 늦게 올 수 있어 `PermissionRequest` 로 바로 "입력 대기"로 바꾼다. 허락한 뒤에는 따로 오는 hook 이 없어,
     "입력 대기" 시각보다 2초 넘게 뒤에 대화 파일이 늘면 다시 일하는 것으로 보고 "작업 중"으로 바꾼다(추정).
   - "완료 → 쉬는 중"은 앱이 앞에 있고 그 화면을 고르고 있을 때만 바뀐다.
-  - 끝나지 않는 백그라운드 셸(개발 서버·`tail -f`·모니터)을 띄운 세션은 그것이 도는 동안 계속 오케스트레이션 중이고 완료로 알리지 않는다
+  - 끝나지 않는 백그라운드 셸(개발 서버·`tail -f`·사람이 띄운 모니터)을 띄운 세션은 그것이 도는 동안 계속 오케스트레이션 중이고 완료로 알리지 않는다
     (Claude Code 도 "백그라운드 일이 깨워 줄 때를 기다리는 중"으로 본다).
 
 아직 없는 것: 글꼴·색 설정.

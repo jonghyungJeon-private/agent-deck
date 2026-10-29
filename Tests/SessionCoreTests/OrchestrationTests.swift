@@ -51,11 +51,31 @@ final class OrchestrationTests: XCTestCase {
         try send(store, #"{"hook_event_name":"Stop","background_tasks":"weird"}"#)
         XCTAssertEqual(store.load(sid)?.state, "done")
         XCTAssertNil(store.load(sid)?.background)
-        try send(store, #"{"hook_event_name":"Stop","background_tasks":[7,{"type":"shell"},{"id":"c1","type":"monitor"}]}"#)
+        try send(store, #"{"hook_event_name":"Stop","background_tasks":[7,{"type":"shell"},{"id":"c1","type":"monitor","command":"tail -f log"}]}"#)
         XCTAssertEqual(store.load(sid)?.background, [BackgroundTask(id: "c1", type: "monitor")])
         // 새로 시작하면 지운다
         try send(store, #"{"hook_event_name":"SessionStart","source":"resume"}"#)
         XCTAssertNil(store.load(sid)?.background)
+    }
+
+    // MARK: - 아티팩트 연결(monitor_ws)은 일이 아니다
+
+    func testArtifactCommentMonitorIsNotWork() throws {
+        // 저장된 기록(ID 로 판단): "s" + 8자 monitor 는 세지 않는다. MCP 모니터("m…")·다른 모니터는 센다
+        XCTAssertEqual(BackgroundTask(id: "sfm2jlpfu", type: "monitor").kind, .ignored)
+        XCTAssertEqual(BackgroundTask(id: "m1a2b3c4d", type: "monitor").kind, .shell)
+        XCTAssertEqual(BackgroundTask(id: "c1", type: "monitor").kind, .shell)
+        // 새 hook: 지켜보는 대상이 없는 모니터는 목록에 넣지 않는다
+        let store = SessionStore(dir: dir.appendingPathComponent("sessions"))
+        try send(store, #"{"hook_event_name":"Stop","background_tasks":[{"id":"sq34blura","type":"monitor","status":"running","description":"Artifact comment monitor"},{"id":"a1","type":"subagent","status":"running"},{"id":"mabcdefgh","type":"monitor","status":"running","server":"x","tool":"y"}]}"#)
+        XCTAssertEqual(store.load(sid)?.background, [BackgroundTask(id: "a1", type: "subagent"), BackgroundTask(id: "mabcdefgh", type: "monitor")])
+    }
+
+    func testStuckRecordWithOnlyArtifactMonitorsGoesIdle() {
+        // 예전 기록: 세션은 끝났는데(idle) 아티팩트 연결만 남아 있다 → 오케스트레이션이 아니라 쉬는 중
+        let background = [BackgroundTask(id: "sdfzpxweo", type: "monitor")]
+        let work = BackgroundWork.inspect(background, transcriptPath: nil, sessionId: sid, stoppedAt: Date())
+        XCTAssertEqual(work, WorkStateRules.Background())
     }
 
     // MARK: - 파일로 끝남 확인
