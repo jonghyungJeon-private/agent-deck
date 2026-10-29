@@ -330,8 +330,9 @@ final class TermModel: ObservableObject {
         }
     }
 
-    /// 사이드바 "브라우저 연결하기": 없는 곳에 넣고, 이 앱이 넣은 예전 것은 바꾼다(직접 둔 것은 그대로)
-    func connectBrowserSkill() {
+    /// 사이드바 "브라우저 연결하기": 없는 곳에 넣고, 이 앱이 넣은 예전 것은 바꾼다(직접 둔 것은 그대로).
+    /// chrome: 전용 브라우저도 받는다(설정 창의 스킬 줄은 스킬만 넣는다).
+    func connectBrowserSkill(chrome: Bool = true) {
         let helpers = helpersURL
         skillQueue.async { [weak self] in
             var message: String?
@@ -355,7 +356,7 @@ final class TermModel: ObservableObject {
             DispatchQueue.main.async {
                 if let message { self?.notice = message }
                 self?.checkBrowserSkill()
-                self?.installBrowserChrome()
+                if chrome { self?.installBrowserChrome() }
             }
         }
     }
@@ -1522,7 +1523,7 @@ final class TermModel: ObservableObject {
 }
 
 /// 다른 스레드에서 보낸 값을 메인 스레드의 처리기로 넘긴다(처리기는 메인에서만 불린다)
-private final class MainThreadSink<Value: Sendable>: @unchecked Sendable {
+final class MainThreadSink<Value: Sendable>: @unchecked Sendable {
     private let handler: (Value) -> Void
     init(_ handler: @escaping (Value) -> Void) { self.handler = handler }
     func send(_ value: Value) { DispatchQueue.main.async { self.handler(value) } }

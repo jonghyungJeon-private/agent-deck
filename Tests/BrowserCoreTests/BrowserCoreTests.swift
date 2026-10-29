@@ -1,3 +1,6 @@
+import CommonCrypto
+import CryptoKit
+import SQLite3
 import XCTest
 @testable import BrowserCore
 
@@ -481,5 +484,142 @@ final class BrowserInstallerTests: XCTestCase {
         XCTAssertEqual(installer.state(), .unverified)
         try await installer.install()
         XCTAssertEqual(installer.state(), .installed)
+    }
+}
+
+final class ChromeImportTests: XCTestCase {
+    var root: URL!
+    let key = ChromeImport.deriveKey(password: Data("test-password".utf8))
+    override func setUpWithError() throws {
+        root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    }
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: root) }
+
+    /// Chrome 처럼 암호화(판 24 형식이면 SHA-256(host) 머리 붙임)
+    func encrypt(_ value: String, host: String, hashed: Bool = true) -> Data {
+        var plain = Data(value.utf8)
+        if hashed { plain = Data(SHA256.hash(data: Data(host.utf8))) + plain }
+        return Data("v10".utf8) + ChromeImport.aes(plain, key: key, operation: CCOperation(kCCEncrypt))!
+    }
+
+    /// 1970 초 → Chrome 시각(1601 부터 마이크로초)
+    func chromeTime(_ seconds: Double) -> Int64 { Int64((seconds + 11_644_473_600) * 1_000_000) }
+
+    /// file: 지금 Chrome 은 "Network/Cookies", 96 이전(또는 옮기고 남은 옛 파일)은 "Cookies"
+    @discardableResult
+    func makeProfile(_ name: String, file: String = "Network/Cookies",
+                     rows: [(host: String, name: String, value: Data, plain: String, expires: Double?, partition: String)]) throws -> URL {
+        let dir = root.appendingPathComponent(name)
+        let dbFile = dir.appendingPathComponent(file)
+        try FileManager.default.createDirectory(at: dbFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(dbFile.path, &db), SQLITE_OK)
+        defer { sqlite3_close(db) }
+        XCTAssertEqual(sqlite3_exec(db, """
+            CREATE TABLE cookies(creation_utc INTEGER, host_key TEXT, top_frame_site_key TEXT, name TEXT, value TEXT,
+              encrypted_value BLOB, path TEXT, expires_utc INTEGER, is_secure INTEGER, is_httponly INTEGER,
+              last_access_utc INTEGER, has_expires INTEGER, is_persistent INTEGER, priority INTEGER, samesite INTEGER)
+            """, nil, nil, nil), SQLITE_OK)
+        for row in rows {
+            var st: OpaquePointer?
+            sqlite3_prepare_v2(db, "INSERT INTO cookies VALUES(0,?,?,?,?,?,'/',?,1,1,0,?,?,1,1)", -1, &st, nil)
+            let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+            sqlite3_bind_text(st, 1, row.host, -1, transient)
+            sqlite3_bind_text(st, 2, row.partition, -1, transient)
+            sqlite3_bind_text(st, 3, row.name, -1, transient)
+            sqlite3_bind_text(st, 4, row.plain, -1, transient)
+            _ = row.value.withUnsafeBytes { sqlite3_bind_blob(st, 5, $0.baseAddress, Int32(row.value.count), transient) }
+            sqlite3_bind_int64(st, 6, row.expires.map(chromeTime) ?? 0)
+            sqlite3_bind_int(st, 7, row.expires == nil ? 0 : 1)
+            sqlite3_bind_int(st, 8, row.expires == nil ? 0 : 1)
+            XCTAssertEqual(sqlite3_step(st), SQLITE_DONE)
+            sqlite3_finalize(st)
+        }
+        return dir
+    }
+
+    func testProfilesSitesAndDecryption() throws {
+        let later = Date().timeIntervalSince1970 + 86_400
+        let profile = try makeProfile("Default", rows: [
+            (".charancha.com", "SESSION", encrypt("abc", host: ".charancha.com"), "", later, ""),
+            ("stg.charancha.com", "csrf", encrypt("x1", host: "stg.charancha.com", hashed: false), "", nil, ""), // 예전 형식·세션 쿠키
+            (".naver.com", "NID", encrypt("n", host: ".naver.com"), "", later, ""),
+            (".naver.com", "old", encrypt("gone", host: ".naver.com"), "", Date().timeIntervalSince1970 - 10, ""), // 만료
+            (".ads.example.co.kr", "p", encrypt("p", host: ".ads.example.co.kr"), "", later, "https://news.com"), // 분할
+            ("localhost", "plain", Data(), "visible", later, ""),
+        ])
+        _ = try makeProfile("Profile 1", rows: [])
+        try #"{"profile":{"info_cache":{"Default":{"name":"회사"},"Profile 1":{"name":"개인"}}}}"#
+            .write(to: root.appendingPathComponent("Local State"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(ChromeImport.profiles(root: root).map(\.name), ["회사", "개인"])
+
+        let sites = try ChromeImport.sites(profile: profile)
+        XCTAssertEqual(sites.map(\.id), ["charancha.com", "localhost", "naver.com"]) // 만료·분할은 세지 않는다
+        XCTAssertEqual(sites.first?.count, 2)
+
+        let picked = try ChromeImport.cookies(profile: profile, sites: ["charancha.com", "localhost"], key: key)
+        XCTAssertEqual(picked.skipped, 0)
+        let byName = Dictionary(uniqueKeysWithValues: picked.cookies.map { ($0.name, $0) })
+        XCTAssertEqual(Set(byName.keys), ["SESSION", "csrf", "plain"]) // 고르지 않은 naver 는 없다
+        XCTAssertEqual(byName["SESSION"]?.value, "abc")
+        XCTAssertEqual(byName["csrf"]?.value, "x1")
+        XCTAssertNil(byName["csrf"]?.expires)
+        XCTAssertEqual(byName["SESSION"]?.expires ?? 0, later, accuracy: 1)
+        XCTAssertEqual(byName["plain"]?.value, "visible")
+
+        // 키가 틀리면 풀지 못한 것으로 센다(엉뚱한 값을 넣지 않는다)
+        let wrong = try ChromeImport.cookies(profile: profile, sites: ["naver.com"], key: ChromeImport.deriveKey(password: Data("x".utf8)))
+        XCTAssertEqual(wrong.cookies, [])
+        XCTAssertEqual(wrong.skipped, 1)
+    }
+
+    /// Chrome 96 이 옮기고 남긴 옛 `Cookies` 가 있어도 지금 쓰는 `Network/Cookies` 를 읽는다(옛 파일엔 지금 로그인이 없다)
+    func testPrefersNetworkCookiesOverStaleFile() throws {
+        let far = Date().timeIntervalSince1970 + 86_400
+        try makeProfile("Default", file: "Cookies", rows: [(".naver.com", "NNB", encrypt("old", host: ".naver.com"), "", far, "")])
+        let profile = try makeProfile("Default", rows: [(".naver.com", "NID_AUT", encrypt("now", host: ".naver.com"), "", far, "")])
+        XCTAssertEqual(ChromeImport.profiles(root: root).map(\.id), ["Default"])
+        let got = try ChromeImport.cookies(profile: profile, sites: ["naver.com"], key: key)
+        XCTAssertEqual(got.cookies.map(\.name), ["NID_AUT"])
+        // 옛 위치만 있으면(96 이전) 그것을 읽는다
+        let old = try makeProfile("Profile 1", file: "Cookies", rows: [(".naver.com", "NNB", encrypt("old", host: ".naver.com"), "", far, "")])
+        XCTAssertEqual(try ChromeImport.cookies(profile: old, sites: ["naver.com"], key: key).cookies.map(\.name), ["NNB"])
+    }
+
+    func testSiteKeysAndCDPParams() {
+        // 도메인 쿠키가 정한 경계로 묶는다(공용 접미사를 짐작하지 않음)
+        let groups = ChromeImport.SiteGroups([".charancha.com", "stg.charancha.com", "www.charancha.com", "shop.co.nz", "bank.co.nz",
+                                              ".example.co.kr", "a.b.example.co.kr", "127.0.0.1", "localhost"])
+        XCTAssertEqual(groups.key("stg.charancha.com"), "charancha.com")
+        XCTAssertEqual(groups.key(".charancha.com"), "charancha.com")
+        XCTAssertEqual(groups.key("a.b.example.co.kr"), "example.co.kr")
+        XCTAssertEqual(groups.key("shop.co.nz"), "shop.co.nz") // 서로 다른 사이트는 합치지 않는다
+        XCTAssertEqual(groups.key("bank.co.nz"), "bank.co.nz")
+        XCTAssertEqual(groups.key("127.0.0.1"), "127.0.0.1")
+        XCTAssertEqual(groups.key("localhost"), "localhost")
+        // 세션 쿠키는 템플릿용으로만 기간을 준다
+        let now = Date(timeIntervalSince1970: 1_000)
+        let kept = ChromeImport.keepingSessions([.init(host: "a", name: "s", value: "1", path: "/", expires: nil, secure: false, httpOnly: false, sameSite: nil),
+                                                 .init(host: "a", name: "p", value: "2", path: "/", expires: 5_000, secure: false, httpOnly: false, sameSite: nil)],
+                                                for: 100, now: now)
+        XCTAssertEqual(kept.map(\.expires), [1_100, 5_000])
+        // HTTPS 에서 만든(Secure 속성은 없는) 호스트 전용 쿠키는 HTTPS 출처로, 출처 정보를 함께 넘긴다
+        let fromHTTPS = ChromeImport.cdpCookies([.init(host: "x.com", name: "c", value: "1", path: "/", expires: nil, secure: false,
+                                                       httpOnly: false, sameSite: nil, sourceScheme: "Secure", sourcePort: 443)])
+        XCTAssertEqual(fromHTTPS[0]["url"] as? String, "https://x.com/")
+        XCTAssertEqual(fromHTTPS[0]["sourceScheme"] as? String, "Secure")
+        XCTAssertEqual(fromHTTPS[0]["sourcePort"] as? Int, 443)
+        let params = ChromeImport.cdpCookies([
+            .init(host: ".naver.com", name: "a", value: "1", path: "/", expires: 2_000_000_000, secure: true, httpOnly: true, sameSite: "Lax"),
+            .init(host: "stg.charancha.com", name: "b", value: "2", path: "/app", expires: nil, secure: false, httpOnly: false, sameSite: nil),
+        ])
+        XCTAssertEqual(params[0]["domain"] as? String, ".naver.com")
+        XCTAssertNil(params[0]["url"])
+        XCTAssertEqual(params[0]["expires"] as? Double, 2_000_000_000)
+        XCTAssertEqual(params[0]["sameSite"] as? String, "Lax")
+        XCTAssertEqual(params[1]["url"] as? String, "http://stg.charancha.com/app") // 호스트 전용: 하위 도메인으로 퍼지지 않게
+        XCTAssertNil(params[1]["domain"])
+        XCTAssertNil(params[1]["expires"])
     }
 }

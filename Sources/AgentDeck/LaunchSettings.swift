@@ -1,4 +1,5 @@
 import AppKit
+import BrowserCore
 import SwiftUI
 import TermLayout
 import TermWire
@@ -44,14 +45,22 @@ final class LaunchSettings: ObservableObject {
 final class SettingsWindowController {
     private var window: NSWindow?
     private let settings: LaunchSettings
+    private let model: TermModel
+    private let chromeImport: ChromeImportWindowController
 
-    init(settings: LaunchSettings) { self.settings = settings }
+    init(settings: LaunchSettings, model: TermModel, chromeImport: ChromeImportWindowController) {
+        self.settings = settings
+        self.model = model
+        self.chromeImport = chromeImport
+    }
 
     var windowNumber: Int? { window?.windowNumber }
 
     func show() {
         if window == nil {
-            let host = NSHostingController(rootView: SettingsView(settings: settings).environment(\.colorScheme, .dark))
+            let chromeImport = self.chromeImport
+            let view = SettingsView(settings: settings, model: model, importer: chromeImport.model, openChromeImport: { chromeImport.show() })
+            let host = NSHostingController(rootView: view.environment(\.colorScheme, .dark))
             host.view.appearance = NSAppearance(named: .darkAqua)
             let window = NSWindow(contentViewController: host)
             window.title = "설정"
@@ -65,6 +74,9 @@ final class SettingsWindowController {
             window.setFrameAutosaveName("AgentDeckSettings")
             self.window = window
         }
+        // 열 때마다 연결 상태를 다시 본다(다른 곳에서 바꿨을 수 있다)
+        model.checkHooks()
+        model.checkBrowserSkill()
         if AgentDeckEnv.isOn("NO_ACTIVATE") {
             window?.orderFront(nil)
         } else {
@@ -84,10 +96,15 @@ final class SettingsWindowController {
 
 struct SettingsView: View {
     @ObservedObject var settings: LaunchSettings
+    let model: TermModel
+    let importer: ChromeImportModel
+    let openChromeImport: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                // 연결·브라우저는 따로 그린다(모델이 자주 바뀌어도 아래 옵션 칸은 다시 그리지 않게)
+                ConnectionsSection(model: model, importer: importer, openChromeImport: openChromeImport)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("새 세션 기본 옵션")
                         .font(.system(size: 15, weight: .semibold))
@@ -112,6 +129,164 @@ struct SettingsView: View {
         }
         .background(Color(TermAppearance.chrome))
         .tint(Color(TermAppearance.accent))
+    }
+}
+
+// MARK: - 연결·브라우저
+
+/// 연결(Claude Code·Codex hook)과 브라우저(abx 스킬·전용 브라우저·Chrome 로그인) — 사이드바 안내와 같은 동작을 한 곳에서
+private struct ConnectionsSection: View {
+    @ObservedObject var model: TermModel
+    @ObservedObject var importer: ChromeImportModel
+    let openChromeImport: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("연결")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                Text("Claude Code·Codex 와 브라우저를 이 앱에 잇습니다. 바꾼 것은 새로 시작하는 세션부터 적용됩니다.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(TermAppearance.textDim))
+            }
+            if let notice = model.notice {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: "info.circle")
+                    Text(notice).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button { model.notice = nil } label: { Image(systemName: "xmark") }.buttonStyle(.plain)
+                }
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color(TermAppearance.textDim))
+                .padding(.horizontal, 4)
+            }
+            SettingsCard(title: "에이전트", color: TermAppearance.accent) {
+                hookRow(title: "Claude Code", detail: "세션 이름·되살리기·작업 상태·알림 (~/.claude/settings.json 의 hook)",
+                        state: model.hookState, connect: model.connectHooks, disconnect: model.disconnectHooks)
+                RowDivider()
+                hookRow(title: "Codex", detail: "권한 요청·완료 알림 (~/.codex/hooks.json — 연결 후 Codex /hooks 에서 신뢰)",
+                        state: model.codexHookState, connect: model.connectCodexHooks, disconnect: model.disconnectCodexHooks)
+            }
+            SettingsCard(title: "브라우저", color: TermAppearance.green) {
+                if !model.daemonHasBrowser {
+                    WarningLine(text: "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜세요.")
+                }
+                skillRow
+                RowDivider()
+                chromeRow
+                RowDivider()
+                StatusRow(title: "Chrome 로그인 가져오기",
+                          detail: "Chrome 에서 고른 사이트의 로그인(쿠키)을 에이전트 브라우저로 — 비밀번호는 가져오지 않습니다",
+                          status: templateStatus) {
+                    Button("가져오기…", action: openChromeImport)
+                }
+            }
+        }
+    }
+
+    private func hookRow(title: String, detail: String, state: TermModel.HookState,
+                         connect: @escaping () -> Void, disconnect: @escaping () -> Void) -> some View {
+        let status: (String, NSColor) = {
+            switch state {
+            case .unknown: return ("확인 중", TermAppearance.textDim)
+            case .ok: return ("연결됨", TermAppearance.green)
+            case .missing: return ("연결 안 됨", TermAppearance.yellow)
+            case .update: return ("갱신 필요", TermAppearance.yellow)
+            case .error(let detail): return ("설정을 읽지 못함: \(detail)", TermAppearance.red)
+            }
+        }()
+        return StatusRow(title: title, detail: detail, status: status) {
+            switch state {
+            case .ok: Button("연결 해제", action: disconnect)
+            case .update: Button("갱신하기", action: connect)
+            case .missing: Button("연결하기", action: connect)
+            default: EmptyView()
+            }
+        }
+    }
+
+    private var skillRow: some View {
+        let state = model.browserSkillState
+        let status: (String, NSColor) = {
+            switch state {
+            case .unknown: return ("abx 를 찾지 못함", TermAppearance.textDim)
+            case .ok: return ("Claude Code·Codex 에 있음", TermAppearance.green)
+            case .missing(let targets): return ("\(targets.joined(separator: "·")) 에 없음", TermAppearance.yellow)
+            case .updateFailed(let detail): return ("새 판으로 바꾸지 못함: \(detail)", TermAppearance.red)
+            }
+        }()
+        return StatusRow(title: "abx 스킬", detail: "에이전트가 abx 로 브라우저를 쓰는 법 (~/.claude/skills/abx · ~/.agents/skills/abx)",
+                         status: status) {
+            switch state {
+            case .missing: Button("넣기") { model.connectBrowserSkill(chrome: false) }
+            case .updateFailed: Button("다시 시도") { model.checkBrowserSkill() }
+            case .ok where model.browserSkillRemovable: Button("연결 해제") { model.disconnectBrowserSkill() }
+            default: EmptyView()
+            }
+        }
+    }
+
+    private var chromeRow: some View {
+        let state = model.browserChrome
+        let version = BrowserInstaller(dir: BrowserBinding.browsersDir()).release.version
+        let status: (String, NSColor) = {
+            switch state {
+            case .unknown: return ("확인 중", TermAppearance.textDim)
+            case .ready: return ("받음 (\(version))", TermAppearance.green)
+            case .missing: return ("없음 — 그동안 설치된 Chrome 을 씁니다", TermAppearance.yellow)
+            case .installing(let percent): return ("받는 중… \(percent)%", TermAppearance.textDim)
+            case .failed(let detail): return ("받지 못함: \(detail)", TermAppearance.red)
+            }
+        }()
+        return StatusRow(title: "전용 브라우저", detail: "Chrome for Testing (약 190MB, ~/.abx/browsers) — 평소 쓰는 Chrome 과 따로 돕니다",
+                         status: status) {
+            switch state {
+            case .missing: Button("받기") { model.installBrowserChrome() }
+            case .failed: Button("다시 시도") { model.installBrowserChrome() }
+            default: EmptyView()
+            }
+        }
+    }
+
+    /// 로그인 템플릿(가져온 로그인)이 있는가 — 가져오기 창이 바뀔 때마다 다시 본다
+    private var templateStatus: (String, NSColor) {
+        _ = importer.phase
+        let template = BrowserBinding.templateDir()
+        guard let date = (try? FileManager.default.attributesOfItem(atPath: template.path))?[.modificationDate] as? Date else {
+            return ("가져온 로그인 없음", TermAppearance.textDim)
+        }
+        return ("가져온 로그인 있음 · \(date.formatted(date: .abbreviated, time: .shortened))", TermAppearance.green)
+    }
+}
+
+/// 이름 + 설명 + 상태(색) | 오른쪽 단추
+private struct StatusRow<Action: View>: View {
+    let title: String
+    let detail: String
+    let status: (String, NSColor)
+    @ViewBuilder let action: Action
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Color(TermAppearance.textDim))
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 5) {
+                    Circle().fill(Color(status.1)).frame(width: 6, height: 6)
+                    Text(status.0).foregroundStyle(Color(status.1)).fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 11))
+            }
+            Spacer(minLength: 8)
+            action
+        }
+        .padding(.vertical, 7)
     }
 }
 
@@ -193,8 +368,9 @@ private struct CodexCard: View {
 private struct SettingsCard<Content: View>: View {
     let title: String
     let color: NSColor
-    let canReset: Bool
-    let reset: () -> Void
+    var canReset = false
+    /// nil 이면 "기본값으로"를 두지 않는다(연결·브라우저 칸)
+    var reset: (() -> Void)?
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -205,12 +381,14 @@ private struct SettingsCard<Content: View>: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                 Spacer()
-                Button("기본값으로", action: reset)
-                    .buttonStyle(.plain)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Color(canReset ? TermAppearance.textDim : TermAppearance.textDim.withAlphaComponent(0.4)))
-                    .disabled(!canReset)
-                    .help("이 칸의 옵션을 모두 지웁니다")
+                if let reset {
+                    Button("기본값으로", action: reset)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(canReset ? TermAppearance.textDim : TermAppearance.textDim.withAlphaComponent(0.4)))
+                        .disabled(!canReset)
+                        .help("이 칸의 옵션을 모두 지웁니다")
+                }
             }
             .padding(.bottom, 10)
             content

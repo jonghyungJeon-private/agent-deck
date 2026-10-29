@@ -30,7 +30,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var window: NSWindow?
     var toolWindows: ToolWindowsController?
     /// 설정 창(⌘,) — 처음 열 때 만든다
-    lazy var settingsWindow = SettingsWindowController(settings: model.launch)
+    lazy var settingsWindow = SettingsWindowController(settings: model.launch, model: model, chromeImport: chromeImport)
+    lazy var chromeImport = ChromeImportWindowController(model: ChromeImportModel(
+        runningBrowsers: { [weak self] in
+            (self?.model.browserStates.values.compactMap { $0.running ? $0.cdpUrl.flatMap(URL.init(string:)) : nil }) ?? []
+        },
+        helpers: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")))
     var snapshotTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -202,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(shell, "오른쪽으로 나누기", "split-right", "d")
         addAction(shell, "아래로 나누기", "split-down", "d", [.command, .shift])
         addAction(shell, "브라우저 보기", "browser", "b", [.command, .shift])
+        addAction(shell, "Chrome 로그인 가져오기…", "chrome-import", "")
         shell.addItem(.separator())
         addAction(shell, "화면 닫기", "close", "w")
         addAction(shell, "탭 닫기", "close-tab", "w", [.command, .option])
@@ -426,6 +432,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             toolWindows?.perform(action)
         } else if action == "settings" {
             settingsWindow.show()
+        } else if action == "chrome-import" {
+            chromeImport.show()
         } else {
             model.perform(action)
         }
@@ -582,6 +590,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             fflush(stdout)
         case "settings-snap":
             settingsWindow.snapshot(to: URL(fileURLWithPath: argument))
+        case "chrome-import":
+            // chrome-import [show | pick <사이트…> | run | clear | state] — "Chrome 로그인 가져오기" 창을 시험으로 다룬다
+            let v = argument.split(separator: " ").map(String.init)
+            let importer = chromeImport.model
+            switch v.first ?? "show" {
+            case "pick": importer.selected = Set(v.dropFirst())
+            case "run": importer.importSelected()
+            case "clear": importer.clearTemplate()
+            case "state": break
+            default: chromeImport.show()
+            }
+            print("chrome-import profiles=\(importer.profiles.map(\.name)) sites=\(importer.sites.map { "\($0.id):\($0.count)" }) "
+                  + "selected=\(importer.selected.sorted()) phase=\(importer.phase)")
+            fflush(stdout)
         case "hooks-state":
             print("hooks-state claude=\(model.hookState) codex=\(model.codexHookState)")
             fflush(stdout)
