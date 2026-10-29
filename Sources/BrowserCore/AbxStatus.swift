@@ -95,13 +95,13 @@ public struct AbxRunner {
 
     /// abx 명령을 돌리고 표준 출력을 돌려준다(메인 스레드에서 부르지 않는다).
     /// 시간을 넘기면 SIGTERM, 그래도 안 끝나면 SIGKILL 로 끝내고 `.timeout`.
-    public func run(_ arguments: [String], session: AbxSession, extraEnvironment: [String: String] = [:],
+    public func run(_ arguments: [String], session: AbxSession?, extraEnvironment: [String: String] = [:],
                     timeout: TimeInterval = 10) throws -> (status: Int32, output: Data) {
         let process = Process()
         process.executableURL = executable
         process.arguments = leadingArguments + arguments
         var env = ProcessInfo.processInfo.environment
-        for (k, v) in session.environment.merging(extraEnvironment, uniquingKeysWith: { $1 }) { env[k] = v }
+        for (k, v) in (session?.environment ?? [:]).merging(extraEnvironment, uniquingKeysWith: { $1 }) { env[k] = v }
         process.environment = env
         let out = Pipe()
         process.standardOutput = out
@@ -137,6 +137,19 @@ public struct AbxRunner {
             usleep(20_000)
         }
         return true
+    }
+
+    /// 이 abx 에 맞는 에이전트 스킬(SKILL.md 전체, `abx skill`). 예전 abx 라 없으면 nil.
+    /// 예전 abx 는 모르는 명령을 엔진에 넘기며 브라우저를 띄우므로, 띄우지 않게(ABX_AUTOSTART=0) 빈 세션으로 묻는다.
+    public func skill() throws -> String? {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("agentdeck-abx-skill-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let probe = AbxSession(name: "agentdeck-skill", socketDir: scratch.path, stateDir: scratch.appendingPathComponent("state").path,
+                               profileDir: scratch.appendingPathComponent("profile").path)
+        let result = try run(["skill"], session: probe, extraEnvironment: ["ABX_AUTOSTART": "0"])
+        guard result.status == 0, let text = String(data: result.output, encoding: .utf8),
+              text.hasPrefix("---\n") else { return nil }
+        return text
     }
 
     public func status(_ session: AbxSession) throws -> AbxStatus {

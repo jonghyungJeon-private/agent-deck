@@ -355,3 +355,33 @@ final class AbxWriterLeaseTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir + "/s.writer"))
     }
 }
+
+final class AbxRunnerSkillTests: XCTestCase {
+    /// 가짜 abx: `skill` 을 알면 스킬을, 모르면(예전 판) 브라우저를 띄우는 흉내 — 단 ABX_AUTOSTART=0 이면 띄우지 않고 실패
+    func fakeAbx(knowsSkill: Bool) throws -> (AbxRunner, launched: String) {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let launched = dir.appendingPathComponent("launched").path
+        let script = dir.appendingPathComponent("abx")
+        try """
+            #!/bin/sh
+            if [ "$1" = skill ] && [ \(knowsSkill ? 1 : 0) = 1 ]; then printf -- '---\\nname: abx\\n---\\n# abx'; exit 0; fi
+            [ "$ABX_AUTOSTART" = 0 ] && { echo "error: browser is not running"; exit 1; }
+            touch "\(launched)"; exit 1
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return (AbxRunner(executable: script), launched)
+    }
+
+    func testSkillFromNewAbx() throws {
+        let (runner, _) = try fakeAbx(knowsSkill: true)
+        XCTAssertEqual(try runner.skill(), "---\nname: abx\n---\n# abx")
+    }
+
+    func testOldAbxIsAskedWithoutStartingABrowser() throws {
+        let (runner, launched) = try fakeAbx(knowsSkill: false)
+        XCTAssertNil(try runner.skill())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: launched))
+    }
+}

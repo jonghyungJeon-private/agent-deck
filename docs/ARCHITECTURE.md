@@ -180,6 +180,12 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
 - **크기:** 창 크기 = 브라우저 페이지 크기(`Browser.setWindowBounds` — 창 테두리 차이를 재서 더함). 단 AI 가 입력을 쥔 동안(잠금·넘기는 중)은
   페이지 크기를 바꾸지 않고 그림만 비율대로 줄이고 늘린다(AI 가 본 배치·좌표가 동작 도중 바뀌지 않게). 사람 차례·쉬는 중이 되면 맞춘다.
   그림은 따로 둔 층에 비율을 지킨 자리(`ViewportTransform.imageRect`, 마우스 좌표 변환과 같은 자리)로 그린다.
+- **스킬 연결(사이드바 "브라우저 연결하기"):** 에이전트가 abx 를 알도록 abx 스킬(SKILL.md)을 Claude Code(`<CLAUDE_CONFIG_DIR 또는 ~/.claude>/skills/abx`)·
+  Codex(`~/.agents/skills/abx`)에 넣는다(`SessionCore/SkillInstaller`). 내용은 찾은 abx 가 알려 준다(`abx skill` — 그 abx 판에 맞는 것,
+  예전 abx 가 모르는 명령으로 브라우저를 띄우지 않게 `ABX_AUTOSTART=0`·빈 세션으로 묻는다). 이 앱이 넣은 폴더에만 표식(`.agentdeck`)을 두고
+  그것만 바꾸거나 뺀다(옆 이름으로 옮긴 뒤 다시 확인하고 지움). 링크·표식 없는 폴더(예: abx `scripts/install.sh` 의 개발용 링크)는 사용자 것이라 그대로.
+  없거나 이 앱이 넣은 것이 지금 abx 와 다르면 사이드바에 알린다. 빼기는 앱 메뉴 "브라우저 스킬 연결 해제…"(이 앱이 넣은 것이 있을 때만 보임).
+  확인·넣기·빼기는 따로 둔 직렬 큐에서(세션 목록을 막지 않고, 넣기·빼기가 엇갈리지 않게).
 - **정리:** 화면을 닫으면 그 브라우저도 끈다(`abx down`, 창도 닫음). 프로필은 남긴다(되살리면 로그인 그대로). 셸만 남고 claude 가 끝난 경우는 그대로 둔다.
 - **화면 받기(`BrowserFeed`, 보이는 창만):** abx 상태의 CDP 주소(프로필의 `DevToolsActivePort`)에 앱이 직접 붙어(`BrowserCore/CDPClient`)
   abx 가 마지막으로 본 활성 탭(`targetId`)을 따라(그 탭이 이미 닫혔으면 보던 탭·첫 페이지) `Page.startScreencast`(JPEG q75, 최대 1440×900).

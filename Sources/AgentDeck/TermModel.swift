@@ -118,6 +118,10 @@ final class TermModel: ObservableObject {
     /// Claude Code hook 연결 상태(세션 짝짓기·이름·되살리기·상태 표시의 바탕)
     @Published var hookState: HookState = .unknown
     @Published var codexHookState: HookState = .unknown
+    /// 브라우저(abx) 스킬이 Claude Code·Codex 에 있는가(없으면 에이전트가 abx 를 모른다)
+    @Published var browserSkillState: BrowserSkillState = .unknown
+    /// 이 앱이 넣은 abx 스킬이 어딘가에 있다(메뉴 "브라우저 스킬 연결 해제…")
+    @Published var browserSkillRemovable = false
     @Published var notice: String?
     /// 예전 데몬(예전 데이터 폴더 ClaudeSessions)에 붙어 있다. 그 데몬이 끝나면(재시작·재부팅) 새 위치로 옮긴다.
     @Published private(set) var legacyDaemon = DataLocation.mode == .legacy
@@ -182,6 +186,16 @@ final class TermModel: ObservableObject {
     private static var layoutURL: URL { TermPaths.home.appendingPathComponent("layout.json") }
 
     /// 목록에서 고른 줄 = 지금 탭의 포커스 화면
+    enum BrowserSkillState: Equatable {
+        /// 아직 모름, 또는 abx 가 없어 넣을 스킬이 없다
+        case unknown
+        case ok
+        /// 없는 곳(이름: "Claude Code"·"Codex")
+        case missing([String])
+        /// 이 앱이 넣은 것이 지금 abx 와 다른 곳
+        case update([String])
+    }
+
     var selectedId: String? { workspace.selectedTab?.focused }
 
     private var daemonPath: String {
@@ -258,6 +272,93 @@ final class TermModel: ObservableObject {
         }
     }
 
+    private var helpersURL: URL { Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers") }
+    /// 브라우저 스킬 확인·넣기·빼기를 차례로(abx 를 기다리는 동안 세션 목록 worker 를 막지 않게, 넣기·빼기가 엇갈리지 않게)
+    private let skillQueue = DispatchQueue(label: "AgentDeck.browser-skill", qos: .utility)
+
+    private static func skillInstallers() -> [(label: String, installer: SkillInstaller)] {
+        [("Claude Code", .claude(name: "abx")), ("Codex", .codex(name: "abx"))]
+    }
+
+    /// 브라우저 스킬 상태: abx 가 알려 주는 스킬(`abx skill`)과 두 곳에 놓인 것을 비교한다(worker 에서)
+    func checkBrowserSkill() {
+        let helpers = helpersURL
+        skillQueue.async { [weak self] in
+            var state = BrowserSkillState.unknown
+            if let content = (try? AbxRunner.locate(bundleHelpers: helpers)?.skill()) ?? nil {
+                let found = Self.skillInstallers().map { ($0.label, $0.installer.status(content: content)) }
+                let missing = found.filter { $0.1 == .notInstalled }.map(\.0)
+                let outdated = found.filter { $0.1 == .outdated }.map(\.0)
+                state = !missing.isEmpty ? .missing(missing) : !outdated.isEmpty ? .update(outdated) : .ok
+            }
+            let removable = Self.skillInstallers().contains { $0.installer.ours }
+            DispatchQueue.main.async {
+                self?.browserSkillState = state
+                self?.browserSkillRemovable = removable
+            }
+        }
+    }
+
+    /// 사이드바 "브라우저 연결하기": 없는 곳에 넣고, 이 앱이 넣은 예전 것은 바꾼다(직접 둔 것은 그대로)
+    func connectBrowserSkill() {
+        let helpers = helpersURL
+        skillQueue.async { [weak self] in
+            var message: String
+            do {
+                guard let runner = AbxRunner.locate(bundleHelpers: helpers), let content = try runner.skill() else {
+                    throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "abx 를 찾지 못했습니다"])
+                }
+                var done: [String] = []
+                for (label, installer) in Self.skillInstallers() where installer.status(content: content) != .userManaged {
+                    try installer.install(content: content)
+                    done.append("\(label) (\((installer.skillDir.path as NSString).abbreviatingWithTildeInPath))")
+                }
+                message = "브라우저 스킬을 넣었습니다: " + done.joined(separator: ", ")
+                    + ". 새로 시작하는 claude·codex 세션부터 abx 로 브라우저를 씁니다."
+            } catch {
+                message = "브라우저 스킬을 넣지 못했습니다: \(error.localizedDescription)"
+            }
+            DispatchQueue.main.async {
+                self?.notice = message
+                self?.checkBrowserSkill()
+            }
+        }
+    }
+
+    /// 메뉴 "브라우저 스킬 연결 해제…": 이 앱이 넣은 abx 스킬만 뺀다(직접 둔 것은 그대로)
+    func disconnectBrowserSkill() {
+        let paths = Self.skillInstallers().filter { $0.installer.ours }
+            .map { ($0.installer.skillDir.path as NSString).abbreviatingWithTildeInPath }
+        guard !paths.isEmpty else {
+            notice = "브라우저 스킬: 이 앱이 넣은 것이 없습니다(직접 둔 스킬은 건드리지 않습니다)."
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "브라우저 스킬 연결을 해제할까요?"
+        alert.informativeText = """
+            이 앱이 넣은 abx 스킬 폴더를 지웁니다:
+            \(paths.joined(separator: "\n"))
+
+            새로 시작하는 claude·codex 세션은 abx 를 모르게 됩니다. 직접 둔 스킬은 그대로이고, 언제든 다시 연결할 수 있습니다.
+            """
+        alert.addButton(withTitle: "연결 해제")
+        alert.addButton(withTitle: "취소")
+        guard AppAlert.run(alert) == .alertFirstButtonReturn else { return }
+        // 진행 중인 넣기가 있으면 그 뒤에(나중에 고른 것이 남는다)
+        skillQueue.async { [weak self] in
+            var message = "브라우저 스킬 연결을 해제했습니다."
+            do {
+                for (_, installer) in Self.skillInstallers() { try installer.uninstall() }
+            } catch {
+                message = "브라우저 스킬 연결을 해제하지 못했습니다: \(error.localizedDescription)"
+            }
+            DispatchQueue.main.async {
+                self?.notice = message
+                self?.checkBrowserSkill()
+            }
+        }
+    }
+
     /// ~/.claude/settings.json 에 hook 을 넣는다(사용자가 누를 때만). 예전 이름(ClaudeTermDaemon·ClaudeSessions) hook 은 같이 뺀다.
     func connectHooks() {
         do {
@@ -281,6 +382,7 @@ final class TermModel: ObservableObject {
 
     func start() {
         checkHooks()
+        checkBrowserSkill()
         updates.start()
         editors.onTitleChange = { [weak self] in
             self?.pinDirtyPreviews() // 고치면(●) 미리보기가 아니다
@@ -1335,6 +1437,8 @@ final class TermModel: ObservableObject {
         case "update-check": updates.checkNow()
         case "hooks-disconnect": disconnectHooks()
         case "codex-hooks-disconnect": disconnectCodexHooks()
+        case "browser-skill-connect": connectBrowserSkill()
+        case "browser-skill-disconnect": disconnectBrowserSkill()
         case "tab":
             if parts.count > 1, let number = Int(parts[1]) {
                 var next = workspace

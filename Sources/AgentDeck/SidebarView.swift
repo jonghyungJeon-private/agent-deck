@@ -67,6 +67,7 @@ struct SidebarView: View {
             }
             hookBanner
             codexHookBanner
+            browserSkillBanner
         }
         .frame(minWidth: 220, maxHeight: .infinity)
         .background(Color(TermAppearance.chrome))
@@ -283,6 +284,34 @@ struct SidebarView: View {
             }
             .uiFont(10)
             .foregroundStyle(Color(TermAppearance.textDim))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, ui(14))
+            .padding(.bottom, ui(8))
+        }
+    }
+
+    /// abx 스킬이 Claude Code·Codex 에 없거나 예전 것이면 넣자고 알린다(abx 를 찾았을 때만)
+    @ViewBuilder
+    private var browserSkillBanner: some View {
+        let prompt: (text: String, button: String)? = {
+            switch model.browserSkillState {
+            case .missing(let targets):
+                return ("\(targets.joined(separator: "·"))에 브라우저(abx) 스킬이 없습니다. 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 제목 줄 🌐 로 볼 수 있습니다.",
+                        "브라우저 연결하기")
+            case .update(let targets):
+                return ("\(targets.joined(separator: "·"))의 브라우저(abx) 스킬이 지금 abx 와 다릅니다.", "브라우저 스킬 갱신")
+            default: return nil
+            }
+        }()
+        if let prompt {
+            VStack(alignment: .leading, spacing: ui(6)) {
+                Text(prompt.text).fixedSize(horizontal: false, vertical: true)
+                Button(prompt.button) { model.connectBrowserSkill() }
+                    .help("abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣습니다. 직접 둔 스킬은 건드리지 않습니다.")
+            }
+            .uiFont(10)
+            .foregroundStyle(Color(TermAppearance.textDim))
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, ui(14))
             .padding(.bottom, ui(8))
         }

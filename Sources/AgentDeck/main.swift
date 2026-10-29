@@ -128,6 +128,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "codex-hooks-disconnect":
             menuItem.isHidden = ![.ok, .update].contains(model.codexHookState)
             return !menuItem.isHidden
+        case "browser-skill-disconnect":
+            // 이 앱이 넣은 스킬이 있을 때만 보인다(직접 둔 것은 빼지 않는다)
+            menuItem.isHidden = !model.browserSkillRemovable
+            return !menuItem.isHidden
         default:
             return true
         }
@@ -147,6 +151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // hook 빼기(넣기는 사이드바 아래 "연결하기"). Codex 것은 연결돼 있을 때만 보인다.
         addAction(appMenu, "Claude Code 연결 해제…", "hooks-disconnect", "")
         addAction(appMenu, "Codex 연결 해제…", "codex-hooks-disconnect", "")
+        addAction(appMenu, "브라우저 스킬 연결 해제…", "browser-skill-disconnect", "")
         // 예전 데몬에 붙어 있을 때만 보인다(상태 줄 "지금 옮기기…"와 같음)
         addAction(appMenu, "새 데이터 위치로 지금 옮기기…", "relocate-data", "")
         appMenu.addItem(.separator())
