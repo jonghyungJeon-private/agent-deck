@@ -290,24 +290,44 @@ struct SidebarView: View {
         }
     }
 
-    /// abx 스킬이 Claude Code·Codex 에 없거나 예전 것이면 넣자고 알린다(abx 를 찾았을 때만)
+    /// 브라우저 준비: abx 스킬(Claude Code·Codex)과 에이전트 전용 브라우저(Chrome for Testing). abx 를 찾았을 때만 보인다.
+    /// 떠 있는 데몬이 예전 판이면 그것부터 알린다(화면에 브라우저 연결이 안 된다).
     @ViewBuilder
     private var browserSkillBanner: some View {
-        let prompt: (text: String, button: String)? = {
-            switch model.browserSkillState {
-            case .missing(let targets):
-                return ("\(targets.joined(separator: "·"))에 브라우저(abx) 스킬이 없습니다. 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 제목 줄 🌐 로 볼 수 있습니다.",
-                        "브라우저 연결하기")
-            case .update(let targets):
-                return ("\(targets.joined(separator: "·"))의 브라우저(abx) 스킬이 지금 abx 와 다릅니다.", "브라우저 스킬 갱신")
-            default: return nil
+        let skill = model.browserSkillState
+        let chrome = model.browserChrome
+        let prompt: (text: String, button: String?)? = {
+            guard skill != .unknown else { return nil }
+            if !model.daemonHasBrowser {
+                return ("세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 뜹니다.", nil)
             }
+            if case .updateFailed(let detail) = skill {
+                return ("abx 스킬을 지금 abx 판으로 바꾸지 못했습니다 — \(detail)", "다시 시도")
+            }
+            var needs: [String] = []
+            if case .missing(let targets) = skill { needs.append("\(targets.joined(separator: "·"))에 abx 스킬 넣기") }
+            switch chrome {
+            case .installing(let percent):
+                return ("에이전트 전용 브라우저(Chrome for Testing)를 받는 중… \(percent)%", nil)
+            case .failed(let detail):
+                return ("에이전트 전용 브라우저를 받지 못했습니다: \(detail)", "다시 시도")
+            case .missing:
+                needs.append("에이전트 전용 브라우저(Chrome for Testing, 약 190MB) 받기 — 받기 전에는 설치된 Chrome 을 씁니다")
+            default: break
+            }
+            guard !needs.isEmpty else { return nil }
+            return ("브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 제목 줄 🌐 로 볼 수 있습니다.",
+                    skill == .ok || skill == .unknown ? "브라우저 받기" : "브라우저 연결하기")
         }()
         if let prompt {
             VStack(alignment: .leading, spacing: ui(6)) {
                 Text(prompt.text).fixedSize(horizontal: false, vertical: true)
-                Button(prompt.button) { model.connectBrowserSkill() }
-                    .help("abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣습니다. 직접 둔 스킬은 건드리지 않습니다.")
+                if let button = prompt.button {
+                    Button(button) {
+                        if case .updateFailed = skill { model.checkBrowserSkill() } else { model.connectBrowserSkill() }
+                    }
+                        .help("abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣고(직접 둔 스킬은 그대로), 에이전트 전용 브라우저를 ~/.abx/browsers 에 받습니다.")
+                }
             }
             .uiFont(10)
             .foregroundStyle(Color(TermAppearance.textDim))

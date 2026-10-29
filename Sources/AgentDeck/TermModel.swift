@@ -122,6 +122,10 @@ final class TermModel: ObservableObject {
     @Published var browserSkillState: BrowserSkillState = .unknown
     /// 이 앱이 넣은 abx 스킬이 어딘가에 있다(메뉴 "브라우저 스킬 연결 해제…")
     @Published var browserSkillRemovable = false
+    /// 에이전트 전용 브라우저(Chrome for Testing) 준비 상태
+    @Published var browserChrome: BrowserChromeState = .unknown
+    /// 떠 있는 데몬이 화면에 브라우저를 넣는 판인가(앱만 새로 바꾸면 예전 데몬이 남는다)
+    @Published private(set) var daemonHasBrowser = true
     @Published var notice: String?
     /// 예전 데몬(예전 데이터 폴더 ClaudeSessions)에 붙어 있다. 그 데몬이 끝나면(재시작·재부팅) 새 위치로 옮긴다.
     @Published private(set) var legacyDaemon = DataLocation.mode == .legacy
@@ -185,17 +189,27 @@ final class TermModel: ObservableObject {
 
     private static var layoutURL: URL { TermPaths.home.appendingPathComponent("layout.json") }
 
-    /// 목록에서 고른 줄 = 지금 탭의 포커스 화면
     enum BrowserSkillState: Equatable {
         /// 아직 모름, 또는 abx 가 없어 넣을 스킬이 없다
         case unknown
         case ok
-        /// 없는 곳(이름: "Claude Code"·"Codex")
+        /// 없는 곳(이름: "Claude Code"·"Codex") — 처음 넣기는 사용자가 누를 때만
         case missing([String])
-        /// 이 앱이 넣은 것이 지금 abx 와 다른 곳
-        case update([String])
+        /// 이 앱이 넣은 것을 지금 abx 판으로 저절로 바꾸지 못했다(이유)
+        case updateFailed(String)
     }
 
+    enum BrowserChromeState: Equatable {
+        case unknown
+        case ready
+        /// 받아야 한다(받기 전에는 엔진이 찾는 설치된 Chrome 을 쓴다)
+        case missing
+        /// 받는 중(퍼센트)·확인 중(100)
+        case installing(Int)
+        case failed(String)
+    }
+
+    /// 목록에서 고른 줄 = 지금 탭의 포커스 화면
     var selectedId: String? { workspace.selectedTab?.focused }
 
     private var daemonPath: String {
@@ -280,21 +294,38 @@ final class TermModel: ObservableObject {
         [("Claude Code", .claude(name: "abx")), ("Codex", .codex(name: "abx"))]
     }
 
-    /// 브라우저 스킬 상태: abx 가 알려 주는 스킬(`abx skill`)과 두 곳에 놓인 것을 비교한다(worker 에서)
+    /// 브라우저 스킬 상태: abx 가 알려 주는 스킬(`abx skill`)과 두 곳에 놓인 것을 비교한다(skillQueue 에서).
+    /// 이 앱이 넣은 것이 지금 abx 와 다르면(앱 업데이트로 abx 가 바뀜) 묻지 않고 바꾼다 — 실행되는 abx 와 에이전트가 읽는 사용법이
+    /// 어긋나지 않게. 처음 넣기는 사용자 설정 폴더에 새로 쓰는 일이라 누를 때만, 직접 둔 스킬은 늘 그대로.
     func checkBrowserSkill() {
         let helpers = helpersURL
         skillQueue.async { [weak self] in
             var state = BrowserSkillState.unknown
+            var updated: [String] = []
             if let content = (try? AbxRunner.locate(bundleHelpers: helpers)?.skill()) ?? nil {
-                let found = Self.skillInstallers().map { ($0.label, $0.installer.status(content: content)) }
-                let missing = found.filter { $0.1 == .notInstalled }.map(\.0)
-                let outdated = found.filter { $0.1 == .outdated }.map(\.0)
-                state = !missing.isEmpty ? .missing(missing) : !outdated.isEmpty ? .update(outdated) : .ok
+                var failure: String?
+                for (label, installer) in Self.skillInstallers() where installer.status(content: content) == .outdated {
+                    do {
+                        try installer.install(content: content)
+                        updated.append(label)
+                    } catch {
+                        failure = "\(label): \(error.localizedDescription)"
+                    }
+                }
+                let missing = Self.skillInstallers().filter { $0.installer.status(content: content) == .notInstalled }.map(\.label)
+                state = failure.map { .updateFailed($0) } ?? (missing.isEmpty ? .ok : .missing(missing))
             }
             let removable = Self.skillInstallers().contains { $0.installer.ours }
+            let chrome: BrowserChromeState = BrowserInstaller(dir: BrowserBinding.browsersDir()).state() == .installed ? .ready : .missing
             DispatchQueue.main.async {
                 self?.browserSkillState = state
                 self?.browserSkillRemovable = removable
+                if !updated.isEmpty {
+                    self?.notice = "abx 스킬을 지금 abx 판으로 바꿨습니다(\(updated.joined(separator: "·"))). 새로 시작하는 claude·codex 세션부터 적용됩니다."
+                }
+                // 받는 중·실패 표시는 받기가 끝날 때 바꾼다
+                if let self, ![.unknown, .ready, .missing].contains(self.browserChrome) { return }
+                self?.browserChrome = chrome
             }
         }
     }
@@ -303,24 +334,62 @@ final class TermModel: ObservableObject {
     func connectBrowserSkill() {
         let helpers = helpersURL
         skillQueue.async { [weak self] in
-            var message: String
+            var message: String?
             do {
                 guard let runner = AbxRunner.locate(bundleHelpers: helpers), let content = try runner.skill() else {
                     throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "abx 를 찾지 못했습니다"])
                 }
                 var done: [String] = []
-                for (label, installer) in Self.skillInstallers() where installer.status(content: content) != .userManaged {
+                for (label, installer) in Self.skillInstallers()
+                where ![.userManaged, .installed].contains(installer.status(content: content)) {
                     try installer.install(content: content)
                     done.append("\(label) (\((installer.skillDir.path as NSString).abbreviatingWithTildeInPath))")
                 }
-                message = "브라우저 스킬을 넣었습니다: " + done.joined(separator: ", ")
-                    + ". 새로 시작하는 claude·codex 세션부터 abx 로 브라우저를 씁니다."
+                if !done.isEmpty {
+                    message = "브라우저 스킬을 넣었습니다: " + done.joined(separator: ", ")
+                        + ". 새로 시작하는 claude·codex 세션부터 abx 로 브라우저를 씁니다."
+                }
             } catch {
                 message = "브라우저 스킬을 넣지 못했습니다: \(error.localizedDescription)"
             }
             DispatchQueue.main.async {
-                self?.notice = message
+                if let message { self?.notice = message }
                 self?.checkBrowserSkill()
+                self?.installBrowserChrome()
+            }
+        }
+    }
+
+    private var chromeTask: Task<Void, Never>?
+
+    /// 에이전트 전용 브라우저(Chrome for Testing)를 받는다(사용자가 "브라우저 연결하기"를 누를 때만). 이미 있으면 아무것도 안 한다.
+    func installBrowserChrome() {
+        guard chromeTask == nil else { return }
+        let installer = BrowserInstaller(dir: BrowserBinding.browsersDir())
+        guard installer.state() != .installed else {
+            browserChrome = .ready
+            return
+        }
+        browserChrome = .installing(0)
+        // 받기·확인은 메인 밖에서, 상태는 메인에서만 바꾼다
+        let report = MainThreadSink { [weak self] (state: BrowserChromeState) in
+            guard let self else { return }
+            if case .installing = state {
+                if state != self.browserChrome { self.browserChrome = state } // 같은 퍼센트는 다시 알리지 않는다
+                return
+            }
+            self.chromeTask = nil
+            self.browserChrome = state
+            if state == .ready {
+                self.notice = "에이전트 전용 브라우저(Chrome for Testing \(installer.release.version))를 받았습니다. 새로 띄우는 브라우저부터 씁니다."
+            }
+        }
+        chromeTask = Task.detached(priority: .utility) {
+            do {
+                try await installer.install { report.send(.installing(min(99, Int($0 * 100)))) }
+                report.send(.ready)
+            } catch {
+                report.send(.failed(error.localizedDescription))
             }
         }
     }
@@ -558,6 +627,7 @@ final class TermModel: ObservableObject {
     private let worker = DispatchQueue(label: "AgentDeck.rows", qos: .utility)
 
     private func apply(_ state: DaemonState) {
+        daemonHasBrowser = state.features?.contains(DaemonState.browserFeature) ?? false
         daemonFootprint = state.footprint
         appFootprint = Memory.footprint()
         let seen = seenDone
@@ -1449,4 +1519,11 @@ final class TermModel: ObservableObject {
         default: break
         }
     }
+}
+
+/// 다른 스레드에서 보낸 값을 메인 스레드의 처리기로 넘긴다(처리기는 메인에서만 불린다)
+private final class MainThreadSink<Value: Sendable>: @unchecked Sendable {
+    private let handler: (Value) -> Void
+    init(_ handler: @escaping (Value) -> Void) { self.handler = handler }
+    func send(_ value: Value) { DispatchQueue.main.async { self.handler(value) } }
 }

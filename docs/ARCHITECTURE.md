@@ -160,10 +160,18 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
 - **화면 하나 = 브라우저 하나.** 데몬이 모든 화면 셸에 `ABX_*` 환경 변수를 넣는다(`TermWire/BrowserBinding`): 세션 이름 `ad-<화면 ID 앞 12자리>`,
   소켓 `term/abx/`(경로가 길어 유닉스 소켓 한도 104바이트를 넘으면 `<TMPDIR>/agentdeck-abx-<term 경로 해시>`), 상태 `term/abx/state/`,
   프로필 `term/abx-profiles/<세션>`, 로그인 템플릿 `term/abx-profiles/template`(있으면 새 프로필을 복사해 시작),
-  창 없이(`ABX_HEADLESS=1`), 사람 입력 잠금(`ABX_LOCK_INPUT=1`), 페이지 위 잠금 배너 끔(`ABX_LOCK_BANNER=0`), 브라우저 실행 파일은
-  `AGENTDECK_BROWSER` → `~/.abx/browsers/<버전>/` 의 Chrome for Testing(가장 높은 버전) → 없으면 abx 가 고른다.
+  창 없이(`ABX_HEADLESS=1`), 사람 입력 잠금(`ABX_LOCK_INPUT=1`), 페이지 위 잠금 배너 끔(`ABX_LOCK_BANNER=0`), 받아 둔 브라우저 폴더
+  `ABX_BROWSERS_DIR`(`~/.abx/browsers`, 시험용 `AGENTDECK_BROWSERS_DIR`). 브라우저 실행 파일은 abx 가 세션을 처음 띄울 때 고른다:
+  `AGENTDECK_BROWSER`(→ `ABX_BROWSER`, 고정) → 이미 쓴 세션은 그 브라우저(프로필을 만든 브라우저를 바꾸지 않음, 지워졌으면 다음) →
+  `ABX_BROWSERS_DIR` 에서 확인 표식(`abx-browser.json`)이 있는 가장 높은 판 → 엔진이 찾는 설치된 Chrome.
   화면 ID 로만 정해지므로 되살린 화면은 같은 브라우저·같은 프로필(로그인 유지)을 쓴다. 브라우저는 그 셸의 claude·codex 가 `abx` 를 처음 쓸 때 뜬다.
-  이미 떠 있던 데몬이 띄운 셸에는 이 값이 없다(데몬을 새로 띄운 뒤 연 화면부터).
+- **`abx` 명령(앱에 든 abx):** 앱 묶음에 abx 단일 실행 파일과 엔진(`Contents/Helpers/abx`·`agent-browser`, bun --compile)과
+  에이전트 안내(`Contents/Resources/abx/SKILL.md`, 넣은 판은 `VERSION`)가 든다(`scripts/build-term-proto.sh` 가 agent-browser 저장소에서 만들어 넣음).
+  데몬은 뜰 때 `term/bin/abx`(그 abx 를 실행하는 작은 스크립트 — 엔진 실행 파일은 PATH 에 보이지 않게, `AGENTDECK_ABX` 로 바꾼 abx 도 이름이 abx)를
+  맞추고 화면 셸 PATH 맨 앞에 둔다. 로그인 셸 설정이 PATH 순서를 바꾸므로 사용자가 따로 설치한 abx(`~/.local/bin` 등)가 있으면 그것이 이긴다(개발용).
+  앱이 abx 를 찾는 순서(`AbxRunner.locate`): `AGENTDECK_ABX` → 앱 묶음 → PATH.
+- **예전 데몬:** 앱을 바꿔도 떠 있던 데몬은 그대로라(세션 유지) 예전 데몬이 띄운 셸에는 위 값이 없다. 데몬은 `DaemonState.features` 에
+  `browser` 를 알리고, 없으면 앱이 사이드바에 "데몬이 예전 판"을 알린다(모든 세션을 닫고 다시 켜거나 재부팅하면 새 데몬).
 - **상태(모든 화면, 스트림 없이):** `BrowserStatusStore`(TermModel 이 가짐)가 abx 상태 파일을 직접 읽는다(`BrowserCore/AbxStateReader` —
   abx `status --json` 과 같은 규칙: 엔진 소켓이 연결을 받아야 실행 중, 잠금 소켓 + 살아 있는 잠금 pid 면 AI 제어, handoff 파일이면 사용자,
   writer 가 살아 있으면 넘기는 중, 탭은 `tabs.json`). abx 폴더(소켓·상태, 모든 세션이 같이 씀) 변경 즉시 + 2초마다. 세션마다 프로세스를 띄우지 않는다.
@@ -180,11 +188,24 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
 - **크기:** 창 크기 = 브라우저 페이지 크기(`Browser.setWindowBounds` — 창 테두리 차이를 재서 더함). 단 AI 가 입력을 쥔 동안(잠금·넘기는 중)은
   페이지 크기를 바꾸지 않고 그림만 비율대로 줄이고 늘린다(AI 가 본 배치·좌표가 동작 도중 바뀌지 않게). 사람 차례·쉬는 중이 되면 맞춘다.
   그림은 따로 둔 층에 비율을 지킨 자리(`ViewportTransform.imageRect`, 마우스 좌표 변환과 같은 자리)로 그린다.
+- **브라우저 받기(같은 "브라우저 연결하기"):** 에이전트 전용 브라우저 Chrome for Testing 을 앱 판마다 고정한 판으로 받는다
+  (`BrowserCore/BrowserInstaller`, `BrowserRelease.pinned` — 판·주소·SHA-256). 빈 공간 확인(800MB) → 받기(진행률을 사이드바에) →
+  SHA-256 확인 → 점으로 시작하는 임시 폴더에 풀기(`ditto`) → 해시가 맞은 것만 격리 속성 제거 → 빈 임시 프로필로 창 없이 한 번 띄워
+  DevTools 포트가 열리는지 확인 → 표식 `abx-browser.json`(판·실행 파일·해시) → `<폴더>/<판>` 으로 옮김. 실패하면 임시 폴더만 지운다.
+  손수 푼(표식 없는) 같은 판은 띄워 보고 표식만 쓴다. 받기 전에는 설치된 Chrome 을 쓰고, 받은 뒤에는 새로 띄우는 세션부터 쓴다.
+  Chrome for Testing 은 스스로 업데이트하지 않으므로 릴리스마다 고정 판을 올린다(docs/RELEASING.md).
 - **스킬 연결(사이드바 "브라우저 연결하기"):** 에이전트가 abx 를 알도록 abx 스킬(SKILL.md)을 Claude Code(`<CLAUDE_CONFIG_DIR 또는 ~/.claude>/skills/abx`)·
   Codex(`~/.agents/skills/abx`)에 넣는다(`SessionCore/SkillInstaller`). 내용은 찾은 abx 가 알려 준다(`abx skill` — 그 abx 판에 맞는 것,
   예전 abx 가 모르는 명령으로 브라우저를 띄우지 않게 `ABX_AUTOSTART=0`·빈 세션으로 묻는다). 이 앱이 넣은 폴더에만 표식(`.agentdeck`)을 두고
   그것만 바꾸거나 뺀다(옆 이름으로 옮긴 뒤 다시 확인하고 지움). 링크·표식 없는 폴더(예: abx `scripts/install.sh` 의 개발용 링크)는 사용자 것이라 그대로.
-  없거나 이 앱이 넣은 것이 지금 abx 와 다르면 사이드바에 알린다. 빼기는 앱 메뉴 "브라우저 스킬 연결 해제…"(이 앱이 넣은 것이 있을 때만 보임).
+  처음 넣기는 사용자가 누를 때만(사용자 설정 폴더에 새로 쓰는 일). 그 뒤 이 앱이 넣은 것이 지금 abx 와 다르면(앱 업데이트로 abx 가 바뀜)
+  앱이 켜질 때 묻지 않고 바꾸고 알린다 — 실행되는 abx 와 에이전트가 읽는 사용법이 어긋나지 않게(바꾸지 못하면 사이드바에 이유와 "다시 시도").
+  이미 떠 있는 claude·codex 세션은 새로 시작해야 새 스킬을 확실히 읽는다. 빼기는 앱 메뉴 "브라우저 스킬 연결 해제…"(이 앱이 넣은 것이 있을 때만 보임).
+- **앱 업데이트와 떠 있는 브라우저:** 앱을 바꾸면 화면의 `abx`(같은 자리의 묶음)는 바로 새 abx 다. 엔진 판이 바뀌었으면 떠 있던 엔진 데몬은
+  예전 판이다 — 엔진은 판이 다르면 스스로 다시 띄우며 예전 브라우저를 닫는데, 그러면 열린 페이지가 사라진다. abx 가 먼저 알아채
+  (`<세션>.version` ≠ 넣은 엔진 판) 같은 브라우저·프로필로 다시 띄우고(로그인 유지, writer 자리를 쥔 채) 마지막으로 본 탭들을 다시 연다
+  (입력 중이던 폼·스크롤은 잃는다). 그 명령은 실행하지 않고 무슨 일이 있었는지로 실패한다(ref·탭 번호가 바뀌어서) — 에이전트가 새로 보고
+  다시 한다. 사용자가 조작 중(handoff)이면 다시 띄우지 않고 기다린다("AI 에게 돌려주기" = `abx resume` 때). 앱 브라우저 창은 새 CDP 주소로 다시 붙는다.
   확인·넣기·빼기는 따로 둔 직렬 큐에서(세션 목록을 막지 않고, 넣기·빼기가 엇갈리지 않게).
 - **정리:** 화면을 닫으면 그 브라우저도 끈다(`abx down`, 창도 닫음). 프로필은 남긴다(되살리면 로그인 그대로). 셸만 남고 claude 가 끝난 경우는 그대로 둔다.
 - **화면 받기(`BrowserFeed`, 보이는 창만):** abx 상태의 CDP 주소(프로필의 `DevToolsActivePort`)에 앱이 직접 붙어(`BrowserCore/CDPClient`)

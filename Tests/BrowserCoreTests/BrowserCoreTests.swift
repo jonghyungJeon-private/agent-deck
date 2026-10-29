@@ -385,3 +385,101 @@ final class AbxRunnerSkillTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: launched))
     }
 }
+
+final class BrowserInstallerTests: XCTestCase {
+    var dir: URL!
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+
+    /// 가짜 브라우저 zip: --user-data-dir 에 DevToolsActivePort 를 쓰고 기다리는(떠 있는) 스크립트
+    func fakeRelease(writesPort: Bool = true) throws -> BrowserRelease {
+        let src = dir.appendingPathComponent("src/browser/bin")
+        try FileManager.default.createDirectory(at: src, withIntermediateDirectories: true)
+        let script = src.appendingPathComponent("chrome")
+        try """
+            #!/bin/sh
+            for a in "$@"; do case "$a" in --user-data-dir=*) d="${a#--user-data-dir=}";; esac; done
+            \(writesPort ? "mkdir -p \"$d\"; printf '9222\\n/devtools/browser/x\\n' > \"$d/DevToolsActivePort\"" : "exit 3")
+            exec sleep 30
+            """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let zip = dir.appendingPathComponent("browser.zip")
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", "--keepParent", src.deletingLastPathComponent().path, zip.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+        return BrowserRelease(version: "1.2.3", url: zip, sha256: try BrowserInstaller.sha256(of: zip), executable: "browser/bin/chrome")
+    }
+
+    func testInstallsVerifiesAndMarks() async throws {
+        let installer = BrowserInstaller(dir: dir.appendingPathComponent("browsers"), release: try fakeRelease())
+        XCTAssertEqual(installer.state(), .missing)
+        try await installer.install()
+        XCTAssertEqual(installer.state(), .installed)
+        let marker = try JSONSerialization.jsonObject(with: Data(contentsOf: installer.versionDir.appendingPathComponent("abx-browser.json"))) as? [String: String]
+        XCTAssertEqual(marker?["executable"], "browser/bin/chrome")
+        XCTAssertEqual(marker?["version"], "1.2.3")
+        // 임시 파일이 남지 않는다(abx 가 보는 폴더에는 버전 폴더와 잠금 파일만)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: installer.dir.path).sorted(), [".install.lock", "1.2.3"])
+    }
+
+    func testWrongHashOrBrokenBrowserLeavesNothing() async throws {
+        var release = try fakeRelease()
+        release.sha256 = String(repeating: "0", count: 64)
+        let installer = BrowserInstaller(dir: dir.appendingPathComponent("browsers"), release: release)
+        do { try await installer.install(); XCTFail("hash") } catch let error as BrowserInstaller.InstallError {
+            guard case .checksum = error else { return XCTFail("\(error)") }
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: installer.dir.path), [".install.lock"])
+
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("src"))
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("browser.zip"))
+        let broken = BrowserInstaller(dir: dir.appendingPathComponent("browsers"), release: try fakeRelease(writesPort: false))
+        do { try await broken.install(); XCTFail("launch") } catch let error as BrowserInstaller.InstallError {
+            guard case .launch = error else { return XCTFail("\(error)") }
+        }
+        XCTAssertEqual(broken.state(), .missing)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: broken.dir.path), [".install.lock"])
+    }
+
+    func testASecondInstallerWaitsItsTurn() async throws {
+        let installer = BrowserInstaller(dir: dir.appendingPathComponent("browsers"), release: try fakeRelease())
+        try FileManager.default.createDirectory(at: installer.dir, withIntermediateDirectories: true)
+        // 다른 앱이 받는 중(잠금을 쥐고 있음)
+        let held = open(installer.dir.appendingPathComponent(".install.lock").path, O_CREAT | O_RDWR, 0o600)
+        XCTAssertEqual(flock(held, LOCK_EX), 0)
+        do { try await installer.install(); XCTFail("busy") } catch let error as BrowserInstaller.InstallError {
+            XCTAssertEqual(error, .busy)
+        }
+        close(held)
+        try await installer.install()
+        XCTAssertEqual(installer.state(), .installed)
+    }
+
+    func testReplacesABrokenUnverifiedCopy() async throws {
+        let installer = BrowserInstaller(dir: dir.appendingPathComponent("browsers"), release: try fakeRelease())
+        let bin = installer.executableURL
+        try FileManager.default.createDirectory(at: bin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: bin.path, contents: Data("#!/bin/sh\nexit 1\n".utf8), attributes: [.posixPermissions: 0o755])
+        XCTAssertEqual(installer.state(), .unverified)
+        try await installer.install()
+        XCTAssertEqual(installer.state(), .installed)
+        XCTAssertNotEqual(try String(contentsOf: bin, encoding: .utf8), "#!/bin/sh\nexit 1\n")
+    }
+
+    func testAdoptsAnUnverifiedCopyByLaunchingIt() async throws {
+        let release = try fakeRelease()
+        let installer = BrowserInstaller(dir: dir.appendingPathComponent("browsers"), release: release)
+        // 손수 푼 것(표식 없음)
+        let bin = installer.executableURL
+        try FileManager.default.createDirectory(at: bin.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: dir.appendingPathComponent("src/browser/bin/chrome"), to: bin)
+        XCTAssertEqual(installer.state(), .unverified)
+        try await installer.install()
+        XCTAssertEqual(installer.state(), .installed)
+    }
+}

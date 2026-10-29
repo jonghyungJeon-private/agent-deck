@@ -55,8 +55,10 @@ public enum BrowserBinding {
     }
 
     /// 화면 셸에 넣을 값. 브라우저는 창 없이(앱의 브라우저 화면으로 본다), 사람 입력은 잠근 채로 띄운다(배너 없이).
-    public static func environment(pane: String, termDir: URL = TermPaths.home,
-                                   browser: String? = chromeForTesting()) -> [String: String] {
+    /// 브라우저 실행 파일은 abx 가 처음 띄울 때 고른다: `browser`(AGENTDECK_BROWSER) → 앱이 받아 확인한 Chrome for Testing
+    /// (`ABX_BROWSERS_DIR`, 이미 쓴 세션은 그 브라우저 그대로) → 엔진이 찾는 Chrome.
+    public static func environment(pane: String, termDir: URL = TermPaths.home, browser: String? = explicitBrowser(),
+                                   browsersDir: URL = BrowserBinding.browsersDir()) -> [String: String] {
         let socketDir = socketDir(termDir: termDir)
         var env = [
             "ABX_SESSION": sessionName(pane: pane),
@@ -64,6 +66,7 @@ public enum BrowserBinding {
             "ABX_STATE_DIR": stateDir(termDir: termDir).path,
             "ABX_PROFILE_DIR": profileDir(pane: pane, termDir: termDir).path,
             "ABX_PROFILE_TEMPLATE": templateDir(termDir: termDir).path,
+            "ABX_BROWSERS_DIR": browsersDir.path,
             "ABX_HEADLESS": "1",
             "ABX_LOCK_INPUT": "1",
             // 잠금 상태는 브라우저 화면 머리 줄에 보인다. 페이지 위 배너(회색 덮개)는 화면 그림에 섞이므로 끈다
@@ -73,21 +76,66 @@ public enum BrowserBinding {
         return env
     }
 
-    /// 브라우저 실행 파일: `AGENTDECK_BROWSER` → `~/.abx/browsers/<버전>/` 의 Chrome for Testing(가장 높은 버전).
-    /// 없으면 nil(abx·엔진이 설치된 Chrome 등을 찾는다).
-    public static func chromeForTesting(environment: [String: String] = ProcessInfo.processInfo.environment,
-                                        home: URL = FileManager.default.homeDirectoryForCurrentUser) -> String? {
-        let fm = FileManager.default
-        if let path = environment[AgentDeckEnv.name("BROWSER")], fm.isExecutableFile(atPath: path) { return path }
-        let root = home.appendingPathComponent(".abx/browsers")
-        let versions = ((try? fm.contentsOfDirectory(atPath: root.path)) ?? [])
-            .sorted { $0.compare($1, options: .numeric) == .orderedDescending }
-        for version in versions {
-            let path = root.appendingPathComponent(version)
-                .appendingPathComponent("chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing").path
-            if fm.isExecutableFile(atPath: path) { return path }
+    /// 앱이 받아 두는 브라우저(Chrome for Testing) 폴더. abx 개발용 설치와 같은 곳을 함께 쓴다(시험용으로 AGENTDECK_BROWSERS_DIR).
+    public static func browsersDir(environment: [String: String] = ProcessInfo.processInfo.environment,
+                                   home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        if let dir = AgentDeckEnv.nonEmpty("BROWSERS_DIR", in: environment) {
+            return URL(fileURLWithPath: dir, isDirectory: true)
         }
-        return nil
+        return home.appendingPathComponent(".abx/browsers", isDirectory: true)
+    }
+
+    /// 브라우저를 고정할 때(시험·개발): `AGENTDECK_BROWSER`
+    public static func explicitBrowser(environment: [String: String] = ProcessInfo.processInfo.environment) -> String? {
+        environment[AgentDeckEnv.name("BROWSER")].flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+    }
+
+    // MARK: - 화면에서 `abx` 명령
+
+    /// 화면 셸 PATH 맨 앞에 두는 폴더. 안에 `abx` 하나(앱이 쓰는 abx 를 실행하는 작은 스크립트)만 둔다 —
+    /// 앱 묶음의 Helpers 를 그대로 PATH 에 넣으면 엔진 실행 파일까지 보이고, 지정한 abx 의 이름이 abx 가 아닐 수도 있다.
+    public static func binDir(termDir: URL = TermPaths.home) -> URL {
+        termDir.appendingPathComponent("bin", isDirectory: true)
+    }
+
+    /// 화면에서 쓸 abx: `AGENTDECK_ABX` → 앱 묶음의 `Contents/Helpers/abx`(데몬·앱 실행 파일 기준). 없으면 nil(사용자 PATH 의 abx 를 그대로 쓴다).
+    public static func bundledAbx(environment: [String: String] = ProcessInfo.processInfo.environment,
+                                  executable: URL? = Bundle.main.executableURL) -> URL? {
+        let fm = FileManager.default
+        if let path = environment[AgentDeckEnv.name("ABX")], fm.isExecutableFile(atPath: path) { return URL(fileURLWithPath: path) }
+        guard let executable else { return nil }
+        let helper = executable.resolvingSymlinksInPath().deletingLastPathComponent()
+            .appendingPathComponent("../Helpers/abx").standardizedFileURL
+        return fm.isExecutableFile(atPath: helper.path) ? helper : nil
+    }
+
+    /// `binDir/abx` 를 맞춘다(데몬이 뜰 때). abx 가 없으면 지운다. PATH 에 넣을 폴더를 돌려준다(없으면 nil).
+    @discardableResult
+    public static func installShim(abx: URL?, termDir: URL = TermPaths.home) -> URL? {
+        let dir = binDir(termDir: termDir)
+        let shim = dir.appendingPathComponent("abx")
+        guard let abx else {
+            try? FileManager.default.removeItem(at: shim)
+            return nil
+        }
+        let quoted = "'" + abx.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = "#!/bin/sh\n# AgentDeck 이 화면에 주는 abx — 앱이 쓰는 abx 를 실행한다(데몬이 뜰 때 다시 쓴다)\nexec \(quoted) \"$@\"\n"
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            if (try? String(contentsOf: shim, encoding: .utf8)) != script {
+                try Data(script.utf8).write(to: shim, options: .atomic)
+            }
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+            return dir
+        } catch {
+            return nil
+        }
+    }
+
+    /// PATH 맨 앞에 폴더를 둔다(이미 있으면 앞으로 옮긴다)
+    public static func prependPath(_ dir: URL, to path: String?) -> String {
+        let rest = (path ?? "/usr/bin:/bin:/usr/sbin:/sbin").split(separator: ":").map(String.init).filter { $0 != dir.path }
+        return ([dir.path] + rest).joined(separator: ":")
     }
 }
 

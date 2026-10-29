@@ -17,11 +17,17 @@
 
 - [ ] `CHANGELOG.md` 에 버전·날짜·바뀐 점, `scripts/build-term-proto.sh` 의 `VERSION` 기본값을 올린다(또는 `VERSION=x.y.z` 로 빌드).
 - [ ] `swift build && swift test`(최소 `swift test --filter SessionCoreTests`) 통과.
+- [ ] 브라우저: agent-browser 저장소(abx)가 원하는 커밋인지 확인한다(빌드가 `ABX_SRC` 에서 abx 를 만들어 넣는다, 없으면 빌드 실패).
+      에이전트 전용 브라우저 고정 판(`Sources/BrowserCore/BrowserInstaller.swift` 의 `BrowserRelease.pinned`)을 그때의 Chrome for Testing
+      안정판으로 올린다 — 스스로 업데이트하지 않으므로 보안 수정은 이것으로만 들어간다. 판·주소를 바꾸고 받은 zip 의 `shasum -a 256` 을 넣는다
+      (https://googlechromelabs.github.io/chrome-for-testing/ 의 Stable, mac-arm64). 새 판으로 screencast·입력을 한 번 확인한다.
 - [ ] `scripts/build-term-proto.sh` → `dist/AgentDeck-x.y.z.zip`. 확인:
   - `lipo -archs` 로 `dist/AgentDeck.app/Contents/MacOS/AgentDeck`·`AgentDeckDaemon` 둘 다 `arm64`(`ClaudeTermDaemon` 은 `AgentDeckDaemon` 링크)
   - `plutil -p dist/AgentDeck.app/Contents/Info.plist` 의 `CFBundleShortVersionString`·`CFBundleName`(AgentDeck)·`CFBundleExecutable`(AgentDeck)·
     `CFBundleIdentifier`(dev.agentdeck.app — 다시 바꾸면 알림 권한·창 위치가 또 초기화된다)
   - `ls dist/AgentDeck.app/Contents/Resources/Fonts` 에 JetBrains Mono·Nerd Font·D2Coding 과 라이선스
+  - `dist/AgentDeck.app/Contents/Helpers/abx`·`agent-browser`(arm64), `Contents/Resources/abx/VERSION` 이 의도한 abx 판인지(`-dirty` 가 아닌지)
+  - `codesign --verify --deep --strict dist/AgentDeck.app`
 - [ ] 격리 시험으로 hook 연결/해제·새 버전 줄을 본다(README "개발자용", `AGENTDECK_FAKE_LATEST=vx.y.z`). 실제 `~/.claude`·`~/.codex` 로 시험하지 않는다.
 - [ ] 데이터 위치를 건드렸으면 가짜 홈에서 처음 설치·예전 폴더 옮기기·예전 데몬에 붙기·지금 옮기기를 본다(docs/ARCHITECTURE.md "이름과 예전 판 이어받기").
 - [ ] 태그와 릴리스(zip 이름은 `AgentDeck-*.zip` 이어야 설치 스크립트가 찾는다):

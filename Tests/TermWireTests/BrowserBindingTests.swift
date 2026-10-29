@@ -27,16 +27,52 @@ final class BrowserBindingTests: XCTestCase {
         XCTAssertEqual(BrowserBinding.environment(pane: "A", termDir: long, browser: nil)["ABX_STATE_DIR"], long.path + "/abx/state")
     }
 
-    func testChromeForTestingPicksTheNewestInstalledVersion() throws {
-        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: home) }
-        for version in ["99.0.1.2", "156.0.8078.73"] {
-            let dir = home.appendingPathComponent(".abx/browsers/\(version)/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS")
-            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let bin = dir.appendingPathComponent("Google Chrome for Testing")
-            FileManager.default.createFile(atPath: bin.path, contents: Data(), attributes: [.posixPermissions: 0o755])
-        }
-        XCTAssertTrue(BrowserBinding.chromeForTesting(environment: [:], home: home)?.contains("/156.0.8078.73/") ?? false)
-        XCTAssertNil(BrowserBinding.chromeForTesting(environment: [:], home: home.appendingPathComponent("none")))
+    func testBrowserChoiceIsLeftToAbxUnlessPinned() throws {
+        let env = BrowserBinding.environment(pane: "A", termDir: URL(fileURLWithPath: "/t"), browser: nil,
+                                             browsersDir: URL(fileURLWithPath: "/h/.abx/browsers"))
+        XCTAssertEqual(env["ABX_BROWSERS_DIR"], "/h/.abx/browsers")
+        XCTAssertNil(env["ABX_BROWSER"])
+        XCTAssertEqual(BrowserBinding.environment(pane: "A", browser: "/bin/sh")["ABX_BROWSER"], "/bin/sh")
+        XCTAssertEqual(BrowserBinding.explicitBrowser(environment: ["AGENTDECK_BROWSER": "/bin/sh"]), "/bin/sh")
+        XCTAssertNil(BrowserBinding.explicitBrowser(environment: ["AGENTDECK_BROWSER": "/nope"]))
+        XCTAssertNil(BrowserBinding.explicitBrowser(environment: [:]))
+    }
+
+    func testShimRunsTheAppsAbx() throws {
+        let term = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: term) }
+        // 따옴표가 든 경로도 그대로 실행한다
+        let target = term.appendingPathComponent("it's/abx")
+        try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "#!/bin/sh\necho \"abx:$*\"\n".write(to: target, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target.path)
+        let dir = try XCTUnwrap(BrowserBinding.installShim(abx: target, termDir: term))
+        let process = Process()
+        process.executableURL = dir.appendingPathComponent("abx")
+        process.arguments = ["open", "a b"]
+        let out = Pipe()
+        process.standardOutput = out
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8), "abx:open a b\n")
+        XCTAssertNil(BrowserBinding.installShim(abx: nil, termDir: term))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("abx").path))
+    }
+
+    func testBundledAbxAndPath() throws {
+        let app = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + "/X.app/Contents")
+        defer { try? FileManager.default.removeItem(at: app.deletingLastPathComponent().deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("Helpers"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: app.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+        let helper = app.appendingPathComponent("Helpers/abx")
+        FileManager.default.createFile(atPath: helper.path, contents: Data(), attributes: [.posixPermissions: 0o755])
+        let daemon = app.appendingPathComponent("MacOS/AgentDeckDaemon")
+        XCTAssertEqual(BrowserBinding.bundledAbx(environment: [:], executable: daemon)?.resolvingSymlinksInPath().path,
+                       helper.resolvingSymlinksInPath().path)
+        XCTAssertEqual(BrowserBinding.bundledAbx(environment: ["AGENTDECK_ABX": "/bin/sh"], executable: daemon)?.path, "/bin/sh")
+        XCTAssertNil(BrowserBinding.bundledAbx(environment: [:], executable: URL(fileURLWithPath: "/usr/bin/true")))
+        let bin = URL(fileURLWithPath: "/t/bin")
+        XCTAssertEqual(BrowserBinding.prependPath(bin, to: "/usr/bin:/t/bin:/bin"), "/t/bin:/usr/bin:/bin")
+        XCTAssertEqual(BrowserBinding.prependPath(bin, to: nil), "/t/bin:/usr/bin:/bin:/usr/sbin:/sbin")
     }
 }

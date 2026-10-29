@@ -184,12 +184,18 @@ public struct DaemonState: Codable, Equatable {
     public var panes: [PaneInfo]
     /// 데몬이 뜰 때마다 새로 정하는 ID. PID 는 재부팅 뒤 다시 쓰일 수 있어 데몬이 바뀌었는지는 이것으로 본다(예전 데몬은 nil).
     public var instance: String?
+    /// 이 데몬이 화면에 해 주는 것(예전 데몬은 nil). 앱을 바꿔도 떠 있던 데몬은 그대로라, 앱이 그 차이를 알린다.
+    public var features: [String]?
 
-    public init(pid: Int32, footprint: UInt64, panes: [PaneInfo], instance: String? = nil) {
+    /// 화면 셸에 브라우저(abx 세션·`abx` 명령·받은 브라우저 폴더)를 넣는다
+    public static let browserFeature = "browser"
+
+    public init(pid: Int32, footprint: UInt64, panes: [PaneInfo], instance: String? = nil, features: [String]? = nil) {
         self.pid = pid
         self.footprint = footprint
         self.panes = panes
         self.instance = instance
+        self.features = features
     }
 }
 

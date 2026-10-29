@@ -156,6 +156,7 @@ final class Daemon {
             unloadOwnJob()
             exit(0)
         }
+        abxBin = BrowserBinding.installShim(abx: BrowserBinding.bundledAbx(), termDir: home)
         let listenFd: Int32
         do {
             listenFd = try UnixSocket.listen(in: home)
@@ -261,10 +262,12 @@ final class Daemon {
 
     /// 이 데몬 실행의 ID(앱이 데몬이 바뀌었는지 알아보는 데 쓴다)
     let instance = UUID().uuidString
+    /// 화면 PATH 앞에 둘 `abx` 폴더(데몬 잠금을 잡은 뒤 맞춘다 — 곧 끝날 두 번째 데몬이 떠 있는 데몬의 것을 바꾸지 않게). 앱에 abx 가 없으면 nil.
+    var abxBin: URL?
 
     var state: DaemonState {
         DaemonState(pid: getpid(), footprint: Memory.footprint(), panes: order.compactMap { panes[$0]?.info },
-                    instance: instance)
+                    instance: instance, features: [DaemonState.browserFeature])
     }
 
     func broadcastState() {
@@ -320,6 +323,8 @@ final class Daemon {
         env[AgentDeckEnv.name("PANE")] = id
         // 이 화면의 브라우저(abx 세션). 셸에서 띄운 claude·codex 가 `abx` 를 쓰면 이 브라우저를 쓴다
         for (key, value) in BrowserBinding.environment(pane: id) { env[key] = value }
+        // 앱에 든 abx 를 `abx` 로(abx 를 따로 설치하지 않은 동료도). 셸 설정이 PATH 앞에 다른 abx 를 두면 그것이 이긴다.
+        if let abxBin { env["PATH"] = BrowserBinding.prependPath(abxBin, to: env["PATH"]) }
         // 예전 이름(앱을 예전 화면 안에서 띄웠으면 남아 있다)은 빼서 다른 화면 ID 로 읽히지 않게
         env.removeValue(forKey: AgentDeckEnv.legacyName("PANE"))
         // Finder 로 띄운 앱에는 LANG 이 없다. 없으면 한글이 깨지므로 지금 언어 설정으로 채운다.
