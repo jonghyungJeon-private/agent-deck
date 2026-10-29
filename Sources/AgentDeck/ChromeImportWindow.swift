@@ -5,7 +5,8 @@ import TermWire
 
 /// "Chrome 로그인 가져오기…"(셸 메뉴): 사용자의 Chrome 에서 고른 사이트의 로그인 상태(쿠키)를 에이전트 브라우저로 가져온다.
 /// 사용자가 사이트를 고르고 누를 때만, 그때 한 번 키체인(Chrome Safe Storage)을 묻는다. 비밀번호는 가져오지 않는다.
-/// 넣는 곳: 로그인 템플릿(새로 여는 화면의 브라우저가 복사해 시작) + 지금 떠 있는 에이전트 브라우저들.
+/// 넣는 곳: 로그인 템플릿(새로 여는 화면의 브라우저가 복사해 시작) + 이미 있는 화면의 브라우저 프로필 모두
+/// (떠 있으면 그 브라우저에 바로, 꺼져 있으면 잠깐 띄워 넣고 끈다).
 final class ChromeImportModel: ObservableObject {
     enum Phase: Equatable {
         case idle
@@ -29,16 +30,13 @@ final class ChromeImportModel: ObservableObject {
     /// 시험용: 가짜 Chrome 폴더(AGENTDECK_CHROME_ROOT)와 그 폴더용 암호(AGENTDECK_CHROME_TEST_PASSWORD — 폴더를 바꿨을 때만 쓴다)
     private let root: URL
     private let testPassword: String?
-    /// 지금 떠 있는 에이전트 브라우저들의 CDP 주소(메인 스레드에서 묻는다)
-    private let runningBrowsers: () -> [URL]
     private let helpers: URL
     private let queue = DispatchQueue(label: "AgentDeck.chrome-import", qos: .userInitiated)
 
-    init(runningBrowsers: @escaping () -> [URL], helpers: URL, environment: [String: String] = ProcessInfo.processInfo.environment) {
+    init(helpers: URL, environment: [String: String] = ProcessInfo.processInfo.environment) {
         let override = AgentDeckEnv.nonEmpty("CHROME_ROOT", in: environment)
         root = override.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? ChromeImport.defaultRoot
         testPassword = override == nil ? nil : AgentDeckEnv.nonEmpty("CHROME_TEST_PASSWORD", in: environment)
-        self.runningBrowsers = runningBrowsers
         self.helpers = helpers
     }
 
@@ -102,7 +100,6 @@ final class ChromeImportModel: ObservableObject {
     func importSelected() {
         guard let profile, !selected.isEmpty, !busy else { return }
         let sites = selected
-        let running = runningBrowsers()
         let testPassword = self.testPassword
         let helpers = self.helpers
         importing = true
@@ -124,15 +121,14 @@ final class ChromeImportModel: ObservableObject {
                 // 템플릿을 복사해 새로 띄우는 브라우저는 세션 쿠키를 되살리지 않으므로 템플릿에는 7일 쿠키로 넣는다
                 let kept = ChromeImport.keepingSessions(picked.cookies, for: 7 * 24 * 3600)
                 let template = try await Self.injectIntoTemplate(ChromeImport.cdpCookies(kept), helpers: helpers)
-                let params = ChromeImport.cdpCookies(picked.cookies)
-                var live = 0, missed = 0
-                for endpoint in running {
-                    // 하나도 넣지 못한 브라우저(연결 끊김·전부 거절)는 넣었다고 세지 않는다
-                    if let r = try? await ChromeImport.inject(params, into: endpoint), r.set > 0 { live += 1 } else { missed += 1 }
-                }
+                report.send(.working("이미 있는 화면의 브라우저에 넣는 중…"))
+                let panes = await Self.injectIntoPanes(live: ChromeImport.cdpCookies(picked.cookies), offline: ChromeImport.cdpCookies(kept),
+                                                       helpers: helpers)
                 var message = "\(sites.count)개 사이트의 로그인(쿠키 \(template.set)개)을 가져왔습니다. 새로 여는 화면의 브라우저부터 로그인된 채로 시작합니다"
-                message += live > 0 ? " — 지금 떠 있는 브라우저 \(live)개에도 넣었습니다." : "."
-                if missed > 0 { message += " 떠 있는 브라우저 \(missed)개에는 넣지 못했습니다(새로 열면 로그인돼 있습니다)." }
+                let done = [panes.live > 0 ? "떠 있는 브라우저 \(panes.live)개" : nil, panes.offline > 0 ? "꺼져 있던 화면 \(panes.offline)개" : nil]
+                    .compactMap { $0 }
+                message += done.isEmpty ? "." : " — 이미 있는 화면에도 넣었습니다(\(done.joined(separator: ", ")))."
+                if panes.missed > 0 { message += " 화면 \(panes.missed)개에는 넣지 못했습니다(사람이 조작 중이거나 브라우저를 띄우지 못함)." }
                 if picked.skipped + template.rejected > 0 {
                     message += " 쿠키 \(picked.skipped + template.rejected)개는 풀거나 넣지 못해 뺐습니다."
                 }
@@ -162,6 +158,73 @@ final class ChromeImportModel: ObservableObject {
         } catch {
             phase = .failed("로그인 템플릿을 비우지 못했습니다: \(error.localizedDescription)")
         }
+    }
+
+    /// 이미 있는 화면의 브라우저 프로필(`abx-profiles/ad-*`)마다 넣는다. 떠 있으면 그 브라우저에 바로(`live`), 꺼져 있으면
+    /// 그 프로필을 임시 세션(`ai-…`)으로 창 없이 잠깐 띄워 넣고 끈다(`offline` — 다시 띄우면 세션 쿠키가 사라지므로 7일 쿠키).
+    /// 꺼진 화면은 그 화면 세션의 writer 자리를 잡고 한다(그동안 에이전트 동작은 기다림). 임시 세션이라 그 사이 에이전트가 조회하려고
+    /// 띄운 브라우저를 끄지 않고, 브라우저는 그 화면이 쓰던 판으로 띄운다(새 판이 프로필을 올리면 옛 판이 못 연다).
+    /// 화면 하나는 abx 가 오래된 자리로 보고 되찾는 120초 안에 끝낸다. 사람이 조작 중(handoff)인 화면은 건너뛴다.
+    private static func injectIntoPanes(live: [[String: Any]], offline: [[String: Any]], helpers: URL) async -> (live: Int, offline: Int, missed: Int) {
+        let fm = FileManager.default
+        let profiles = BrowserBinding.templateDir().deletingLastPathComponent()
+        let names = ((try? fm.contentsOfDirectory(atPath: profiles.path)) ?? []).filter { $0.hasPrefix("ad-") }.sorted()
+        let runner = AbxRunner.locate(bundleHelpers: helpers)
+        let socketDir = BrowserBinding.socketDir().path, stateDir = BrowserBinding.stateDir().path
+        var counts = (live: 0, offline: 0, missed: 0)
+        func injectLive(_ status: AbxStatus, deadline: Date = .distantFuture) async {
+            // 하나도 넣지 못한 브라우저(연결 끊김·전부 거절)는 넣었다고 세지 않는다
+            if let url = status.cdpUrl.flatMap(URL.init(string:)), let r = try? await ChromeImport.inject(live, into: url, deadline: deadline),
+               r.set > 0 {
+                counts.live += 1
+            } else {
+                counts.missed += 1
+            }
+        }
+        for name in names {
+            let profile = profiles.appendingPathComponent(name)
+            let pane = AbxSession(name: name, socketDir: socketDir, stateDir: stateDir, profileDir: profile.path)
+            let status = AbxStateReader().status(pane)
+            if status.running {
+                await injectLive(status)
+                continue
+            }
+            guard let runner, status.handoff == nil, let lease = AbxWriterLease.acquire(stateDir: stateDir, session: name, wait: 5) else {
+                counts.missed += 1
+                continue
+            }
+            defer { lease.release() }
+            let started = Date()
+            // 자리를 잡는 사이 에이전트가 띄웠으면 그 브라우저에 넣는다
+            let now = AbxStateReader().status(pane)
+            if now.running {
+                await injectLive(now, deadline: started.addingTimeInterval(75)) // 자리를 쥔 채이므로 120초 안에
+                continue
+            }
+            let temp = AbxSession(name: "ai-" + name.dropFirst(3), socketDir: socketDir, stateDir: stateDir, profileDir: profile.path)
+            var env = ["ABX_HEADLESS": "1", "ABX_LOCK_INPUT": "0", "ABX_PROFILE_TEMPLATE": "",
+                       "ABX_BROWSERS_DIR": BrowserBinding.browsersDir().path]
+            let saved = (try? Data(contentsOf: URL(fileURLWithPath: socketDir).appendingPathComponent("\(name).launch.json")))
+                .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            if let browser = saved?["executablePath"] as? String ?? BrowserBinding.explicitBrowser() { env["ABX_BROWSER"] = browser }
+            if let display = BrowserBinding.mainDisplay() { env["ABX_BROWSER_ARGS"] = BrowserBinding.screenInfo(display) }
+            var set = 0
+            if (try? runner.run(["up", "--headless"], session: temp, extraEnvironment: env, timeout: 40))?.status == 0,
+               let url = AbxStateReader().status(temp).cdpUrl.flatMap(URL.init(string:)) {
+                set = (try? await ChromeImport.inject(offline, into: url, deadline: started.addingTimeInterval(75)))?.set ?? 0
+            }
+            // 끈 뒤에야 쿠키가 파일에 다 쓰인다. 임시 세션의 기록은 지운다(다음에 이 화면이 쓸 것이 아님).
+            let down = try? runner.run(["down"], session: temp, extraEnvironment: env, timeout: 30)
+            if !AbxStateReader().status(temp).running {
+                for dir in [socketDir, stateDir] {
+                    for file in (try? fm.contentsOfDirectory(atPath: dir)) ?? [] where file.hasPrefix(temp.name + ".") {
+                        try? fm.removeItem(atPath: (dir as NSString).appendingPathComponent(file))
+                    }
+                }
+            }
+            if set > 0, down?.status == 0 { counts.offline += 1 } else { counts.missed += 1 }
+        }
+        return counts
     }
 
     /// 로그인 템플릿에 넣는다. 새 화면은 abx 가 템플릿을 복사해 시작하므로(ABX_PROFILE_TEMPLATE) 템플릿을 그 자리에서 고치지 않고,

@@ -170,18 +170,27 @@ public enum ChromeImport {
 
     /// 브라우저(CDP 브라우저 주소)에 쿠키를 넣는다. 브라우저가 자기 방식으로 저장한다.
     /// 한 번에 넣다가 거절되면(잘못된 쿠키 하나) 하나씩 넣어 나머지는 들어가게 한다. (넣은 수, 거절된 수)
-    public static func inject(_ cookies: [[String: Any]], into endpoint: URL) async throws -> (set: Int, rejected: Int) {
+    /// deadline: 그때가 지나면 남은 것은 넣지 않고 거절로 센다(다른 쪽 자리를 오래 막지 않게).
+    public static func inject(_ cookies: [[String: Any]], into endpoint: URL, deadline: Date = .distantFuture) async throws -> (set: Int, rejected: Int) {
         let client = CDPClient(transport: try await WebSocketTransport.connect(endpoint))
         defer { client.close() }
         var set = 0, rejected = 0
         for start in stride(from: 0, to: cookies.count, by: 200) {
             let chunk = Array(cookies[start..<min(start + 200, cookies.count)])
+            if Date() >= deadline {
+                rejected += cookies.count - start
+                break
+            }
             if (try? await client.send("Storage.setCookies", ["cookies": chunk], timeout: 10)) != nil {
                 set += chunk.count
                 continue
             }
             for cookie in chunk {
-                if (try? await client.send("Storage.setCookies", ["cookies": [cookie]], timeout: 10)) != nil { set += 1 } else { rejected += 1 }
+                if Date() < deadline, (try? await client.send("Storage.setCookies", ["cookies": [cookie]], timeout: 10)) != nil {
+                    set += 1
+                } else {
+                    rejected += 1
+                }
             }
         }
         return (set, rejected)

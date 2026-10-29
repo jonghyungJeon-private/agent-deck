@@ -32,9 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// 설정 창(⌘,) — 처음 열 때 만든다
     lazy var settingsWindow = SettingsWindowController(settings: model.launch, model: model, chromeImport: chromeImport)
     lazy var chromeImport = ChromeImportWindowController(model: ChromeImportModel(
-        runningBrowsers: { [weak self] in
-            (self?.model.browserStates.values.compactMap { $0.running ? $0.cdpUrl.flatMap(URL.init(string:)) : nil }) ?? []
-        },
         helpers: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")))
     var snapshotTimer: Timer?
 
