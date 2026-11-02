@@ -17,6 +17,11 @@ final class BrowserPaneView: NSView {
         didSet { pinButton.isHidden = onPin == nil }
     }
     private let screen = BrowserScreenView()
+    /// 탭 칩 줄: 브라우저의 탭들(AI 작업 공간마다 묶음, 사람 탭은 뒤). 누르면 그 탭을 계속 보여 준다.
+    private let tabBar = NSStackView()
+    private let tabScroll = NSScrollView()
+    private var tabBarHeight: NSLayoutConstraint!
+    private var chips: [BrowserTabs.Chip] = []
     private let placeholder = NSTextField(wrappingLabelWithString: "")
     private var feed: BrowserFeed?
     /// 마지막 상태의 제어권(입력을 보낼지 정한다)
@@ -56,10 +61,22 @@ final class BrowserPaneView: NSView {
         screen.pane = self
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textDim
-        for view in [header, pinButton, controlButton, screen, placeholder] {
+        tabBar.orientation = .horizontal
+        tabBar.spacing = 4
+        tabBar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        tabBar.translatesAutoresizingMaskIntoConstraints = false
+        tabScroll.documentView = tabBar
+        tabScroll.drawsBackground = false
+        tabScroll.hasHorizontalScroller = false
+        tabScroll.hasVerticalScroller = false
+        tabScroll.horizontalScrollElasticity = .allowed
+        tabScroll.verticalScrollElasticity = .none
+        tabScroll.isHidden = true
+        for view in [header, pinButton, controlButton, tabScroll, screen, placeholder] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
+        tabBarHeight = tabScroll.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             header.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             header.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -68,7 +85,14 @@ final class BrowserPaneView: NSView {
             pinButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -6),
             controlButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             controlButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            screen.topAnchor.constraint(equalTo: controlButton.bottomAnchor, constant: 3),
+            tabScroll.topAnchor.constraint(equalTo: controlButton.bottomAnchor, constant: 3),
+            tabScroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tabScroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tabBarHeight,
+            tabBar.topAnchor.constraint(equalTo: tabScroll.contentView.topAnchor),
+            tabBar.bottomAnchor.constraint(equalTo: tabScroll.contentView.bottomAnchor),
+            tabBar.leadingAnchor.constraint(equalTo: tabScroll.contentView.leadingAnchor),
+            screen.topAnchor.constraint(equalTo: tabScroll.bottomAnchor, constant: 3),
             screen.leadingAnchor.constraint(equalTo: leadingAnchor),
             screen.trailingAnchor.constraint(equalTo: trailingAnchor),
             screen.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -141,6 +165,7 @@ final class BrowserPaneView: NSView {
             self?.page = (url, title)
             if let status = self?.lastStatus { self?.show(.live(status)) }
         }
+        feed.onTabs = { [weak self] chips, pinned in self?.showTabs(chips, pinned: pinned) }
         feed.onImage = { [weak self] image, viewport in
             self?.viewport = viewport
             self?.screen.show(image, viewport: viewport)
@@ -195,6 +220,78 @@ final class BrowserPaneView: NSView {
                 .joined(separator: " · ") + tabs
             setControl(status.control)
         }
+    }
+
+    // MARK: - 탭 칩
+
+    /// 탭이 둘 이상이거나 사람이 고른 탭을 보고 있으면 칩 줄을 보인다
+    private func showTabs(_ chips: [BrowserTabs.Chip], pinned: Bool) {
+        guard chips != self.chips || tabBar.arrangedSubviews.last?.identifier?.rawValue != (pinned ? "follow" : "chip") else { return }
+        self.chips = chips
+        tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let visible = chips.count > 1 || pinned
+        tabScroll.isHidden = !visible
+        tabBarHeight.constant = visible ? TermAppearance.scaled(22) : 0
+        guard visible else { return }
+        var group: String?? = .none
+        for (i, chip) in chips.enumerated() {
+            if group != .some(chip.group) {
+                // 묶음 사이는 조금 더 띄운다
+                if let last = tabBar.arrangedSubviews.last { tabBar.setCustomSpacing(10, after: last) }
+                group = .some(chip.group)
+                let label = NSTextField(labelWithString: chip.group ?? "내 탭")
+                label.font = .systemFont(ofSize: TermAppearance.scaled(10), weight: .semibold)
+                label.textColor = TermAppearance.textDim
+                tabBar.addArrangedSubview(label)
+            }
+            let text = chip.text.count > 22 ? String(chip.text.prefix(21)) + "…" : chip.text
+            let button = NSButton(title: (chip.agentHere ? "● " : "") + text, target: self, action: #selector(chipClicked(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier("chip")
+            button.tag = i
+            button.bezelStyle = .recessed
+            button.setButtonType(.pushOnPushOff)
+            button.controlSize = .small
+            button.font = .systemFont(ofSize: TermAppearance.scaled(11))
+            button.state = chip.shown ? .on : .off
+            let owner = chip.users ? "사람이 연 탭" + (chip.group != nil ? " · AI 가 맡아 쓰는 중" : "") : "AI 탭 · 작업 공간 \(chip.group ?? BrowserTabs.main)"
+            button.toolTip = [chip.title, chip.url, [chip.tabId, owner].compactMap { $0 }.joined(separator: " · "),
+                              chip.agentHere ? "● AI 가 마지막으로 일한 탭" : nil].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+            let menu = NSMenu()
+            let close = NSMenuItem(title: "탭 닫기", action: #selector(closeChip(_:)), keyEquivalent: "")
+            close.target = self
+            close.tag = i
+            menu.addItem(close)
+            button.menu = menu
+            tabBar.addArrangedSubview(button)
+        }
+        if pinned {
+            let follow = NSButton(title: "AI 따라가기", target: self, action: #selector(followAgent))
+            follow.identifier = NSUserInterfaceItemIdentifier("follow")
+            follow.bezelStyle = .inline
+            follow.controlSize = .small
+            follow.font = .systemFont(ofSize: TermAppearance.scaled(11))
+            follow.toolTip = "AI 가 일하는 탭을 다시 따라 보여 주기"
+            tabBar.addArrangedSubview(follow)
+        }
+    }
+
+    @objc private func chipClicked(_ sender: NSButton) {
+        guard chips.indices.contains(sender.tag) else { return }
+        feed?.watch(chips[sender.tag].targetId)
+    }
+
+    @objc private func closeChip(_ sender: NSMenuItem) {
+        guard chips.indices.contains(sender.tag) else { return }
+        feed?.closeTab(chips[sender.tag].targetId)
+    }
+
+    @objc private func followAgent() { feed?.watch(nil) }
+
+    /// 시험 명령 `browser-tabs`·`browser-watch`
+    var debugTabs: String { feed?.debugTabs ?? "no feed" }
+    func debugWatch(_ prefix: String) {
+        if prefix == "follow" { feed?.watch(nil); return }
+        if let chip = chips.first(where: { $0.targetId.hasPrefix(prefix) || $0.tabId == prefix || $0.text == prefix }) { feed?.watch(chip.targetId) }
     }
 
     private func setControl(_ control: AbxStatus.Control?) {
@@ -536,6 +633,8 @@ final class BrowserFeed {
     var onImage: ((CGImage, CGSize) -> Void)?
     /// 보고 있는 탭의 주소·제목이 바뀜
     var onPage: ((String, String) -> Void)?
+    /// 칸 위 탭 칩(브라우저의 탭들)과, 사람이 고른 탭을 보고 있는지(AI 를 따라가지 않음)
+    var onTabs: (([BrowserTabs.Chip], Bool) -> Void)?
 
     private let session: AbxSession
     private let watchDirs: [String]
@@ -565,6 +664,15 @@ final class BrowserFeed {
     private var optionsObserver: NSObjectProtocol?
     /// 사람이 조작하다 연 탭 — 사람이 제어하는 동안은 abx 가 기억한 활성 탭보다 이것을 보여 준다
     private var userTarget: String?
+    /// 사람이 탭 칩으로 고른 탭: AI 가 다른 탭에서 일해도 이 탭을 계속 보여 준다(nil = AI 따라가기).
+    /// abx 도 안다(`<세션>.watch.json`): `abx done` 은 이 탭을 닫지 않고, `abx resume` 은 이 탭에서 이어 간다.
+    private var pinned: String?
+    /// 브라우저가 지금 연 페이지들(CDP 순서) — 사람이 연 탭도 abx 를 거치지 않고 바로 안다
+    private var pages: [BrowserTabs.Page] = []
+    /// abx 가 마지막으로 적은 탭 정보(이름·작업 공간·누가 열었는지)
+    private var abxTabs: [AbxStatus.Tab] = []
+    /// 마지막으로 쓴 watch 파일 내용(같으면 다시 쓰지 않는다 — 상태 폴더를 보고 있어 쓰면 다시 읽게 된다)
+    private var lastWatch: String?
 
     init(owner: String) {
         let env = BrowserBinding.environment(pane: owner, browser: nil)
@@ -614,9 +722,12 @@ final class BrowserFeed {
         onState = nil
         onImage = nil
         onPage = nil
+        onTabs = nil
         if let optionsObserver { NotificationCenter.default.removeObserver(optionsObserver) }
         queue.async { [self] in
             stopped = true
+            // 칸이 닫히면 사람이 보던 탭도 없다
+            if lastWatch != nil { try? FileManager.default.removeItem(at: watchFile) }
             timer?.cancel()
             watchers.forEach { $0.cancel() }
             watchers = []
@@ -668,11 +779,90 @@ final class BrowserFeed {
         let wasControlled = control == .agent || control == .switching
         control = status.control
         if control != .user { userTarget = nil }
+        abxTabs = status.tabs
         // AI 가 쥐고 있는 동안 미뤄 둔 크기 맞추기를 이제 한다
         if wasControlled, control == .user || control == .idle { applySize() }
         publish(.live(status))
         if url != connectedURL { connect(url, status: status) }
-        else { follow(userTarget ?? status.activeTab?.targetId) }
+        else { follow(wanted) }
+        publishTabs()
+    }
+
+    /// 보여 줄 탭: 사람이 고른 탭 > 사람이 조작하다 연 탭 > AI 의 활성 탭
+    private var wanted: String? { pinned ?? userTarget ?? abxTabs.first(where: \.active)?.targetId }
+
+    // MARK: - 탭 칩
+
+    /// 탭 칩을 눌렀다: 그 탭을 계속 보여 준다. nil = 다시 AI 를 따라간다.
+    func watch(_ target: String?) {
+        queue.async { [self] in
+            pinned = target
+            if target == nil { userTarget = nil } // "AI 따라가기": 사람이 조작하다 연 탭보다 AI 의 탭
+            follow(wanted)
+            publishTabs()
+        }
+    }
+
+    /// 칩 메뉴의 "탭 닫기"(사람이 닫는다 — 누가 연 탭이든)
+    func closeTab(_ target: String) {
+        queue.async { [self] in client?.post("Target.closeTarget", ["targetId": target]) }
+    }
+
+    private var watchFile: URL {
+        URL(fileURLWithPath: session.stateDir).appendingPathComponent("\(session.name).watch.json")
+    }
+
+    private func publishTabs() {
+        let shown = stream?.currentTarget
+        let chips = BrowserTabs.chips(pages: pages, tabs: abxTabs, shown: shown)
+        let isPinned = pinned != nil
+        DispatchQueue.main.async { [weak self] in self?.onTabs?(chips, isPinned) }
+        // abx 에 알린다: 사람이 보는 탭과, 사람이 골랐는지
+        guard let shown else { return }
+        let json = "{\"targetId\":\"\(shown)\",\"pinned\":\(isPinned)}"
+        guard json != lastWatch else { return }
+        lastWatch = json
+        let file = watchFile
+        let tmp = file.appendingPathExtension(UUID().uuidString)
+        if (try? json.write(to: tmp, atomically: false, encoding: .utf8)) != nil {
+            if rename(tmp.path, file.path) != 0 { try? FileManager.default.removeItem(at: tmp) }
+        }
+    }
+
+    /// CDP 의 페이지 알림으로 탭 목록을 맞춘다
+    private func pageEvent(_ method: String, _ params: [String: Any]) {
+        switch method {
+        case "Target.targetCreated", "Target.targetInfoChanged":
+            guard let info = params["targetInfo"] as? [String: Any], info["type"] as? String == "page",
+                  let id = info["targetId"] as? String else { return }
+            let page = BrowserTabs.Page(targetId: id, url: info["url"] as? String ?? "", title: info["title"] as? String ?? "")
+            if let i = pages.firstIndex(where: { $0.targetId == id }) {
+                guard pages[i] != page else { return }
+                pages[i] = page
+            } else {
+                pages.append(page)
+            }
+        case "Target.targetDestroyed":
+            guard let id = params["targetId"] as? String, let i = pages.firstIndex(where: { $0.targetId == id }) else { return }
+            pages.remove(at: i)
+            if pinned == id { pinned = nil } // 고른 탭이 닫히면 다시 AI 를 따라간다
+            if userTarget == id { userTarget = nil }
+            // 보던 탭이 닫혔다: 다음 볼 탭을 고른다. abx 의 활성 탭 기록이 아직 그 탭이면(늦은 기록) 남은 페이지 중에서.
+            if stream?.currentTarget == id { follow(wanted == id ? nil : wanted) }
+        default:
+            return
+        }
+        publishTabs()
+    }
+
+    /// 시험 명령 `browser-tabs`
+    var debugTabs: String {
+        queue.sync {
+            let chips = BrowserTabs.chips(pages: pages, tabs: abxTabs, shown: stream?.currentTarget)
+            return (["pinned=\(pinned.map { String($0.prefix(8)) } ?? "-")"] + chips.map { c in
+                "\(c.shown ? ">" : " ")\(c.agentHere ? "●" : " ") \(c.targetId.prefix(8)) \(c.tabId ?? "-") [\(c.group ?? "user")] \(c.text)"
+            }).joined(separator: "\n")
+        }
     }
 
     // MARK: - CDP
@@ -697,6 +887,7 @@ final class BrowserFeed {
                 let stream = ScreencastStream(client: client, settings: self.options.screencast)
                 client.onEvent = { [weak self, weak stream] event in
                     if stream?.handle(event) == true { return }
+                    if event.method.hasPrefix("Target.target") { self?.queue.async { self?.pageEvent(event.method, event.params) } }
                     if event.method == "Target.targetCreated" { self?.queue.async { self?.opened(event.params) } }
                     if event.method == "Target.targetInfoChanged", let info = event.params["targetInfo"] as? [String: Any],
                        let target = info["targetId"] as? String, target == stream?.currentTarget {
@@ -715,9 +906,11 @@ final class BrowserFeed {
                 self.client = client
                 self.stream = stream
                 self.connectedURL = url
+                // 이미 열린 탭들은 setDiscoverTargets 가 targetCreated 로 알려 준다(pageEvent)
+                self.pages = []
                 client.post("Target.setDiscoverTargets", ["discover": true])
                 // 다시 붙을 때(선명도 바꿈 등) 사람이 보던 탭이 있으면 그것을 계속 본다
-                self.follow(self.userTarget ?? status.activeTab?.targetId)
+                self.follow(self.wanted)
             }
         }
     }
@@ -745,6 +938,7 @@ final class BrowserFeed {
               let target = info["targetId"] as? String, let stream, let current = stream.currentTarget,
               let opener = info["openerId"] as? String, opener == current else { return }
         userTarget = target
+        if pinned != nil { pinned = target } // 고른 탭에서 연 새 탭도 계속 본다
         Task { [weak self] in
             try? await stream.show(target: target)
             self?.queue.async { self?.showing(target) }
@@ -802,6 +996,7 @@ final class BrowserFeed {
     /// 보는 탭이 바뀌었다: 크기를 맞추고 주소·제목을 알린다
     private func showing(_ target: String) {
         applySize()
+        publishTabs()
         guard let stream else { return }
         Task { [weak self] in
             guard let info = await stream.info(target: target),

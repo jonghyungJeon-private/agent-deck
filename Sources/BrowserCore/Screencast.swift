@@ -128,7 +128,9 @@ public final class ScreencastStream {
     public func pages() async -> [String]? {
         guard let result = try? await client.send("Target.getTargets"),
               let infos = result["targetInfos"] as? [[String: Any]] else { return nil }
-        return infos.filter { ($0["type"] as? String) == "page" }.compactMap { $0["targetId"] as? String }
+        // Chrome 내부 페이지(chrome://newtab 등)는 보여 줄 탭이 아니다(abx 도 탭으로 치지 않는다)
+        return infos.filter { ($0["type"] as? String) == "page" && !BrowserTabs.internalPage($0["url"] as? String ?? "") }
+            .compactMap { $0["targetId"] as? String }
     }
 
     /// 보여 줄 탭 고르기: 원하는 탭이 열려 있으면 그것, 아니면 지금 보는 탭(있으면), 아니면 첫 페이지.

@@ -43,6 +43,22 @@ public struct AbxStatus: Codable, Equatable, Sendable {
         public var url: String
         public var title: String
         public var active: Bool
+        /// 에이전트가 붙인 이름(`abx tab new --label`)
+        public var label: String?
+        /// "agent"(abx·AI 동작이 연 탭) | "user"(사람이 연 탭·AI 가 남겨 준 탭). 없으면 작업 공간 이전 abx — AI 탭
+        public var openedBy: String?
+        /// 사람 탭인데 AI 가 맡아 쓰는 중(`abx tab adopt`)
+        public var adopted: Bool?
+        /// 작업 공간(`abx space`) — 없으면 main(AI 탭) 또는 사람 탭
+        public var space: Space?
+
+        public struct Space: Codable, Equatable, Sendable {
+            public var id: Int
+            public var name: String
+            public init(id: Int, name: String) { self.id = id; self.name = name }
+        }
+
+        public var isUsers: Bool { openedBy == "user" }
     }
 
     public var session: String

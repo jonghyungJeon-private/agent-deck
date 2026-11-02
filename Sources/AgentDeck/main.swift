@@ -980,6 +980,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let v = argument.split(separator: " ").compactMap { Double($0) }
             guard v.count == 2, let browserWindow = model.browserWindows.target?.window else { return }
             browserWindow.setContentSize(NSSize(width: v[0], height: v[1]))
+        case "browser-tabs":
+            // 맨 앞 브라우저 창의 탭 칩(> 보이는 탭, ● AI 가 일한 탭, [작업 공간|user])
+            print(model.browserWindows.target?.pane.debugTabs ?? "no browser window")
+            print("browser-tabs end")
+            fflush(stdout)
+        case "browser-snap":
+            // browser-snap <경로.png>: 맨 앞 브라우저 창 그림(탭 칩 줄 확인용)
+            guard let view = model.browserWindows.target?.window?.contentView,
+                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument))
+        case "browser-watch":
+            // browser-watch <targetId 앞부분|t3|이름|follow>: 탭 칩 누르기
+            model.browserWindows.target?.pane.debugWatch(argument)
         case "browsers":
             // 브라우저: 화면마다 칩 상태, 열린 창마다 주인·창 보임·스트림·받은 프레임 수·제어·페이지 크기
             for (id, status) in model.browserStates.sorted(by: { $0.key < $1.key }) {
