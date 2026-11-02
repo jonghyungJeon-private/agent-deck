@@ -1,4 +1,5 @@
 import Foundation
+import TermWire
 
 /// 에이전트 스킬(폴더 하나에 SKILL.md)을 Claude Code(`<설정 폴더>/skills`)·Codex(`~/.agents/skills`)에 넣고 뺀다.
 /// 이 앱이 넣은 폴더에는 표식 파일(`.agentdeck`)을 두고, 그 폴더만 고치거나 지운다.
@@ -123,8 +124,13 @@ public extension SkillInstaller {
         SkillInstaller(skillsDir: claudeDir.appendingPathComponent("skills", isDirectory: true), name: name)
     }
 
-    /// Codex 의 사용자 스킬 폴더(`~/.agents/skills`)
-    static func codex(name: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> SkillInstaller {
-        SkillInstaller(skillsDir: home.appendingPathComponent(".agents/skills", isDirectory: true), name: name)
+    /// Codex 의 사용자 스킬 폴더(`~/.agents/skills`). 시험용 `AGENTDECK_CODEX_SKILLS_DIR` 로 바꾼다 — `CODEX_HOME` 은 이 폴더를
+    /// 바꾸지 않고, 앱은 시작할 때 자기가 넣은 스킬을 묻지 않고 새 판으로 바꾸므로(`checkBrowserSkill`), 시험 앱이 실제 Codex 스킬을 고치지 않게.
+    static func codex(name: String, home: URL = FileManager.default.homeDirectoryForCurrentUser,
+                      environment: [String: String] = ProcessInfo.processInfo.environment) -> SkillInstaller {
+        if let dir = AgentDeckEnv.nonEmpty("CODEX_SKILLS_DIR", in: environment) {
+            return SkillInstaller(skillsDir: URL(fileURLWithPath: (dir as NSString).expandingTildeInPath, isDirectory: true), name: name)
+        }
+        return SkillInstaller(skillsDir: home.appendingPathComponent(".agents/skills", isDirectory: true), name: name)
     }
 }

@@ -76,7 +76,16 @@ final class SkillInstallerTests: XCTestCase {
     func testTargets() {
         let claude = SkillInstaller.claude(name: "abx", claudeDir: URL(fileURLWithPath: "/c"))
         XCTAssertEqual(claude.skillDir.path, "/c/skills/abx")
-        let codex = SkillInstaller.codex(name: "abx", home: URL(fileURLWithPath: "/h"))
+        let codex = SkillInstaller.codex(name: "abx", home: URL(fileURLWithPath: "/h"), environment: [:])
         XCTAssertEqual(codex.skillDir.path, "/h/.agents/skills/abx")
+    }
+
+    /// 시험 앱은 Codex 스킬 폴더도 떼어 놓는다(CODEX_HOME 은 ~/.agents/skills 를 바꾸지 않는다)
+    func testCodexSkillsDirCanBeIsolatedForTests() {
+        let codex = SkillInstaller.codex(name: "abx", home: URL(fileURLWithPath: "/h"),
+                                         environment: ["AGENTDECK_CODEX_SKILLS_DIR": "/tmp/t/skills", "CODEX_HOME": "/tmp/t/codex"])
+        XCTAssertEqual(codex.skillDir.path, "/tmp/t/skills/abx")
+        XCTAssertEqual(SkillInstaller.codex(name: "abx", home: URL(fileURLWithPath: "/h"), environment: ["CODEX_HOME": "/x"]).skillDir.path,
+                       "/h/.agents/skills/abx")
     }
 }

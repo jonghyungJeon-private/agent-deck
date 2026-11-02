@@ -203,7 +203,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   손수 푼(표식 없는) 같은 판은 띄워 보고 표식만 쓴다. 받기 전에는 설치된 Chrome 을 쓰고, 받은 뒤에는 새로 띄우는 세션부터 쓴다.
   Chrome for Testing 은 스스로 업데이트하지 않으므로 릴리스마다 고정 판을 올린다(docs/RELEASING.md).
 - **스킬 연결(사이드바 "브라우저 연결하기"):** 에이전트가 abx 를 알도록 abx 스킬(SKILL.md)을 Claude Code(`<CLAUDE_CONFIG_DIR 또는 ~/.claude>/skills/abx`)·
-  Codex(`~/.agents/skills/abx`)에 넣는다(`SessionCore/SkillInstaller`). 내용은 찾은 abx 가 알려 준다(`abx skill` — 그 abx 판에 맞는 것,
+  Codex(`~/.agents/skills/abx`, 시험용 `AGENTDECK_CODEX_SKILLS_DIR` — `CODEX_HOME` 은 이 폴더를 바꾸지 않는다)에 넣는다(`SessionCore/SkillInstaller`). 내용은 찾은 abx 가 알려 준다(`abx skill` — 그 abx 판에 맞는 것,
   예전 abx 가 모르는 명령으로 브라우저를 띄우지 않게 `ABX_AUTOSTART=0`·빈 세션으로 묻는다). 이 앱이 넣은 폴더에만 표식(`.agentdeck`)을 두고
   그것만 바꾸거나 뺀다(옆 이름으로 옮긴 뒤 다시 확인하고 지움). 링크·표식 없는 폴더(예: abx `scripts/install.sh` 의 개발용 링크)는 사용자 것이라 그대로.
   처음 넣기는 사용자가 누를 때만(사용자 설정 폴더에 새로 쓰는 일). 그 뒤 이 앱이 넣은 것이 지금 abx 와 다르면(앱 업데이트로 abx 가 바뀜)
@@ -496,7 +496,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호)·`settings-snap <png>`·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
   `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
   `location`(데이터 위치·모드 standard/legacy/custom·연결·화면 수·꺼진 화면 수; 옮기기는 `alert-answer 0` 뒤 `action relocate-data`). `AGENTDECK_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
-  `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex` 를 건드리지 않게).
+  `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을, `AGENTDECK_CODEX_SKILLS_DIR=<폴더>` 로 Codex 스킬 폴더를 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex`·`~/.agents` 를 건드리지 않게 — 앱은 시작할 때 자기가 넣은 스킬을 새 판으로 바꾼다).
   `AGENTDECK_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
   이때와 `AGENTDECK_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).

@@ -185,7 +185,7 @@ VERSION=0.3.0 scripts/build-term-proto.sh
   0.3 까지의 이름(`ClaudeTerm`·`ClaudeTermDaemon`·`dev.claude-sessions.term`·`ClaudeSessions`·`CLAUDE_TERM_*`·`CLAUDE_SESSIONS_*`)은
   예전 데몬·hook·셸이 아직 쓰므로 읽기만 이어 간다(자세히는 docs/ARCHITECTURE.md "이름과 예전 판 이어받기").
 - 시험은 실제 기록·데몬·설정과 떼어서(예전 이름의 변수도 읽지만 새 이름을 쓴다):
-  `AGENTDECK_HOME=<폴더> CLAUDE_CONFIG_DIR=<폴더> CODEX_HOME=<폴더> AGENTDECK_DEBUG=1 AGENTDECK_DEBUG_NAME=<채널> AGENTDECK_NO_ACTIVATE=1 AGENTDECK_NO_NOTIFY=1`.
+  `AGENTDECK_HOME=<폴더> CLAUDE_CONFIG_DIR=<폴더> CODEX_HOME=<폴더> AGENTDECK_CODEX_SKILLS_DIR=<폴더> AGENTDECK_DEBUG=1 AGENTDECK_DEBUG_NAME=<채널> AGENTDECK_NO_ACTIVATE=1 AGENTDECK_NO_NOTIFY=1`.
   데이터 옮기기를 시험할 때는 `AGENTDECK_HOME` 대신 `AGENTDECK_APP_SUPPORT=<가짜 홈>/Library/Application Support`(Foundation 은 HOME 을 따르지 않는다)와
   `HOME=<가짜 홈>` 을 준다. 디버그 명령은 분산 알림 `<채널>`(기본 `dev.agentdeck.debug`)로 보낸다(목록은 docs/ARCHITECTURE.md).
   시험 앱은 한 번짜리 launchd opener 작업을 거쳐 LaunchServices 로 띄운다(또는 **AgentDeck 화면 밖의 셸**에서 `open -n --env …`).
