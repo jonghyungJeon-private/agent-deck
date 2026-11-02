@@ -231,6 +231,11 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   abx 가 마지막으로 본 활성 탭(`targetId`)을 따라(그 탭이 이미 닫혔으면 보던 탭·첫 페이지) `Page.startScreencast`(JPEG q75, 최대 1440×900).
   프레임은 받자마자 확인(ack)하고, 백그라운드에서 풀고, 밀리면 최신 것만 그린다. 탭 이동 중 늦게 붙은 연결은 세대 번호로 뗀다.
   머리 줄의 주소·제목은 보이는 탭의 것(`Target.targetInfoChanged`).
+- **탭 칩(`BrowserTabs`, ego-browser 방식):** 탭이 둘 이상이면 머리 줄 아래에 칩 줄. 탭 목록은 CDP(`Target.targetCreated/Destroyed/InfoChanged`,
+  사람이 연 탭도 바로)에 abx 의 `tabs.json`(이름·작업 공간·`openedBy`·`adopted`)을 붙인 것 — 작업 공간마다 묶고(main 먼저, 만든 순서), 사람 탭은 "내 탭"으로 뒤에.
+  abx 가 모르는 탭은 사람 탭, Chrome 내부 페이지(chrome://newtab 등)는 뺀다. ● = AI 가 마지막으로 일한 탭(abx 활성 탭).
+  칩을 누르면 그 탭을 계속 보여 준다(AI 가 다른 탭에서 일해도 따라가지 않음, "AI 따라가기" 로 되돌림, 고른 탭이 닫히면 저절로 되돌림). 칩 메뉴 "탭 닫기" = `Target.closeTarget`.
+  보이는 탭과 고정 여부를 `<stateDir>/<세션>.watch.json`(`{targetId, pinned}`)에 쓴다 — `abx done` 은 고정된 탭을 닫지 않고, `abx resume` 은 그 탭에서 이어 간다. 칸을 닫으면 지운다.
 - **사람 조작:** "제어 가져오기" = `abx handoff`(에이전트 동작이 다음 단계에서 멈출 때까지 넘겨받는 중, 그 뒤 abx 가 입력 잠금을 푼다),
   "AI 에게 돌려주기" = `abx resume`(누르던 버튼·조합 중 글자를 먼저 정리하고 누른 순간부터 입력을 버림). 입력은 상태가 `user` 일 때만.
   - `BrowserScreenView`: 마우스(누름·뗌·끌기·오른쪽·가운데·휠·hover, 그림 밖에서 떼어도 떼기 전달) → `Input.dispatchMouseEvent`.
