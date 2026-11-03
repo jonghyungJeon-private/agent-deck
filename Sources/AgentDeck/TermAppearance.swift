@@ -119,6 +119,12 @@ enum TermAppearance {
     static let cyan = NSColor(srgbHex: 0x56b6c2)
     /// 오케스트레이션 중(포커스 테두리 강조색보다 붉은 보라 — 둘이 섞여 보이지 않게)
     static let purple = NSColor(srgbHex: 0xc678dd)
+    /// AI 표시(브라우저 탭 칩의 ●, AI 커서 이름표) — 어두운 바탕에서 또렷한 초록
+    static let agentColor = green
+    /// 사람이 조작 중(브라우저 "내가 조작 중")
+    static let userColor = NSColor(srgbHex: 0x61afef)
+    /// 보조 글자(브라우저 창): textDim(#7f848e, 바탕 대비 3.7:1)보다 밝게 — 바탕 대비 5.8:1
+    static let textSecondary = NSColor(srgbHex: 0xa0a7b3)
 
     /// 사이드바·탭 줄 글꼴(터미널과 같은 JetBrains Mono). 크기를 그대로 쓴다 — 글꼴 크기를 따라가려면 `scaledUIFont`.
     static func uiFont(_ size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {

@@ -681,7 +681,7 @@ struct SessionRowView: View {
                 // 🌐 + 상태 색(기다림은 !) — 누르면 그 세션의 브라우저 창
                 HStack(spacing: ui(2)) {
                     Image(systemName: "globe")
-                        .font(.system(size: ui(10), weight: .semibold))
+                        .font(.system(size: ui(12), weight: .semibold))
                     if browser.needsAttention {
                         Text("!").uiFont(10, bold: true)
                     }
@@ -690,6 +690,10 @@ struct SessionRowView: View {
                 .padding(.horizontal, ui(4))
                 .padding(.vertical, ui(1))
                 .background(Capsule().fill(Color(browser.color).opacity(browser.needsAttention ? 0.22 : 0.12)))
+                .overlay(Capsule().strokeBorder(Color(browser.color).opacity(browser.needsAttention ? 1 : 0.55), lineWidth: 1))
+                // 누르는 자리를 넉넉히(작은 지구본만이 아니라 둘레까지)
+                .frame(minWidth: ui(24), minHeight: ui(22))
+                .contentShape(Rectangle())
                 .help("브라우저 · \(browser.label) — 눌러서 창 열기")
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("브라우저 \(browser.label)")

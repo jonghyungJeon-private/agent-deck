@@ -33,20 +33,22 @@ enum BrowserIndicator: Equatable {
 
     var label: String {
         switch self {
-        case .idle: return "브라우저"
+        case .idle: return "브라우저 대기"
         case .agent: return "AI 제어 중"
         case .user: return "내가 조작 중"
-        case .waiting: return "나를 기다림"
+        case .waiting: return "내 조작 필요"
         case .switching: return "넘겨받는 중"
         }
     }
 
+    /// 상태마다 어두운 바탕에서 또렷한 색(쉬는 중도 회색이 아니라 청록 — 브라우저가 떠 있다는 표시).
+    /// AI 는 초록(탭 칩의 ●·AI 커서와 같은 색), 사람은 파랑, 기다림은 노랑.
     var color: NSColor {
         switch self {
-        case .idle: return TermAppearance.textDim
-        case .agent: return TermAppearance.accent
-        case .user: return NSColor(srgbHex: 0x61afef)
-        case .waiting, .switching: return NSColor(srgbHex: 0xe5c07b)
+        case .idle: return TermAppearance.cyan
+        case .agent: return TermAppearance.agentColor
+        case .user: return TermAppearance.userColor
+        case .waiting, .switching: return TermAppearance.yellow
         }
     }
 
@@ -141,7 +143,7 @@ final class BrowserChipView: NSView {
 
     override var isFlipped: Bool { true }
 
-    private var font: NSFont { TermAppearance.scaledUIFont(10, bold: true) }
+    private var font: NSFont { TermAppearance.scaledUIFont(11, bold: true) }
     private var text: String {
         if case .waiting = indicator { return indicator.label + " !" }
         return indicator.label
@@ -149,7 +151,7 @@ final class BrowserChipView: NSView {
 
     override var intrinsicContentSize: NSSize {
         let width = (text as NSString).size(withAttributes: [.font: font]).width
-        return NSSize(width: ceil(width) + TermAppearance.scaled(28), height: TermAppearance.scaled(16))
+        return NSSize(width: ceil(width) + TermAppearance.scaled(32), height: TermAppearance.scaled(19))
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -158,29 +160,30 @@ final class BrowserChipView: NSView {
         let pill = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
         TermAppearance.background.setFill()
         pill.fill() // 테두리 선 위에 놓이므로 바탕을 먼저
-        color.withAlphaComponent(0.18).setFill()
+        // 옅은 바탕(12%) — 진하면 같은 색 글자가 묻힌다(글자 대비 4.5:1 이상)
+        color.withAlphaComponent(indicator.needsAttention ? 0.2 : 0.12).setFill()
         pill.fill()
-        if indicator.needsAttention {
-            color.setStroke()
-            pill.lineWidth = 1
-            pill.stroke()
-        }
-        let side = TermAppearance.scaled(11)
+        // 늘 테두리를 그어 바탕과 구분한다(기다림은 진하게)
+        color.withAlphaComponent(indicator.needsAttention ? 1 : 0.6).setStroke()
+        pill.lineWidth = 1
+        pill.stroke()
+        let side = TermAppearance.scaled(13)
         if let globe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: side, weight: .semibold).applying(.init(paletteColors: [color]))) {
-            globe.draw(in: NSRect(x: TermAppearance.scaled(6), y: (bounds.height - side) / 2, width: side, height: side))
+            globe.draw(in: NSRect(x: TermAppearance.scaled(7), y: (bounds.height - side) / 2, width: side, height: side))
         }
         let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
         let size = (text as NSString).size(withAttributes: attributes)
-        (text as NSString).draw(at: NSPoint(x: TermAppearance.scaled(20), y: (bounds.height - size.height) / 2), withAttributes: attributes)
+        (text as NSString).draw(at: NSPoint(x: TermAppearance.scaled(24), y: (bounds.height - size.height) / 2), withAttributes: attributes)
     }
 
     override func mouseDown(with event: NSEvent) { onClick?() }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func resetCursorRects() { if onClick != nil { addCursorRect(bounds, cursor: .pointingHand) } }
 
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { "브라우저 창 열기 — \(indicator.label)" }
-    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+    // 누를 곳이 없으면(브라우저 창 머리 줄의 상태 알약) 버튼이 아니라 상태 글자로 읽힌다
+    override func accessibilityRole() -> NSAccessibility.Role? { onClick == nil ? .staticText : .button }
+    override func accessibilityLabel() -> String? { onClick == nil ? "브라우저 \(indicator.label)" : "브라우저 창 열기 — \(indicator.label)" }
+    override func accessibilityPerformPress() -> Bool { guard let onClick else { return false }; onClick(); return true }
 }
 
 /// 세션 하나의 브라우저 창. 창 크기가 곧 브라우저 크기(사람이 조작 중이거나 쉴 때 맞춘다).

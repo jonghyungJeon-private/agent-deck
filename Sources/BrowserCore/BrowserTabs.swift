@@ -34,10 +34,18 @@ public enum BrowserTabs {
 
     public static let main = "main"
 
-    public static func chips(pages: [Page], tabs: [AbxStatus.Tab], shown: String?) -> [Chip] {
+    /// keep: 주소는 about:blank 지만 내용이 있는 탭(document.write 등) — 빈 탭으로 치지 않는다
+    public static func chips(pages: [Page], tabs: [AbxStatus.Tab], shown: String?, keep: Set<String> = []) -> [Chip] {
         let known = Dictionary(tabs.map { ($0.targetId, $0) }, uniquingKeysWith: { a, _ in a })
         // Chrome 이 스스로 띄우는 내부 페이지(chrome://newtab 등)는 abx 도 탭으로 치지 않는다
-        let chips = pages.filter { !internalPage($0.url) || known[$0.targetId] != nil }.map { page -> Chip in
+        // AI 의 빈 탭(about:blank, 이름 없음 — abx 가 다음 `tab new`·`open` 에 다시 쓰는 탭)은 보고 있는 탭이 아니면
+        // 칩으로 내지 않는다. 사람의 탭·이름 붙은 탭·넘겨받은 탭은 주소가 비어도 남는다(돌아가거나 닫을 수 있게).
+        func spare(_ page: Page) -> Bool {
+            guard blank(page.url), page.targetId != shown, !keep.contains(page.targetId), let tab = known[page.targetId] else { return false }
+            return !tab.isUsers && tab.adopted != true && (tab.label ?? "").isEmpty
+        }
+        let chips = pages.filter { (!internalPage($0.url) || known[$0.targetId] != nil) && !spare($0) }
+            .map { page -> Chip in
             let tab = known[page.targetId]
             // abx 가 모르는 탭은 사람이 연 탭이다(abx 는 자기가 연 탭을 바로 적는다)
             let users = tab.map(\.isUsers) ?? true
@@ -58,6 +66,8 @@ public enum BrowserTabs {
             return ra != rb ? ra < rb : a.offset < b.offset
         }.map(\.element)
     }
+
+    public static func blank(_ url: String) -> Bool { url.isEmpty || url == "about:blank" }
 
     static func internalPage(_ url: String) -> Bool {
         ["chrome://", "chrome-untrusted://", "devtools://", "chrome-extension://"].contains { url.hasPrefix($0) }

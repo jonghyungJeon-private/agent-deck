@@ -980,17 +980,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let v = argument.split(separator: " ").compactMap { Double($0) }
             guard v.count == 2, let browserWindow = model.browserWindows.target?.window else { return }
             browserWindow.setContentSize(NSSize(width: v[0], height: v[1]))
+        case "browser-front":
+            // 맨 앞 브라우저 창을 다른 창 위에 띄운다(가려지면 화면을 받지 않으니 시험할 때)
+            guard let window = model.browserWindows.target?.window else { return }
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+            window.level = .floating
+            window.orderFrontRegardless()
+        case "browser-cursor":
+            // 맨 앞 브라우저 창의 AI 커서(페이지 자리·칸 자리·이름표)
+            print(model.browserWindows.target?.pane.debugCursor ?? "no browser window")
+            print("browser-cursor end")
+            fflush(stdout)
         case "browser-tabs":
             // 맨 앞 브라우저 창의 탭 칩(> 보이는 탭, ● AI 가 일한 탭, [작업 공간|user])
             print(model.browserWindows.target?.pane.debugTabs ?? "no browser window")
             print("browser-tabs end")
             fflush(stdout)
         case "browser-snap":
-            // browser-snap <경로.png>: 맨 앞 브라우저 창 그림(탭 칩 줄 확인용)
-            guard let view = model.browserWindows.target?.window?.contentView,
-                  let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument))
+            // browser-snap <경로.png>: 맨 앞 브라우저 창 그림(탭 칩 줄·화면·AI 커서 확인용). 층까지 그린다
+            // (cacheDisplay 는 직접 둔 층 — 화면 그림·커서 — 을 빼먹는다)
+            guard let window = model.browserWindows.target?.window, let view = window.contentView,
+                  let layer = view.layer else { return }
+            let scale = window.backingScaleFactor
+            let width = Int(view.bounds.width * scale), height = Int(view.bounds.height * scale)
+            guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            ctx.scaleBy(x: scale, y: scale)
+            layer.render(in: ctx)
+            guard let image = ctx.makeImage() else { return }
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument))
         case "browser-watch":
             // browser-watch <targetId 앞부분|t3|이름|follow>: 탭 칩 누르기
             model.browserWindows.target?.pane.debugWatch(argument)

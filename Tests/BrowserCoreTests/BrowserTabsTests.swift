@@ -35,9 +35,10 @@ final class BrowserTabsTests: XCTestCase {
             AbxStatus.Tab(id: "t6", targetId: "K", url: "", title: "", active: false, openedBy: "user"),
         ]
         let chips = BrowserTabs.chips(pages: pages, tabs: tabs, shown: "S3")
-        XCTAssertEqual(chips.map(\.targetId), ["M", "S2", "S3", "U", "K"])
-        XCTAssertEqual(chips.map(\.group), ["main", "chat", "uat", nil, nil])
-        XCTAssertEqual(chips.map(\.text), ["빈 탭", "discord", "Telegram", "login.example.com", "Kept"])
+        // M(빈 탭)은 보고 있지 않으니 칩이 아니다
+        XCTAssertEqual(chips.map(\.targetId), ["S2", "S3", "U", "K"])
+        XCTAssertEqual(chips.map(\.group), ["chat", "uat", nil, nil])
+        XCTAssertEqual(chips.map(\.text), ["discord", "Telegram", "login.example.com", "Kept"])
         XCTAssertEqual(chips.first { $0.agentHere }?.targetId, "S2")
         XCTAssertEqual(chips.first { $0.shown }?.targetId, "S3")
         XCTAssertEqual(chips.filter(\.users).map(\.targetId), ["U", "K"])
@@ -47,9 +48,21 @@ final class BrowserTabsTests: XCTestCase {
     /// Chrome 내부 페이지(chrome://newtab)는 칩이 아니다 — abx 엔진도 탭 목록에서 뺀다
     func testChromeInternalPagesAreNotChips() {
         let chips = BrowserTabs.chips(pages: [.init(targetId: "N", url: "chrome://newtab/", title: "새 탭"),
-                                              .init(targetId: "A", url: "about:blank", title: "")],
+                                              .init(targetId: "A", url: "https://a.example", title: "")],
                                       tabs: [AbxStatus.Tab(id: "t1", targetId: "A", url: "", title: "", active: true, openedBy: "agent")], shown: nil)
         XCTAssertEqual(chips.map(\.targetId), ["A"])
+    }
+
+    /// 빈 탭은 칸에 보이는 탭일 때만 칩이다(빈 탭이 줄을 차지하지 않게)
+    func testBlankTabsAreChipsOnlyWhenShown() {
+        let pages: [BrowserTabs.Page] = [.init(targetId: "B", url: "about:blank", title: ""), .init(targetId: "A", url: "https://a.example", title: "A")]
+        let tabs = [AbxStatus.Tab(id: "t1", targetId: "B", url: "about:blank", title: "", active: true, openedBy: "agent")]
+        XCTAssertEqual(BrowserTabs.chips(pages: pages, tabs: tabs, shown: "A").map(\.targetId), ["A"])
+        XCTAssertEqual(BrowserTabs.chips(pages: pages, tabs: tabs, shown: "B").map(\.text), ["빈 탭", "A"])
+        // 주소만 about:blank 이고 내용이 있는 탭은 남는다
+        XCTAssertEqual(BrowserTabs.chips(pages: pages, tabs: tabs, shown: "A", keep: ["B"]).map(\.targetId), ["B", "A"])
+        // 사람이 연 빈 탭(abx 가 모르는 탭)은 남는다
+        XCTAssertEqual(BrowserTabs.chips(pages: pages, tabs: [], shown: "A").map(\.targetId), ["B", "A"])
     }
 
     /// 작업 공간 이전 abx(주인 필드 없음)의 탭은 AI 탭(main)

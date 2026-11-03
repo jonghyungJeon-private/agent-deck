@@ -6,6 +6,8 @@ public struct ScreencastFrame {
     public let viewport: CGSize
     /// 페이지가 그린 시각(초, 1970 기준)
     public let timestamp: Double
+    /// 이 그림을 보낸 탭(받은 그 순간의 탭 — 뒤에 탭을 옮겨도 그대로)
+    public var targetId: String? = nil
 }
 
 public struct ScreencastSettings: Equatable {
@@ -145,7 +147,7 @@ public final class ScreencastStream {
     @discardableResult
     public func handle(_ event: CDPEvent) -> Bool {
         guard event.method == "Page.screencastFrame" else { return false }
-        let current: String? = lock.locked { sessionId }
+        let (current, target): (String?, String?) = lock.locked { (sessionId, targetId) }
         guard let session = event.sessionId, session == current else { return false }
         // 확인은 항상 먼저(그려지지 않을 프레임이라도) — 정수 ack id 와 문자열 sessionId 는 다른 것
         if let ackId = event.params["sessionId"] as? Int {
@@ -156,7 +158,7 @@ public final class ScreencastStream {
         let width = (meta["deviceWidth"] as? NSNumber)?.doubleValue ?? 0
         let height = (meta["deviceHeight"] as? NSNumber)?.doubleValue ?? 0
         let time = (meta["timestamp"] as? NSNumber)?.doubleValue ?? 0
-        onFrame?(ScreencastFrame(jpeg: jpeg, viewport: CGSize(width: width, height: height), timestamp: time))
+        onFrame?(ScreencastFrame(jpeg: jpeg, viewport: CGSize(width: width, height: height), timestamp: time, targetId: target))
         return true
     }
 }
