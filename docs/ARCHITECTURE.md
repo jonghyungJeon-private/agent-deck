@@ -151,9 +151,9 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   올라간 작업을 어떻게 다루는지는 실측하지 못했다(허락 안 됨 경로를 재현하지 못했고, Dock 강제 종료는 사람이 눌러야 한다).
 - 확인: `launchctl print gui/$UID/<이름>`(state·pid), 데몬 `ps -o ppid` 가 1. 이름은 `term/dev.agentdeck.daemon.plist` 의 `Label`.
 
-## 브라우저(세션별 창)
+## 브라우저(세션별 창 · 세션 창 안)
 
-에이전트가 `abx`(agent-browser 저장소 `packages/abx`)로 쓰는 브라우저를 세션마다 별도 창으로 본다. 설계·검증: agent-browser 저장소의
+에이전트가 `abx`(agent-browser 저장소 `packages/abx`)로 쓰는 브라우저를 세션마다 별도 창으로, 또는 세션 창 안 browser 도구로 본다(0.9). 설계·검증: agent-browser 저장소의
 `research/agent-deck-browser-pane.md`·`research/M0-agentdeck-report.md`. (1·2단계에서는 분할 화면 잎이었다 — 터미널과 자리를 다투고
 페이지 크기가 칸에 묶여 0.6 에서 창으로 바꿨다. 예전 배치의 `browser:<UUID>` 잎은 읽을 때 뺀다.)
 
@@ -172,7 +172,9 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   `BrowserViewOptions`): 표준 1440×900·품질 75 / 선명(기본) 2560×1600·85 / 최고 3840×2400·85. 해상도: 칸에 맞춤(기본, 같은 크기의
   Chrome 창과 같음) 또는 1280×800·1440×900·1920×1080 고정(그 크기로 그리고 칸에 비율 유지로 줄여 보임). "데스크톱 화면 유지"를 켜면
   (칸에 맞춤일 때) 칸이 폭 1024 보다 좁아도 칸 비율 그대로 폭 1024 로 그리고 줄여 보인다. 모두 열린 화면에 바로 적용(선명도는 screencast 를 다시 붙임).
-  사용자 에이전트(HeadlessChrome)·`navigator.webdriver` 는 그대로 둔다(에이전트 브라우저임을 숨기지 않음).
+  abx 는 새로 띄우는 브라우저에 `--disable-features=Translate,OmniboxEverywhere` 를 붙인다(Chrome 156 의 "데스크톱에서 검색"이
+브라우저마다 메뉴바에 돋보기를 띄우고 백그라운드로 남아서; Chrome 은 마지막 `--disable-features` 만 읽어 한 플래그로 합친다).
+사용자 에이전트(HeadlessChrome)·`navigator.webdriver` 는 그대로 둔다(에이전트 브라우저임을 숨기지 않음).
 - **`abx` 명령(앱에 든 abx):** 앱 묶음에 abx 단일 실행 파일과 엔진(`Contents/Helpers/abx`·`agent-browser`, bun --compile)과
   에이전트 안내(`Contents/Resources/abx/SKILL.md`, 넣은 판은 `VERSION`)가 든다(`scripts/build-term-proto.sh` 가 agent-browser 저장소에서 만들어 넣음).
   데몬은 뜰 때 `term/bin/abx`(그 abx 를 실행하는 작은 스크립트 — 엔진 실행 파일은 PATH 에 보이지 않게, `AGENTDECK_ABX` 로 바꾼 abx 도 이름이 abx)를
@@ -190,7 +192,22 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   칩·목록 아이콘·⇧⌘B("브라우저 보기") = 그 세션의 브라우저 창.
 - **나를 기다림:** Dock 배지(터미널 대기와 합쳐 화면당 한 번), macOS 알림("브라우저 · <세션>" + 에이전트 글 — 누르면 그 창, 그 창을 보고
   있으면 알리지 않음, 앱을 켠 첫 상태는 기억만, 같은 글은 한 번). 내가 가져온 것은 알리지 않는다.
-- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태·제목·주소·탭 수·"항상 위"·"제어 가져오기/AI 에게 돌려주기") + 화면.
+- **표시 방식(0.9, `BrowserCore/BrowserDisplay`, 머리 줄 "표시 ▾"):** 보는 곳(별도 창 / 세션 창 안) + 창 동작(일반 창[기본] /
+  AgentDeck 쓸 때만 위 — 앱이 앞일 때만 `.floating`, `didBecomeActive`·`didResignActive` 로 다시 적용 / 항상 위 `.floating`).
+  고르면 그 세션 값이 되고 새 세션의 기본값도 된다 — 기본값이 바뀌기 전에 열려 있는 다른 세션의 지금 값을 먼저 그 세션 값으로 적어 두어
+  다른 세션이 따라 움직이지 않는다. `term/browser-display.json`(`defaults` + `sessions[세션 이름]`). 세션 창 안이면 메뉴에
+  왼쪽에 / 오른쪽에 / 숨기기(⌘⇧B 로 다시)도 있다.
+- **칸은 세션마다 하나(`BrowserWindows` 가 가짐):** `BrowserPaneView`(스트림·고른 탭·맞춘 크기)는 창이나 도크가 빌려 단다 — 한 세션의
+  브라우저는 한 곳에만 보인다. 안 보이면(숨김·가려짐·다른 세션으로 감·최소화) `BrowserFeed.pause()`(watch 파일 빼고 연결을 끊되
+  고른 탭·사람이 연 탭·맞춘 크기는 둔다), 다시 보이면 `resume()`(실행 중인 브라우저를 다시 찾음, 그사이 닫힌 탭은 잊음).
+  끝내기(`dispose`)는 세션이 닫힐 때만.
+- **세션 창 안(`BrowserDockController`, ToolWindows 의 `browser` 도구 — 처음엔 숨김, 오른쪽, 기본 폭이면 640pt 로 넓힘):** 세션 창에서
+  고른 에이전트 세션(편집기·로컬 화면은 빼고)을 따라간다. 그 세션이 별도 창으로 보는 세션이면 안내("별도 창에서 보는 중" ·
+  "여기서 보기" · "창 앞으로/창 열기"). 페이지 크기: 선명도가 칸에 맞춤이면 폭 1280 고정, 높이 = 1280 × 칸 높이/폭(240~2560)
+  (`BrowserViewOptions.pageSize(for:docked:)`) — 좁은 도크에서도 데스크톱 배치. 창↔도크로 옮기면 AI 차례여도 한 번 맞춘다(writer 자리).
+  도크 브라우저에 키보드가 있으면 ⌘W 는 도구만 숨기고, 뒤 터미널·편집기에 하는 단축키·메뉴(지우기·찾기·나누기·저장·이동…)는
+  브라우저로 보낸다(`paneOnlyActions`) — 탭·도구·세션 전환은 그대로.
+- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태·제목·주소·탭 수·"표시 ▾"·"제어 가져오기/AI 에게 돌려주기") + 화면.
   위치·크기는 세션별로 기억(`AgentDeckBrowser-<세션>`). 닫아도(⌘W — 브라우저 창이 앞이면 그 창만) 브라우저·에이전트는 계속 돈다.
   창이 가려지거나(occlusion)·최소화·앱 숨김이면 스트림을 멈춘다.
 - **크기:** 창 크기 = 브라우저 페이지 크기(`Browser.setWindowBounds` — 창 테두리 차이를 재서 더함). 단 AI 가 입력을 쥔 동안(잠금·넘기는 중)은

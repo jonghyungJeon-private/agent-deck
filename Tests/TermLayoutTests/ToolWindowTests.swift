@@ -231,6 +231,27 @@ final class ToolLayoutTests: XCTestCase {
     }
 }
 
+extension ToolLayoutTests {
+    /// 브라우저 도구: 처음엔 숨김, 꺼내면 오른쪽 + 읽힐 만한 폭, 예전 ui.json(브라우저 없음)도 숨김으로
+    func testBrowserToolHiddenByDefaultShowsOnTheRightWide() throws {
+        var layout = ToolLayout()
+        XCTAssertEqual(layout.side(of: .browser), .hidden)
+        XCTAssertFalse(layout.isVisible(.browser))
+        layout.toggle(.browser)
+        XCTAssertEqual(layout.side(of: .browser), .right)
+        XCTAssertTrue(layout.isVisible(.browser))
+        XCTAssertEqual(layout.width(.right), ToolLayout.browserWidth)
+        // 사람이 정한 폭은 지킨다
+        var custom = ToolLayout()
+        custom.widths[.right] = 500
+        custom.move(.browser, to: .right)
+        XCTAssertEqual(custom.width(.right), 500)
+        let old = try JSONDecoder().decode(ToolLayout.self, from: Data(#"{"tools":{"spaces":"left","files":"right"}}"#.utf8))
+        XCTAssertEqual(old.side(of: .browser), .hidden)
+        XCTAssertEqual(old.visibleTool(in: .right), .files)
+    }
+}
+
 final class DirectoryListingTests: XCTestCase {
     func testFoldersFirstCaseInsensitive() {
         let entries = [

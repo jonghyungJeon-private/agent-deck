@@ -135,6 +135,7 @@ final class TerminalHostController: NSViewController {
     /// 탭·분할 배치가 바뀌면 부른다. 보일 화면의 뷰만 남기고 나머지는 버린다.
     func render() {
         guard isViewLoaded else { return }
+        model.browserWindows.follow(model.selectedId)
         let tab = model.connected ? model.workspace.selectedTab : nil
         let visible = tab?.visibleRoot
         // 꺼진 화면이 보이게 되면 이때 되살린다(attach 보다 먼저 만들어지도록 같은 연결로 먼저 보낸다)
@@ -185,6 +186,7 @@ final class TerminalHostController: NSViewController {
 
     /// 포커스만 바뀌었을 때(뷰는 그대로)
     func focusChanged() {
+        model.browserWindows.follow(model.selectedId) // 세션 창 안 브라우저는 고른 세션을 따라간다
         container.setFocused(model.workspace.selectedTab?.focused, titles: paneTitles)
         updateTabBar()
         focusTerminal()

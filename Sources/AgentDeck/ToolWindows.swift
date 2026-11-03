@@ -35,6 +35,12 @@ final class ToolWindowsController: NSObject {
         files.onOpenFiles = { [weak model] paths in model?.openFromTree(paths: paths) }
         files.onOpenFileInTab = { [weak model] path in model?.openFile(path) }
         files.onOpenFileSplit = { [weak model] path, axis in model?.openFile(path, split: axis) }
+        // browser 도구: 고른 세션의 브라우저(보는 곳이 "세션 창 안"인 세션) — 칸은 BrowserWindows 가 들고 있다
+        model.browserWindows.revealDock = { [weak self] in self?.reveal(.browser) }
+        model.browserWindows.dockVisible = { [weak self] in self?.layout.isVisible(.browser) == true }
+        model.browserWindows.moveDock = { [weak self] side in self?.move(.browser, to: side) }
+        model.browserWindows.dockSide = { [weak self] in self?.layout.side(of: .browser) ?? .hidden }
+        model.browserWindows.titleFor = { [weak model] owner in model?.row(owner)?.title }
         for (_, dock) in docks {
             dock.onSelect = { [weak self] tool in self?.select(tool) }
             dock.menuFor = { [weak self] tool in self?.menu(for: tool) ?? NSMenu() }
@@ -67,6 +73,7 @@ final class ToolWindowsController: NSObject {
         switch tool {
         case .spaces: return sidebar
         case .files: return files
+        case .browser: return model.browserWindows.dock
         }
     }
 
@@ -99,6 +106,7 @@ final class ToolWindowsController: NSObject {
             for side in opened { setWidth(side) }
         }
         files.setToolVisible(layout.isVisible(.files))
+        model.browserWindows.dock.setToolVisible(layout.isVisible(.browser))
     }
 
     /// 창을 띄운 뒤 한 번: 저장된 도크 폭으로
@@ -156,8 +164,18 @@ final class ToolWindowsController: NSObject {
         var next = layout
         update(&next)
         guard next != layout else { return }
+        let old = layout
         layout = next
         apply()
+        // 이미 펼쳐진 도크의 폭이 바뀌었으면(브라우저를 처음 꺼내 넓힘) 바로 그 폭으로 — 새로 펼친 도크는 apply 가 맞춘다
+        if widthsRestored {
+            for side in [DockSide.left, .right] where old.width(side) != next.width(side) && items[side]?.isCollapsed == false {
+                applying = true
+                split.splitView.layoutSubtreeIfNeeded()
+                setWidth(side)
+                applying = false
+            }
+        }
         save()
     }
 
@@ -173,6 +191,12 @@ final class ToolWindowsController: NSObject {
         let hadFocus = ownsFirstResponder(tool)
         change { $0.move(tool, to: side) }
         if side == .hidden, hadFocus { focusTerminal() }
+    }
+
+    /// 안 보이면 보이게(숨김이면 마지막 쪽에, 같은 도크의 다른 도구가 보이면 이것으로). 이미 보이면 그대로.
+    func reveal(_ tool: ToolID) {
+        guard !layout.isVisible(tool) else { return }
+        change { $0.toggle(tool) }
     }
 
     /// ⌘⇧E·⌘⇧S
@@ -220,14 +244,21 @@ final class ToolWindowsController: NSObject {
         let right = ClosureMenuItem(title: "오른쪽으로 옮기기") { [weak self] in self?.move(tool, to: .right) }
         right.state = side == .right ? .on : .off
         let hide = ClosureMenuItem(title: "숨기기") { [weak self] in self?.move(tool, to: .hidden) }
-        hide.keyEquivalent = tool == .files ? "e" : "s"
-        hide.keyEquivalentModifierMask = [.command, .shift]
+        // ⌘⇧B 는 "브라우저 보기"(보는 곳에 열기) — 숨기기 단축키로 쓰지 않는다
+        if tool != .browser {
+            hide.keyEquivalent = tool == .files ? "e" : "s"
+            hide.keyEquivalentModifierMask = [.command, .shift]
+        }
         for item in [left, right, NSMenuItem.separator(), hide] { menu.addItem(item) }
         return menu
     }
 
     static func shortcutLabel(_ tool: ToolID) -> String {
-        tool == .files ? "⌘⇧E" : "⌘⇧S"
+        switch tool {
+        case .files: return "⌘⇧E"
+        case .spaces: return "⌘⇧S"
+        case .browser: return "⌘⇧B"
+        }
     }
 }
 

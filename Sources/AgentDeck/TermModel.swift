@@ -1170,7 +1170,7 @@ final class TermModel: ObservableObject {
             NSSound.beep()
             return
         }
-        browserWindows.open(owner: owner, title: row(owner)?.title ?? "…")
+        browserWindows.open(owner: owner, title: row(owner)?.title)
     }
 
     /// 화면의 브라우저 상태(칩·목록)
@@ -1193,7 +1193,7 @@ final class TermModel: ObservableObject {
             guard browserNotified[id] != message else { continue }
             browserNotified[id] = message
             // 그 브라우저 창을 보고 있으면 알리지 않는다
-            if browserPrimed, !(NSApp.isActive && browserWindows.keyController?.paneId == id) {
+            if browserPrimed, !browserWindows.isWatching(id) {
                 notifier.post(title: "브라우저 · \(row(id)?.title ?? "")", body: message.isEmpty ? "에이전트가 브라우저 조작을 넘겼어요" : message,
                               paneId: "browser:" + id, key: message)
             }

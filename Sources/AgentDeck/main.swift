@@ -1,4 +1,5 @@
 import AppKit
+import BrowserCore
 import MetalKit
 import SessionCore
 import SwiftTerm
@@ -92,6 +93,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        // 세션 창 안 브라우저에 포커스: 뒤 터미널·편집기에 하는 메뉴는 끈다 — 단축키(⌘K·⌘F·⌘D…)가 브라우저로 간다
+        if dockedBrowserFocused, let action = menuItem.representedObject as? String,
+           Self.paneOnlyActions.contains(action) { return false }
         switch menuItem.representedObject as? String {
         case "pane-find", "pane-find-next", "pane-find-previous":
             guard NSApp.keyWindow === window else { return false }
@@ -260,7 +264,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         view.addItem(.separator())
         addAction(view, "files 도구 보이기/숨기기", "tool-toggle:files", "e", [.command, .shift])
         addAction(view, "spaces 도구 보이기/숨기기", "tool-toggle:spaces", "s", [.command, .shift])
-        for (tool, label) in [("files", "files"), ("spaces", "spaces")] {
+        addAction(view, "browser 도구 보이기/숨기기", "tool-toggle:browser", "")
+        for (tool, label) in [("files", "files"), ("spaces", "spaces"), ("browser", "browser")] {
             let place = NSMenu(title: "\(label) 위치")
             addAction(place, "왼쪽", "tool-move:\(tool):left", "")
             addAction(place, "오른쪽", "tool-move:\(tool):right", "")
@@ -326,9 +331,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         return map
     }()
 
+    /// 포커스된 터미널·편집기에만 하는 동작 — 세션 창 안 브라우저에 포커스가 있으면 하지 않는다(메뉴·단축키 모두)
+    static let paneOnlyActions: Set<String> = ["clear-screen", "pane-find", "pane-find-next", "pane-find-previous",
+                                               "split-down", "split-right", "zoom", "equalize",
+                                               "save", "markdown-preview", "goto-declaration", "find-usages",
+                                               "nav-back", "nav-forward"]
+
+    /// 메인 창이 앞이고 세션 창 안 브라우저가 키보드를 받고 있는지
+    private var dockedBrowserFocused: Bool {
+        NSApp.keyWindow === window && model.browserWindows.keyPane?.docked == true
+    }
+
     private func startShortcuts() {
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window === self.window else { return event }
+            // 세션 창 안 브라우저에 포커스: 뒤 터미널·편집기를 바꾸는 단축키(지우기·찾기·나누기·저장·이동 등)는 브라우저로 보내고,
+            // 탭·도구·세션 전환 같은 앱 단축키만 그대로 쓴다
+            if let pane = self.model.browserWindows.keyPane, pane.docked {
+                guard let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)],
+                      !Self.paneOnlyActions.contains(action) else { return event }
+                self.perform(action)
+                return nil
+            }
             if [36, 76].contains(event.keyCode),
                event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
                let pane = self.model.host?.focusedTerminal, pane.findBar.superview != nil,
@@ -403,6 +427,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             browser.close()
             return
         }
+        // 세션 창 안 브라우저에 포커스가 있으면 ⌘W 는 그 도구만 숨긴다(뒤의 터미널 세션을 닫지 않게)
+        if action == "close" || action == "close-tab", let pane = model.browserWindows.keyPane, pane.docked {
+            toolWindows?.perform("tool-move:browser:hidden")
+            return
+        }
         if action.hasPrefix("pane-find") {
             model.host?.sessionSwitcher.close(restoreFocus: true)
             model.host?.navigator.closePopup(restoreFocus: true)
@@ -454,6 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     @objc private func menuAction(_ sender: NSMenuItem) {
         guard let action = sender.representedObject as? String else { return }
         if action.hasPrefix("pane-find"), NSApp.keyWindow !== window { return }
+        if dockedBrowserFocused, Self.paneOnlyActions.contains(action) { return }
         // 설정 창 같은 다른 창이 앞에 있으면 ⌘W 는 그 창을 닫는다(터미널 화면을 닫지 않게)
         if ["close", "close-tab"].contains(action), let key = NSApp.keyWindow, key !== window {
             key.performClose(nil)
@@ -980,6 +1010,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let v = argument.split(separator: " ").compactMap { Double($0) }
             guard v.count == 2, let browserWindow = model.browserWindows.target?.window else { return }
             browserWindow.setContentSize(NSSize(width: v[0], height: v[1]))
+        case "browser-display":
+            // browser-display <window|dock> [normal|whileActive|always]: 맨 앞(또는 마지막) 브라우저의 보는 곳·창 높이 고르기("표시 ▾" 와 같음)
+            let parts = argument.split(separator: " ").map(String.init)
+            guard let owner = model.browserWindows.targetPane?.owner ?? model.browserWindows.lastOpened,
+                  let placement = parts.first.flatMap(BrowserDisplay.Placement.init(rawValue:)) else { return }
+            var display = model.browserWindows.display(owner)
+            display.placement = placement
+            if parts.count > 1, let level = BrowserDisplay.Level(rawValue: parts[1]) { display.level = level }
+            model.browserWindows.choose(display, for: owner)
         case "browser-front":
             // 맨 앞 브라우저 창을 다른 창 위에 띄운다(가려지면 화면을 받지 않으니 시험할 때)
             guard let window = model.browserWindows.target?.window else { return }
@@ -988,19 +1027,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window.orderFrontRegardless()
         case "browser-cursor":
             // 맨 앞 브라우저 창의 AI 커서(페이지 자리·칸 자리·이름표)
-            print(model.browserWindows.target?.pane.debugCursor ?? "no browser window")
+            print(model.browserWindows.targetPane?.debugCursor ?? "no browser window")
             print("browser-cursor end")
             fflush(stdout)
         case "browser-tabs":
             // 맨 앞 브라우저 창의 탭 칩(> 보이는 탭, ● AI 가 일한 탭, [작업 공간|user])
-            print(model.browserWindows.target?.pane.debugTabs ?? "no browser window")
+            print(model.browserWindows.targetPane?.debugTabs ?? "no browser window")
             print("browser-tabs end")
             fflush(stdout)
         case "browser-snap":
             // browser-snap <경로.png>: 맨 앞 브라우저 창 그림(탭 칩 줄·화면·AI 커서 확인용). 층까지 그린다
             // (cacheDisplay 는 직접 둔 층 — 화면 그림·커서 — 을 빼먹는다)
-            guard let window = model.browserWindows.target?.window, let view = window.contentView,
-                  let layer = view.layer else { return }
+            // 별도 창이면 그 창 전체, 세션 창 안이면 그 칸만
+            guard let view = model.browserWindows.target?.window?.contentView ?? model.browserWindows.targetPane,
+                  let window = view.window, let layer = view.layer else { return }
             let scale = window.backingScaleFactor
             let width = Int(view.bounds.width * scale), height = Int(view.bounds.height * scale)
             guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
@@ -1012,14 +1052,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument))
         case "browser-watch":
             // browser-watch <targetId 앞부분|t3|이름|follow>: 탭 칩 누르기
-            model.browserWindows.target?.pane.debugWatch(argument)
+            model.browserWindows.targetPane?.debugWatch(argument)
         case "browsers":
             // 브라우저: 화면마다 칩 상태, 열린 창마다 주인·창 보임·스트림·받은 프레임 수·제어·페이지 크기
             for (id, status) in model.browserStates.sorted(by: { $0.key < $1.key }) {
                 print("browser-state \(id.prefix(4)) \(BrowserIndicator(status).map { "\($0)" } ?? "-")")
             }
             for controller in model.browserWindows.visible {
-                print("browser-window \(controller.paneId.prefix(4)) \(controller.pane.debugState) key=\(controller.window?.isKeyWindow == true)")
+                print("browser-window \(controller.paneId.prefix(4)) \(controller.pane.debugState) key=\(controller.window?.isKeyWindow == true) level=\(controller.window?.level.rawValue ?? -1)")
+            }
+            if let pane = model.browserWindows.dock.hosted, model.browserWindows.isOpen(pane.owner) {
+                print("browser-dock \(pane.owner.prefix(4)) \(pane.debugState)")
             }
             print("browsers end")
             fflush(stdout)

@@ -15,10 +15,14 @@ final class BrowserPaneView: NSView {
     private var headerAfterPill: NSLayoutConstraint!
     private var headerAtEdge: NSLayoutConstraint!
     private let controlButton = PillButton(title: "", target: nil, action: nil)
-    private let pinButton = NSButton(title: "항상 위", target: nil, action: nil)
-    /// 창에 넣었을 때: "항상 위" 를 누르면(켜짐 여부)
-    var onPin: ((Bool) -> Void)? {
-        didSet { pinButton.isHidden = onPin == nil }
+    /// "표시 ▾": 어디서 볼지(별도 창·세션 창 안)와 창 높이(일반·AgentDeck 쓸 때만 위·항상 위) — 메뉴는 BrowserWindows 가 만든다
+    private let displayButton = NSButton(title: "표시 ▾", target: nil, action: nil)
+    var displayMenu: (() -> NSMenu)? {
+        didSet { displayButton.isHidden = displayMenu == nil }
+    }
+    /// 세션 창 안(도크)에 놓였는지 — "칸에 맞춤"이면 페이지를 고정 크기로(도크 폭이 바뀔 때마다 페이지가 흔들리지 않게)
+    var docked = false {
+        didSet { if docked != oldValue { feed?.setDocked(docked) } }
     }
     private let screen = BrowserScreenView()
     /// 탭 칩 줄: 브라우저의 탭들(AI 작업 공간마다 묶음, 사람 탭은 뒤). 누르면 그 탭을 계속 보여 준다.
@@ -78,14 +82,13 @@ final class BrowserPaneView: NSView {
         controlButton.target = self
         controlButton.action = #selector(toggleControl)
         controlButton.isHidden = true
-        pinButton.bezelStyle = .inline
-        pinButton.controlSize = .small
-        pinButton.font = .systemFont(ofSize: TermAppearance.scaled(11))
-        pinButton.setButtonType(.pushOnPushOff)
-        pinButton.target = self
-        pinButton.action = #selector(togglePin)
-        pinButton.isHidden = true
-        pinButton.toolTip = "다른 창보다 항상 위에 두기"
+        displayButton.bezelStyle = .inline
+        displayButton.controlSize = .small
+        displayButton.font = .systemFont(ofSize: TermAppearance.scaled(11))
+        displayButton.target = self
+        displayButton.action = #selector(showDisplayMenu)
+        displayButton.isHidden = true
+        displayButton.toolTip = "어디서 볼지(별도 창·세션 창 안)와 창을 다른 창 위에 둘지"
         screen.pane = self
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textSecondary
@@ -100,7 +103,7 @@ final class BrowserPaneView: NSView {
         tabScroll.horizontalScrollElasticity = .allowed
         tabScroll.verticalScrollElasticity = .none
         tabScroll.isHidden = true
-        for view in [statePill, header, pinButton, controlButton, tabScroll, screen, statusBar, placeholder] {
+        for view in [statePill, header, displayButton, controlButton, tabScroll, screen, statusBar, placeholder] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -112,9 +115,9 @@ final class BrowserPaneView: NSView {
             statePill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             header.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             headerAtEdge,
-            header.trailingAnchor.constraint(lessThanOrEqualTo: pinButton.leadingAnchor, constant: -8),
-            pinButton.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
-            pinButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -6),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: displayButton.leadingAnchor, constant: -8),
+            displayButton.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
+            displayButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -6),
             controlButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             controlButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             tabScroll.topAnchor.constraint(equalTo: controlButton.bottomAnchor, constant: 3),
@@ -153,18 +156,27 @@ final class BrowserPaneView: NSView {
         updateFeed()
     }
 
-    /// 칸이 화면에서 빠졌다(다른 탭·닫기). 브라우저·에이전트는 계속 돈다.
+    /// 칸이 화면에서 빠졌다(창 닫기·도크 숨김·다른 곳으로 옮김). 브라우저·에이전트는 계속 돌고, 칸은 멈췄다가 다시 놓이면 이어 간다.
     func detach() {
         placed = false
         updateFeed()
     }
+
+    /// 세션이 닫혔다: 칸을 끝낸다(다시 쓰지 않는다)
+    func dispose() {
+        placed = false
+        disposed = true
+        stopFeed()
+    }
+
+    private var disposed = false
 
     private var placed = false
     private var framesShown = 0
 
     /// 시험 명령 `browsers` 가 찍는 상태
     var debugState: String {
-        "owner=\(owner.prefix(4)) placed=\(placed) visible=\(windowVisible) streaming=\(feed != nil) frames=\(framesShown) "
+        "owner=\(owner.prefix(4)) placed=\(placed) visible=\(windowVisible) streaming=\(feed != nil && placed && windowVisible) docked=\(docked) frames=\(framesShown) "
             + "control=\(control?.rawValue ?? "-") viewport=\(Int(viewport.width))x\(Int(viewport.height))"
             + " " + (feed?.debugSize ?? "")
     }
@@ -193,7 +205,13 @@ final class BrowserPaneView: NSView {
     }
 
     private func updateFeed() {
-        if placed && windowVisible { startFeed() } else { stopFeed() }
+        guard !disposed else { return }
+        if placed && windowVisible {
+            if let feed { feed.resume() } else { startFeed() }
+        } else if let feed {
+            screen.releaseInput() // 보이지 않는 칸으로 키·마우스가 남아 가지 않게
+            feed.pause()
+        }
     }
 
     private func startFeed() {
@@ -223,6 +241,7 @@ final class BrowserPaneView: NSView {
             self.retryCursor() // 첫 그림을 기다리던 커서
         }
         self.feed = feed
+        feed.setDocked(docked)
         feed.start()
         feed.fit(to: screen.bounds.size)
     }
@@ -566,8 +585,9 @@ final class BrowserPaneView: NSView {
         }
     }
 
-    @objc private func togglePin() {
-        onPin?(pinButton.state == .on)
+    @objc private func showDisplayMenu() {
+        guard let menu = displayMenu?() else { return }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: displayButton.bounds.height + 2), in: displayButton)
     }
 
     /// 메뉴·시험 명령용
@@ -1191,6 +1211,11 @@ final class BrowserFeed {
     private var pendingRefresh = false
     private var frames = LatestFrameQueue<ScreencastFrame>()
     private var stopped = false
+    /// 칸이 안 보임(창이 가려짐·닫힘, 도크가 접힘): 스트림·감시를 멈추되 고른 탭·크기 기록 등은 들고 있다(다시 보이면 이어서)
+    private var paused = false
+    /// 세션 창 안(도크)에서 보는 중 — "칸에 맞춤"이면 페이지는 고정 크기(BrowserViewOptions.pageSize(for:docked:))
+    private var docked = false
+    private var halted: Bool { stopped || paused }
     /// 마지막 상태의 제어권(사람 입력·새 탭 따라가기)
     private var control: AbxStatus.Control?
     /// 돌려주는 중(abx resume 을 보냄)
@@ -1232,8 +1257,8 @@ final class BrowserFeed {
         guard !stopped, new != options else { return }
         let old = options
         options = new
-        if let paneSize, new.pageSize(for: paneSize) != old.pageSize(for: paneSize) {
-            size = new.pageSize(for: paneSize)
+        if let paneSize, new.pageSize(for: paneSize, docked: docked) != old.pageSize(for: paneSize, docked: docked) {
+            size = new.pageSize(for: paneSize, docked: docked)
             applySize()
         }
         if new.screencast != old.screencast, connectedURL != nil {
@@ -1244,17 +1269,71 @@ final class BrowserFeed {
 
     func start() {
         queue.async { [self] in
+            guard locateRunner(), !paused else { return }
+            startTimer()
+        }
+    }
+
+    /// abx 를 찾는다(못 찾으면 안내) — 처음 띄울 때, 그리고 못 찾았던 칸이 다시 보일 때(그사이 설치했을 수 있다)
+    private func locateRunner() -> Bool {
+        if runner == nil {
             runner = AbxRunner.locate(bundleHelpers: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers"))
-            guard runner != nil else {
-                publish(.waiting("abx 를 찾지 못했어요 — abx 를 설치하거나 AGENTDECK_ABX 로 경로를 알려 주세요"))
-                return
+        }
+        guard runner != nil else {
+            publish(.waiting("abx 를 찾지 못했어요 — abx 를 설치하거나 AGENTDECK_ABX 로 경로를 알려 주세요"))
+            return false
+        }
+        return true
+    }
+
+    private func startTimer() {
+        // 폴더가 아직 없을 수 있어(브라우저를 처음 쓰기 전) 몇 초마다도 읽는다
+        timer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now(), repeating: 3)
+        timer.setEventHandler { [weak self] in self?.refresh() }
+        timer.resume()
+        self.timer = timer
+    }
+
+    /// 칸이 안 보이게 됐다: 스트림·감시를 멈춘다. 사람이 보던 탭 표시(watch 파일)는 지운다 — 보는 사람이 없으니
+    /// abx 가 커서를 적고 기다리거나 그 탭을 남길 까닭이 없다. 고른 탭·크기 기록은 들고 있다가 resume 에서 이어 간다.
+    func pause() {
+        queue.async { [self] in
+            guard !stopped, !paused else { return }
+            paused = true
+            if lastWatch != nil { try? FileManager.default.removeItem(at: watchFile) }
+            lastWatch = nil
+            timer?.cancel()
+            timer = nil
+            watchers.forEach { $0.cancel() }
+            watchers = []
+            frames = LatestFrameQueue<ScreencastFrame>()
+            disconnect()
+        }
+    }
+
+    /// 다시 보인다: 상태를 읽고 다시 붙는다(고른 탭이 있으면 watch 파일도 다시 쓴다)
+    func resume() {
+        queue.async { [self] in
+            guard !stopped, paused else { return }
+            paused = false
+            guard locateRunner() else { return }
+            startTimer()
+        }
+    }
+
+    /// 세션 창 안(도크)으로 옮겼거나 창으로 돌아왔다: 페이지 크기 규칙이 바뀐다. 사람이 보는 곳을 옮긴 것이라
+    /// 처음 보는 것처럼 AI 차례여도 한 번은 바로 맞춘다(writer 자리를 잡아 AI 명령 도중엔 아님) — 옮긴 곳에 빈 띠가 남지 않게.
+    func setDocked(_ value: Bool) {
+        queue.async { [self] in
+            guard docked != value else { return }
+            docked = value
+            sizedFor.removeAll()
+            if let paneSize {
+                size = options.pageSize(for: paneSize, docked: docked)
+                applySize()
             }
-            // 폴더가 아직 없을 수 있어(브라우저를 처음 쓰기 전) 몇 초마다도 읽는다
-            let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now(), repeating: 3)
-            timer.setEventHandler { [weak self] in self?.refresh() }
-            timer.resume()
-            self.timer = timer
         }
     }
 
@@ -1309,7 +1388,7 @@ final class BrowserFeed {
     }
 
     private func refresh() {
-        guard !stopped, let runner else { return }
+        guard !halted, let runner else { return }
         watchNewDirs()
         // 상태는 abx 를 띄우지 않고 파일로 읽는다(AbxStateReader — abx status --json 과 같은 규칙)
         let status = AbxStateReader().status(session)
@@ -1444,7 +1523,7 @@ final class BrowserFeed {
         Task { [weak self] in
             let transport = try? await WebSocketTransport.connect(endpoint)
             queue.async {
-                guard let self, !self.stopped, self.connectGeneration == generation else {
+                guard let self, !self.halted, self.connectGeneration == generation else {
                     transport?.close()
                     return
                 }
@@ -1488,11 +1567,20 @@ final class BrowserFeed {
         guard let stream else { return }
         if let target, stream.currentTarget == target { return }
         Task { [weak self] in
-            guard let pages = await stream.pages(),
-                  let pick = ScreencastStream.choose(wanted: target, current: stream.currentTarget, open: pages) else { return }
+            guard let self, let pages = await stream.pages() else { return }
+            // 칸이 멈춰 있는 동안(가려짐·숨김) 닫힌 탭은 닫힘 알림을 못 받았다: 고른 탭·사람이 연 탭이 없어졌으면 잊는다
+            // (그 탭을 계속 원하면 AI 가 다른 탭으로 가도 따라가지 못한다)
+            let target = self.queue.sync { () -> String? in
+                var forgot = false
+                if let pinned = self.pinned, !pages.contains(pinned) { self.pinned = nil; forgot = true }
+                if let user = self.userTarget, !pages.contains(user) { self.userTarget = nil; forgot = true }
+                if forgot { self.publishTabs() }
+                return target.map(pages.contains) == false ? self.wanted : target
+            }
+            guard let pick = ScreencastStream.choose(wanted: target, current: stream.currentTarget, open: pages) else { return }
             let changed = stream.currentTarget != pick
             try? await stream.show(target: pick)
-            if changed { self?.queue.async { self?.showing(pick) } }
+            if changed { self.queue.async { self.showing(pick) } }
         }
     }
 
@@ -1538,7 +1626,7 @@ final class BrowserFeed {
         guard size.width > 0, size.height > 0 else { return }
         queue.async { [self] in
             paneSize = size
-            self.size = options.pageSize(for: size)
+            self.size = options.pageSize(for: size, docked: docked)
             applySize()
         }
     }
@@ -1554,7 +1642,7 @@ final class BrowserFeed {
     /// 동작 도중에 바뀌지 않게. 그동안 그림만 창에 맞춰 줄이고 늘리며, 사람 차례·쉬는 중이 되면 맞춘다.
     /// 예외: 칸이 처음 보는 탭은 AI 차례여도 바로 맞춘다(AI 명령이 돌고 있으면 끝나길 기다렸다가).
     private func applySize() {
-        guard !stopped else { return }
+        guard !halted else { return }
         guard !fitting else { fitAgain = true; return }
         guard let stream, let size, let target = stream.currentTarget else { return }
         let first = sizedFor[target] == nil
@@ -1578,8 +1666,9 @@ final class BrowserFeed {
                 lease.release()
             }
             self?.queue.async {
-                guard let self, !self.stopped else { return }
+                guard let self else { return }
                 self.fitting = false
+                guard !self.halted else { return }
                 if done { self.sizedFor[target] = size }
                 let again = self.fitAgain || moved || self.stream !== stream
                     || (done && (self.size != size || stream.currentTarget != target))
@@ -1657,7 +1746,7 @@ final class BrowserFeed {
     // MARK: - 프레임
 
     private func received(_ frame: ScreencastFrame) {
-        guard !stopped, let next = frames.offer(frame) else { return }
+        guard !halted, let next = frames.offer(frame) else { return }
         decode(next)
     }
 

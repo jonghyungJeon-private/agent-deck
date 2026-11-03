@@ -2,7 +2,8 @@ import Foundation
 
 /// 창 양옆에 붙이는 도구 창(IntelliJ 의 tool window)
 public enum ToolID: String, CaseIterable, Codable, Sendable {
-    case spaces, files
+    /// browser: 지금 고른 세션의 에이전트 브라우저(세션 창 안에서 보기). 처음엔 숨김, 꺼내면 오른쪽.
+    case spaces, files, browser
 }
 
 public enum DockSide: String, CaseIterable, Codable, Sendable {
@@ -23,11 +24,14 @@ public struct ToolLayout: Equatable, Sendable {
     public var fontSize: Double?
 
     public static let defaultWidths: [DockSide: Double] = [.left: 260, .right: 280]
+    /// 브라우저가 보이는 도크의 처음 폭(페이지가 읽힐 만큼) — 사람이 넓히거나 줄이면 그 폭을 기억한다
+    public static let browserWidth: Double = 640
 
-    /// 기본: spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 처럼 프로젝트 도구는 왼쪽, 터미널 폭은 그대로)
+    /// 기본: spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 처럼 프로젝트 도구는 왼쪽, 터미널 폭은 그대로).
+    /// browser 는 숨김(브라우저를 세션 창 안에서 보기로 하면 오른쪽에 나온다).
     public init() {
-        sides = [.spaces: .left, .files: .left]
-        lastSides = [.spaces: .left, .files: .left]
+        sides = [.spaces: .left, .files: .left, .browser: .hidden]
+        lastSides = [.spaces: .left, .files: .left, .browser: .right]
         selected = [.left: .spaces]
         widths = Self.defaultWidths
     }
@@ -54,8 +58,12 @@ public struct ToolLayout: Equatable, Sendable {
     public func width(_ side: DockSide) -> Double { widths[side] ?? Self.defaultWidths[side] ?? 260 }
 
     /// 왼쪽·오른쪽으로 옮기거나 숨긴다. 옮기면 그쪽에서 이 도구를 고른다.
+    /// 브라우저를 처음 꺼내는 도크는 기본 폭(280)이 좁아 페이지가 읽히지 않으니 넓힌다(사람이 정한 폭은 그대로).
     public mutating func move(_ tool: ToolID, to side: DockSide) {
         let old = self.side(of: tool)
+        if tool == .browser, side != .hidden, widths[side] == nil || widths[side] == Self.defaultWidths[side] {
+            widths[side] = Self.browserWidth
+        }
         if side == .hidden {
             if old != .hidden { lastSides[tool] = old }
         } else {

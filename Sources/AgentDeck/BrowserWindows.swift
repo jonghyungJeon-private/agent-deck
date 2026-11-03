@@ -1,5 +1,6 @@
 import AppKit
 import BrowserCore
+import TermLayout
 import TermWire
 
 /// 화면(에이전트 세션) 하나의 브라우저가 지금 어떤지 — 화면 제목 줄의 칩·spaces 목록·알림이 쓴다
@@ -186,77 +187,301 @@ final class BrowserChipView: NSView {
     override func accessibilityPerformPress() -> Bool { guard let onClick else { return false }; onClick(); return true }
 }
 
-/// 세션 하나의 브라우저 창. 창 크기가 곧 브라우저 크기(사람이 조작 중이거나 쉴 때 맞춘다).
-/// 닫아도 브라우저·에이전트는 계속 돈다(보기만 닫힌다). 위치·크기는 세션별로 기억한다.
+/// 세션 하나의 브라우저 창(보는 곳이 "별도 창"인 세션). 창 크기가 곧 브라우저 크기(사람이 조작 중이거나 쉴 때 맞춘다).
+/// 닫아도 브라우저·에이전트는 계속 돈다(보기만 닫힌다). 위치·크기는 세션별로 기억한다. 칸(BrowserPaneView)은
+/// BrowserWindows 가 세션마다 하나 들고 있어, 세션 창 안으로 옮겨도 같은 칸(고른 탭·크기 기록)이 그대로 간다.
 final class BrowserWindowController: NSWindowController, NSWindowDelegate {
     /// 이 창이 보여 주는 화면(에이전트 세션)
     let paneId: String
     let pane: BrowserPaneView
 
-    init(owner: String, title: String) {
-        self.paneId = owner
-        pane = BrowserPaneView(owner: owner, frame: NSRect(x: 0, y: 0, width: 1024, height: 760))
+    init(pane: BrowserPaneView, title: String) {
+        self.paneId = pane.owner
+        self.pane = pane
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1024, height: 760),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.contentView = pane
         window.minSize = NSSize(width: 420, height: 320)
         window.backgroundColor = TermAppearance.chrome
         window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
         window.delegate = self
         // 세션마다 따로 기억(같은 화면 ID 면 다시 열어도 그 자리)
-        window.setFrameAutosaveName("AgentDeckBrowser-" + BrowserBinding.sessionName(pane: owner))
+        window.setFrameAutosaveName("AgentDeckBrowser-" + BrowserBinding.sessionName(pane: pane.owner))
         if !window.setFrameUsingName(window.frameAutosaveName) { window.center() }
         setTitle(title)
-        pane.onPin = { [weak window] pinned in window?.level = pinned ? .floating : .normal }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     func setTitle(_ name: String) { window?.title = "브라우저 · " + name }
 
+    /// 창 높이: 일반 / AgentDeck 쓸 때만 위(앱이 앞일 때만 떠 있음) / 항상 위
+    func apply(_ level: BrowserDisplay.Level) {
+        let floating: Bool
+        switch level {
+        case .normal: floating = false
+        case .whileActive: floating = NSApp.isActive
+        case .always: floating = true
+        }
+        window?.level = floating ? .floating : .normal
+    }
+
     func show() {
+        guard let window else { return }
+        // 세션 창 안에서 데려온 칸이면 여기로 옮겨 단다
+        if window.contentView !== pane { window.contentView = pane }
+        pane.docked = false
         pane.attach()
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        window?.makeFirstResponder(pane.focusTarget)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(pane.focusTarget)
     }
+
+    /// 칸을 다른 곳(세션 창 안)으로 보낸다: 칸을 떼고 창을 닫는다
+    func release() {
+        pane.detach()
+        window?.contentView = NSView()
+        window?.orderOut(nil)
+    }
+
+    /// 창이 닫힘(빨간 단추·⌘W) — 세션 창 안 안내 문구가 바뀐다
+    var onClose: (() -> Void)?
 
     func windowWillClose(_ notification: Notification) {
         pane.detach()
+        DispatchQueue.main.async { [weak self] in self?.onClose?() }
     }
 }
 
-/// 세션별 브라우저 창들. 창은 세션마다 하나.
+/// 세션별 브라우저 칸과 보는 곳(별도 창 / 세션 창 안 도크)을 맡는다. 칸은 세션마다 하나이고 한 번에 한 곳에만 보인다.
+/// 보는 곳·창 높이는 머리 줄 "표시 ▾" 에서 고르고 `term/browser-display.json` 에 둔다(고르면 그 세션 값 + 새 세션의 기본값).
 final class BrowserWindows {
     private(set) var controllers: [String: BrowserWindowController] = [:]
+    private var panes: [String: BrowserPaneView] = [:]
+    /// 세션 창 안 browser 도구(지금 고른 세션의 브라우저)
+    let dock = BrowserDockController()
+    /// browser 도구를 보이게(숨김이면 마지막 쪽에, 다른 도구가 보이면 이것으로) — ToolWindowsController 가 단다
+    var revealDock: (() -> Void)?
+    /// browser 도구가 지금 보이는지
+    var dockVisible: (() -> Bool)?
+    /// browser 도구를 왼쪽·오른쪽으로 옮기거나 숨긴다 / 지금 붙은 쪽
+    var moveDock: ((DockSide) -> Void)?
+    var dockSide: (() -> DockSide)?
+    /// 세션 이름(창 제목·도크 안내)
+    var titleFor: ((String) -> String?)?
+    private var prefs: BrowserDisplayPrefs
+    private var observers: [NSObjectProtocol] = []
 
     /// 마지막으로 연 창의 화면(키 창이 아닐 때 시험 명령이 쓴다)
     private(set) var lastOpened: String?
 
-    func open(owner: String, title: String) {
-        let controller = controllers[owner] ?? BrowserWindowController(owner: owner, title: title)
-        controllers[owner] = controller
-        lastOpened = owner
-        controller.setTitle(title)
-        controller.show()
+    static var url: URL { TermPaths.home.appendingPathComponent("browser-display.json") }
+
+    init() {
+        prefs = BrowserDisplayPrefs.load(from: Self.url)
+        dock.paneFor = { [weak self] owner in
+            guard let self, self.display(owner).placement == .dock else { return nil }
+            // 칸은 한 곳에만: 아직 창이 들고 있으면 먼저 내려놓게 한다(빈 창이 남지 않게)
+            if let controller = self.controllers.removeValue(forKey: owner) { controller.release() }
+            return self.pane(owner)
+        }
+        dock.onShowHere = { [weak self] owner in self?.move(owner, to: .dock) }
+        dock.onShowWindow = { [weak self] owner in self?.open(owner: owner, title: nil) }
+        dock.titleFor = { [weak self] owner in self?.titleFor?(owner) }
+        dock.windowOpen = { [weak self] owner in self?.controllers[owner]?.window?.isVisible == true }
+        // "AgentDeck 쓸 때만 위": 앱이 앞으로 오고 갈 때 그 창들의 높이를 바꾼다
+        let center = NotificationCenter.default
+        let relevel: (Notification) -> Void = { [weak self] _ in self?.applyLevels() }
+        observers = [
+            center.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main, using: relevel),
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main, using: relevel),
+        ]
     }
 
-    func isOpen(_ owner: String) -> Bool { controllers[owner]?.window?.isVisible == true }
+    private func key(_ owner: String) -> String { BrowserBinding.sessionName(pane: owner) }
 
+    func display(_ owner: String) -> BrowserDisplay { prefs.display(for: key(owner)) }
+
+    /// 세션의 칸(없으면 만든다)
+    func pane(_ owner: String) -> BrowserPaneView {
+        if let pane = panes[owner] { return pane }
+        let pane = BrowserPaneView(owner: owner, frame: NSRect(x: 0, y: 0, width: 1024, height: 760))
+        pane.displayMenu = { [weak self] in self?.menu(for: owner) ?? NSMenu() }
+        panes[owner] = pane
+        return pane
+    }
+
+    /// 세션의 브라우저를 보는 곳에 보인다(⇧⌘B·칩·목록 아이콘·알림): 별도 창이면 그 창을 앞으로, 세션 창 안이면 도구를 꺼내 그 세션으로.
+    func open(owner: String, title: String?) {
+        lastOpened = owner
+        switch display(owner).placement {
+        case .window:
+            let controller = controllers[owner] ?? BrowserWindowController(pane: pane(owner), title: title ?? titleFor?(owner) ?? "…")
+            controllers[owner] = controller
+            controller.onClose = { [weak self] in if self?.dock.owner == owner { self?.dock.refresh() } }
+            if let title = title ?? titleFor?(owner) { controller.setTitle(title) }
+            if dock.owner == owner {
+                dock.refresh() // 도크가 이 칸을 들고 있었으면 내려놓게(한 곳에만)
+                // 세션 창 안에서 보던 세션을 창으로 옮겼다: 빈 도구가 자리를 차지하지 않게 숨긴다(⌘⇧B·"여기서 보기"로 다시)
+                if dockVisible?() == true, dock.hosted == nil { moveDock?(.hidden) }
+            }
+            controller.apply(display(owner).level)
+            controller.show()
+            if dock.owner == owner { dock.refresh() } // 안내: "창에서 보는 중"
+        case .dock:
+            controllers[owner]?.release()
+            controllers[owner] = nil
+            dock.follow(owner, force: true)
+            revealDock?()
+            // 세션 창이 최소화됐거나 뒤에 있으면 앞으로(알림을 눌러 왔을 때도 바로 보이게)
+            if let window = dock.view.window {
+                if window.isMiniaturized { window.deminiaturize(nil) }
+                window.makeKeyAndOrderFront(nil)
+            }
+            dock.focus()
+        }
+    }
+
+    /// 세션 창에서 고른 세션이 바뀜: 도크는 그 세션의 브라우저로(편집기·미리보기 화면은 무시 — 마지막 세션 그대로)
+    func follow(_ owner: String?) {
+        guard let owner, !LocalPane.isLocal(owner) else { return }
+        dock.follow(owner, force: false)
+    }
+
+    /// "표시 ▾" 에서 고름
+    func choose(_ display: BrowserDisplay, for owner: String) {
+        let old = self.display(owner)
+        freezeOthers(except: owner)
+        prefs.choose(display, for: key(owner))
+        save()
+        if old.placement != display.placement { move(owner, to: display.placement, recorded: true) }
+        else { controllers[owner]?.apply(display.level) }
+    }
+
+    /// 보는 곳을 옮긴다(창 ↔ 세션 창 안). 칸은 같은 것을 옮겨 단다.
+    func move(_ owner: String, to placement: BrowserDisplay.Placement, recorded: Bool = false) {
+        if !recorded {
+            var display = self.display(owner)
+            display.placement = placement
+            freezeOthers(except: owner)
+            prefs.choose(display, for: key(owner))
+            save()
+        }
+        open(owner: owner, title: nil)
+    }
+
+    /// 고른 방식은 새 세션의 기본값이 된다 — 이미 열려 있는 다른 세션(따로 고른 적 없음)은 지금 보이는 방식 그대로 두게
+    /// 그 값을 적어 둔다(기본값이 바뀌어 다른 세션의 창이 갑자기 도크로 가지 않게)
+    private func freezeOthers(except owner: String) {
+        for other in panes.keys where other != owner && prefs.sessions[key(other)] == nil {
+            prefs.sessions[key(other)] = prefs.defaults
+        }
+    }
+
+    private func applyLevels() {
+        for (owner, controller) in controllers { controller.apply(display(owner).level) }
+    }
+
+    private func save() {
+        guard let data = prefs.data() else { return }
+        try? FileManager.default.createDirectory(at: TermPaths.home, withIntermediateDirectories: true)
+        try? data.write(to: Self.url, options: .atomic)
+    }
+
+    /// 머리 줄 "표시 ▾"
+    func menu(for owner: String) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        let current = display(owner)
+        func header(_ title: String) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            return item
+        }
+        menu.addItem(header("보는 곳"))
+        for (placement, title) in [(BrowserDisplay.Placement.window, "별도 창"), (.dock, "세션 창 안 (도구)")] {
+            let item = ClosureMenuItem(title: title) { [weak self] in
+                var next = current
+                next.placement = placement
+                self?.choose(next, for: owner)
+            }
+            item.state = current.placement == placement ? .on : .off
+            item.indentationLevel = 1
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
+        menu.addItem(header(current.placement == .window ? "창" : "창 (별도 창일 때)"))
+        let levels: [(BrowserDisplay.Level, String)] = [(.normal, "일반 창"), (.whileActive, "AgentDeck 쓸 때만 위"),
+                                                        (.always, "항상 위 (다른 앱 위에도)")]
+        for (level, title) in levels {
+            let item = ClosureMenuItem(title: title) { [weak self] in
+                var next = current
+                next.level = level
+                self?.choose(next, for: owner)
+            }
+            item.state = current.level == level ? .on : .off
+            item.isEnabled = current.placement == .window
+            item.indentationLevel = 1
+            menu.addItem(item)
+        }
+        if current.placement == .dock {
+            // 도구가 혼자 붙은 도크는 위 도구 버튼 줄이 없어, 옮기기·숨기기를 여기에도 둔다
+            menu.addItem(.separator())
+            menu.addItem(header("세션 창 안"))
+            let side = dockSide?() ?? .right
+            for (target, title) in [(DockSide.left, "왼쪽에"), (.right, "오른쪽에")] {
+                let item = ClosureMenuItem(title: title) { [weak self] in self?.moveDock?(target) }
+                item.state = side == target ? .on : .off
+                item.indentationLevel = 1
+                menu.addItem(item)
+            }
+            let hide = ClosureMenuItem(title: "숨기기 (⌘⇧B 로 다시)") { [weak self] in self?.moveDock?(.hidden) }
+            hide.indentationLevel = 1
+            menu.addItem(hide)
+        }
+        menu.addItem(.separator())
+        let note = header("고른 방식은 새 세션의 기본값도 돼요")
+        menu.addItem(note)
+        return menu
+    }
+
+    /// 도크가 그 세션을 실제로 화면에 보이는 중(도구가 보이고, 세션 창이 최소화·가려짐이 아님)
+    private func dockShows(_ owner: String) -> Bool {
+        guard dockVisible?() == true, dock.showing == owner, let window = dock.view.window else { return false }
+        return window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
+    }
+
+    /// 어딘가에 보이는지(창이 떠 있거나, 도크가 보이며 그 세션을 보여 주는 중)
+    func isOpen(_ owner: String) -> Bool {
+        controllers[owner]?.window?.isVisible == true || dockShows(owner)
+    }
+
+    /// 사람이 지금 그 브라우저를 보고 있는지(알림을 거를 때): 앱이 앞이고, 그 창이 키 창이거나 도크에 보이는 중
+    func isWatching(_ owner: String) -> Bool {
+        guard NSApp.isActive else { return false }
+        return keyController?.paneId == owner || dockShows(owner)
+    }
+
+    /// 세션이 닫힘: 창·도크에서 내리고 칸을 끝낸다
     func close(owner: String) {
         controllers[owner]?.close()
         controllers[owner] = nil
+        if dock.owner == owner { dock.follow(nil, force: true) }
+        panes.removeValue(forKey: owner)?.dispose()
     }
 
     func retitle(_ titles: (String) -> String?) {
         for (owner, controller) in controllers { if let t = titles(owner) { controller.setTitle(t) } }
+        dock.refresh()
     }
 
-    /// 키 창이 브라우저 창이면 그 화면(편집 메뉴·⌘W·시험 명령이 그 창을 대상으로)
+    /// 키 창이 브라우저 창이면 그 화면, 세션 창의 도크 브라우저에 포커스가 있으면 그 화면(편집 메뉴·⌘W·시험 명령)
     var keyPane: BrowserPaneView? {
-        controllers.values.first { $0.window?.isKeyWindow == true }?.pane
+        if let pane = controllers.values.first(where: { $0.window?.isKeyWindow == true })?.pane { return pane }
+        if let pane = dock.hosted, let window = pane.window, window.isKeyWindow,
+           let responder = window.firstResponder as? NSView, responder.isDescendant(of: pane) { return pane }
+        return nil
     }
 
     var keyController: BrowserWindowController? {
@@ -267,6 +492,9 @@ final class BrowserWindows {
     var target: BrowserWindowController? {
         keyController ?? lastOpened.flatMap { controllers[$0] }.flatMap { $0.window?.isVisible == true ? $0 : nil }
     }
+
+    /// 시험 명령이 다룰 칸: 앞 창의 칸, 없으면 도크에 보이는 칸
+    var targetPane: BrowserPaneView? { target?.pane ?? (dockVisible?() == true ? dock.hosted : nil) }
 
     /// 보이는 창(시험 명령 `browsers`)
     var visible: [BrowserWindowController] { controllers.values.filter { $0.window?.isVisible == true } }
