@@ -698,10 +698,17 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     private var cursorCSS: CGPoint?
     private var cursorHide: DispatchWorkItem?
 
-    /// AI 가 쓰는 동안의 표시: 화면 둘레의 초록 테두리(천천히 숨 쉬듯)와 아래 가운데 "AI 사용 중" 알약
+    /// AI 가 쓰는 동안의 표시(ego-browser 처럼 화면 전체로): 또렷한 초록 테두리, 가장자리에서 안쪽으로 번지는 빛(천천히 숨 쉬듯),
+    /// 아래 가운데 떠 있는 "AI 가 조작 중" 알약
     private let agentFrame = CALayer()
     /// 초록 테두리 바깥의 어두운 1pt 선 — 흰 페이지 위에서도 테두리가 보이게
     private let agentOutline = CALayer()
+    /// 가장자리에서 안쪽으로 번지는 초록 빛(네 변) — 숨 쉬는 것은 이 빛, 테두리는 늘 또렷하게
+    private let agentGlow = CALayer()
+    private let glowEdges = (0..<4).map { _ in CAGradientLayer() }
+    /// 페이지 아래 가운데 떠 있는 "AI 가 조작 중" 알약
+    private let agentPill = CALayer()
+    private let agentPillText = CATextLayer()
     private(set) var agentActive = false
     /// macOS "동작 줄이기": 숨 쉬기·미끄러지기·퍼지는 원 없이
     private var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -725,15 +732,39 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
             self?.refreshBreathing()
         }
         agentFrame.borderColor = TermAppearance.agentColor.cgColor
-        agentFrame.borderWidth = 2
+        agentFrame.borderWidth = 3
         agentFrame.zPosition = 5
         agentFrame.isHidden = true
         agentOutline.borderColor = TermAppearance.chrome.cgColor
         agentOutline.borderWidth = 1
         agentOutline.zPosition = 5
         agentOutline.isHidden = true
+        let green = TermAppearance.agentColor
+        for edge in glowEdges {
+            edge.colors = [green.withAlphaComponent(0.8).cgColor, green.withAlphaComponent(0.3).cgColor, green.withAlphaComponent(0).cgColor]
+            edge.locations = [0, 0.3, 1]
+            agentGlow.addSublayer(edge)
+        }
+        // 위(0)·아래(1)·왼쪽(2)·오른쪽(3): 빛은 그 변에서 안쪽으로
+        glowEdges[0].startPoint = CGPoint(x: 0.5, y: 0); glowEdges[0].endPoint = CGPoint(x: 0.5, y: 1)
+        glowEdges[1].startPoint = CGPoint(x: 0.5, y: 1); glowEdges[1].endPoint = CGPoint(x: 0.5, y: 0)
+        glowEdges[2].startPoint = CGPoint(x: 0, y: 0.5); glowEdges[2].endPoint = CGPoint(x: 1, y: 0.5)
+        glowEdges[3].startPoint = CGPoint(x: 1, y: 0.5); glowEdges[3].endPoint = CGPoint(x: 0, y: 0.5)
+        agentGlow.zPosition = 4
+        agentGlow.isHidden = true
+        agentPill.backgroundColor = green.cgColor
+        agentPill.shadowColor = NSColor.black.cgColor
+        agentPill.shadowOpacity = 0.35
+        agentPill.shadowRadius = 6
+        agentPill.shadowOffset = .zero
+        agentPill.zPosition = 6
+        agentPill.isHidden = true
+        agentPillText.alignmentMode = .center
+        agentPill.addSublayer(agentPillText)
+        layer?.addSublayer(agentGlow)
         layer?.addSublayer(agentOutline)
         layer?.addSublayer(agentFrame)
+        layer?.addSublayer(agentPill)
     }
 
     /// AI 가 쥐고 있는지(칸이 정한다 — setControl)
@@ -744,6 +775,8 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         CATransaction.setDisableActions(true)
         agentFrame.isHidden = !active
         agentOutline.isHidden = !active
+        agentGlow.isHidden = !active
+        agentPill.isHidden = !active
         if active {
             placeAgentMark()
         }
@@ -757,14 +790,14 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         if agentActive, !reduceMotion {
             let breathe = CABasicAnimation(keyPath: "opacity")
             breathe.fromValue = 1
-            breathe.toValue = 0.45
-            breathe.duration = 1.2
+            breathe.toValue = 0.6
+            breathe.duration = 1.4
             breathe.autoreverses = true
             breathe.repeatCount = .infinity
             breathe.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            agentFrame.add(breathe, forKey: "breathe")
+            agentGlow.add(breathe, forKey: "breathe")
         } else {
-            agentFrame.removeAnimation(forKey: "breathe")
+            agentGlow.removeAnimation(forKey: "breathe")
         }
         CATransaction.commit()
     }
@@ -775,6 +808,31 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         let area = rect.isEmpty ? bounds : rect
         agentOutline.frame = area
         agentFrame.frame = area.insetBy(dx: 1, dy: 1)
+        agentGlow.frame = area
+        let w = area.width, h = area.height
+        let g = min(TermAppearance.scaled(40), w / 5, h / 5)
+        // 이 뷰는 위가 0 — 위 변은 y 0, 그라디언트의 시작점(0)도 위
+        glowEdges[0].frame = CGRect(x: 0, y: 0, width: w, height: g)
+        glowEdges[1].frame = CGRect(x: 0, y: h - g, width: w, height: g)
+        glowEdges[2].frame = CGRect(x: 0, y: 0, width: g, height: h)
+        glowEdges[3].frame = CGRect(x: w - g, y: 0, width: g, height: h)
+        let scale = window?.backingScaleFactor ?? 2
+        let font = NSFont.systemFont(ofSize: TermAppearance.scaled(13.5), weight: .bold)
+        let text = NSAttributedString(string: "●  AI 가 조작 중 · 보기만 돼요",
+                                      attributes: [.font: font, .foregroundColor: TermAppearance.chrome])
+        let size = text.size()
+        let pillHeight = ceil(size.height) + TermAppearance.scaled(14)
+        let pillWidth = min(ceil(size.width) + TermAppearance.scaled(36), w - 16)
+        agentPillText.string = text
+        agentPillText.contentsScale = scale
+        agentPillText.truncationMode = .end
+        agentPillText.frame = CGRect(x: TermAppearance.scaled(18), y: (pillHeight - ceil(size.height)) / 2,
+                                     width: pillWidth - TermAppearance.scaled(36), height: ceil(size.height))
+        agentPill.cornerRadius = pillHeight / 2
+        agentPill.frame = CGRect(x: area.midX - pillWidth / 2, y: area.maxY - pillHeight - TermAppearance.scaled(18),
+                                 width: pillWidth, height: pillHeight)
+        // 좁은 칸: 알약이 페이지를 많이 가리면 빼고 테두리·빛만
+        agentPill.isHidden = !agentActive || w < 260 || h < 160
     }
 
     private func setUpCursor() {
@@ -1485,20 +1543,53 @@ final class BrowserFeed {
         }
     }
 
+    /// 탭마다 마지막으로 맞춘 크기. 칸이 아직 한 번도 맞추지 않은 탭(칸을 열기 전에 AI 가 연 첫 탭 등)은 기본 창 크기라
+    /// 화면 위아래·좌우에 빈 띠가 생긴다 — 그런 탭은 AI 차례여도 처음 한 번은 맞춘다.
+    private var sizedFor: [String: CGSize] = [:]
+    private var fitting = false
+    /// 맞추는 동안 또 맞출 일이 생겼다(크기·탭·스트림이 바뀜): 끝나면 지금 것으로 다시
+    private var fitAgain = false
+
     /// AI 가 입력을 쥐고 있는 동안(잠금·넘기는 중)은 페이지 크기를 바꾸지 않는다 — AI 가 본 화면 배치·좌표가
     /// 동작 도중에 바뀌지 않게. 그동안 그림만 창에 맞춰 줄이고 늘리며, 사람 차례·쉬는 중이 되면 맞춘다.
+    /// 예외: 칸이 처음 보는 탭은 AI 차례여도 바로 맞춘다(AI 명령이 돌고 있으면 끝나길 기다렸다가).
     private func applySize() {
-        guard let stream, let size, stream.currentTarget != nil, control == .user || control == .idle else { return }
+        guard !stopped else { return }
+        guard !fitting else { fitAgain = true; return }
+        guard let stream, let size, let target = stream.currentTarget else { return }
+        let first = sizedFor[target] == nil
+        guard control == .user || control == .idle || (first && control == .agent) else { return }
         let session = self.session
-        Task {
+        fitting = true
+        Task { [weak self] in
             // abx 의 writer 자리를 잡고 크기를 바꾼다: 그동안 에이전트 동작은 시작하지 않고, 잡은 뒤 제어를 다시 보아
             // (그새 resume 등) AI 차례면 바꾸지 않는다 — 늦게 도착한 크기 변경이 AI 의 화면 배치를 바꾸지 않게.
-            guard let lease = AbxWriterLease.acquire(stateDir: session.stateDir, session: session.name) else { return }
-            defer { lease.release() }
-            // 자리를 잡은 것은 이 앱이라, handoff 가 있으면 상태는 "넘기는 중"(writer 가 살아 있음)으로 읽힌다 — 그것도 사람 차례다
-            let now = AbxStateReader().status(session)
-            guard now.handoff != nil || now.control == .idle else { return }
-            await stream.fit(to: size)
+            let lease = AbxWriterLease.acquire(stateDir: session.stateDir, session: session.name, wait: first ? 5 : 1.5)
+            var done = false
+            var moved = false
+            if let lease {
+                // 기다리는 사이 다른 탭으로 옮겼으면 그 탭은 따로 따진다(처음 보는 탭인지가 다르다) — fit 은 지금 탭을 바꾼다
+                moved = stream.currentTarget != target
+                // 자리를 잡은 것은 이 앱이라, handoff 가 있으면 상태는 "넘기는 중"(writer 가 살아 있음)으로 읽힌다 — 그것도 사람 차례다
+                let now = AbxStateReader().status(session)
+                if !moved, now.handoff != nil || now.control == .idle || (first && now.control == .agent) {
+                    done = await stream.fit(to: size)
+                }
+                lease.release()
+            }
+            self?.queue.async {
+                guard let self, !self.stopped else { return }
+                self.fitting = false
+                if done { self.sizedFor[target] = size }
+                let again = self.fitAgain || moved || self.stream !== stream
+                    || (done && (self.size != size || stream.currentTarget != target))
+                self.fitAgain = false
+                if again { self.applySize() }
+                // 처음 보는 탭인데 AI 명령이 길어 자리를 못 잡았다: 조금 뒤 다시
+                else if first, lease == nil {
+                    self.queue.asyncAfter(deadline: .now() + 1) { [weak self] in self?.applySize() }
+                }
+            }
         }
     }
 
