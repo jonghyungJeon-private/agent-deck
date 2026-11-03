@@ -320,6 +320,25 @@ final class AbxStateReaderTests: XCTestCase {
         XCTAssertEqual(s.control, .agent)
     }
 
+    func testRestingBrowserAndLastUse() throws {
+        try write("s1.rest.json", #"{"at":1700000000000,"tabs":[{"id":"t1"},{"id":"t2"}],"owners":{}}"#, state: true)
+        let s = AbxStateReader().status(session)
+        XCTAssertFalse(s.running)
+        XCTAssertEqual(s.resting, AbxStatus.Resting(at: 1_700_000_000_000, tabs: 2))
+        // 돌고 있으면 남은 기록은 쉬는 중이 아니다
+        let server = listen(dir.appendingPathComponent("s1.sock").path)
+        defer { close(server) }
+        XCTAssertNil(AbxStateReader().status(session).resting)
+
+        XCTAssertNil(AbxStateReader().lastUsed(session))
+        try write("s1.launch.json", "{}")
+        let old = Date(timeIntervalSinceNow: -3600)
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: dir.appendingPathComponent("s1.launch.json").path)
+        XCTAssertEqual(AbxStateReader().lastUsed(session)!.timeIntervalSince1970, old.timeIntervalSince1970, accuracy: 1)
+        try write("s1.used", "1", state: true) // 엔진을 부를 때마다 abx 가 쓴다
+        XCTAssertLessThan(Date().timeIntervalSince(AbxStateReader().lastUsed(session)!), 5)
+    }
+
     func testStaleFilesAreNotLife() throws {
         try write("s1.sock", "") // 서버 없이 남은 소켓 자리
         try write("s1.lock.sock", "")
@@ -654,5 +673,35 @@ final class BrowserViewOptionsTests: XCTestCase {
         XCTAssertEqual(BrowserViewOptions.load(from: url), BrowserViewOptions())
         try BrowserViewOptions(sharpness: .max).data()!.write(to: url)
         XCTAssertEqual(BrowserViewOptions.load(from: url).sharpness, .max)
+    }
+}
+
+final class BrowserRestTests: XCTestCase {
+    private func status(running: Bool = true, control: AbxStatus.Control = .idle) -> AbxStatus {
+        AbxStatus(session: "s", running: running, headless: true, cdpUrl: nil, control: control, handoff: nil, tabs: [])
+    }
+
+    func testRestsOnlyAnUnusedUnseenIdleBrowser() {
+        let now = Date()
+        let used = now.addingTimeInterval(-31 * 60)
+        let limit = BrowserViewOptions.IdleRest.m30.seconds
+        XCTAssertTrue(BrowserViewOptions.shouldRest(status(), lastUsed: used, now: now, limit: limit, shown: false))
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(), lastUsed: now.addingTimeInterval(-60), now: now, limit: limit, shown: false))
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(), lastUsed: used, now: now, limit: limit, shown: true), "on screen")
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(control: .agent), lastUsed: used, now: now, limit: limit, shown: false))
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(control: .user), lastUsed: used, now: now, limit: limit, shown: false), "handed to the user")
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(running: false), lastUsed: used, now: now, limit: limit, shown: false))
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(), lastUsed: nil, now: now, limit: limit, shown: false))
+        XCTAssertFalse(BrowserViewOptions.shouldRest(status(), lastUsed: used, now: now, limit: BrowserViewOptions.IdleRest.never.seconds, shown: false))
+    }
+
+    func testIdleRestDefaultsToThirtyMinutes() throws {
+        XCTAssertEqual(BrowserViewOptions().idleRest, .m30)
+        let old = try JSONDecoder().decode(BrowserViewOptions.self, from: Data(#"{"sharpness":"sharp","resolution":"fit"}"#.utf8))
+        XCTAssertEqual(old.idleRest, .m30)
+        let unknown = try JSONDecoder().decode(BrowserViewOptions.self, from: Data(#"{"idleRest":"m5"}"#.utf8))
+        XCTAssertEqual(unknown.idleRest, .m30)
+        var o = BrowserViewOptions(); o.idleRest = .never
+        XCTAssertEqual(try JSONDecoder().decode(BrowserViewOptions.self, from: o.data()!).idleRest, .never)
     }
 }

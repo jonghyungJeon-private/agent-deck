@@ -208,6 +208,19 @@ private struct ConnectionsSection: View {
                         .opacity(view.options.resolution == .fit ? 1 : 0.4)
                 }
                 RowDivider()
+                StatusRow(title: "쓰지 않으면 쉬게 하기", detail: "AI 가 이만큼 abx 를 쓰지 않고 화면에도 보이지 않으면 브라우저를 꺼서 메모리를 돌려줍니다. 탭은 남겨 두었다가 AI 가 다시 쓰거나 \"다시 켜기\"를 누르면 그대로 열립니다(로그인 유지)") {
+                    Picker("", selection: $view.options.idleRest) {
+                        Text("15분").tag(BrowserViewOptions.IdleRest.m15)
+                        Text("30분").tag(BrowserViewOptions.IdleRest.m30)
+                        Text("1시간").tag(BrowserViewOptions.IdleRest.h1)
+                        Text("2시간").tag(BrowserViewOptions.IdleRest.h2)
+                        Text("끄지 않음").tag(BrowserViewOptions.IdleRest.never)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 200)
+                }
+                RowDivider()
                 StatusRow(title: "Chrome 로그인 가져오기",
                           detail: "Chrome 에서 고른 사이트의 로그인(쿠키)을 에이전트 브라우저로 — 비밀번호는 가져오지 않습니다",
                           status: templateStatus) {

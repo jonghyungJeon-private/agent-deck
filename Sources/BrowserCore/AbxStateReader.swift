@@ -8,6 +8,7 @@ import Foundation
 /// - CDP 주소: 실행 옵션(`<세션>.launch.json`)의 프로필 폴더에 Chrome 이 쓰는 `DevToolsActivePort`
 /// - 제어: handoff 파일 → 사용자(진행 중인 writer 가 살아 있으면 넘기는 중), 잠금 소켓 + 살아 있는 잠금 pid → 에이전트, 아니면 쉼
 /// - 탭: abx 가 탭 목록을 볼 때마다 쓰는 `<stateDir>/<세션>.tabs.json`
+/// - 쉬는 중(꺼져 있을 때만): `abx rest` 가 남긴 `<stateDir>/<세션>.rest.json`(쉬게 한 때·다시 열 탭)
 public struct AbxStateReader {
     public init() {}
 
@@ -37,8 +38,23 @@ public struct AbxStateReader {
         }
         let tabs = (try? Data(contentsOf: stateDir.appendingPathComponent("\(name).tabs.json")))
             .flatMap { try? JSONDecoder().decode([AbxStatus.Tab].self, from: $0) } ?? []
+        var resting: AbxStatus.Resting?
+        if !running, let rest = (try? Data(contentsOf: stateDir.appendingPathComponent("\(name).rest.json")))
+            .flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) {
+            resting = AbxStatus.Resting(at: (rest["at"] as? Double) ?? 0, tabs: (rest["tabs"] as? [Any])?.count ?? 0)
+        }
         return AbxStatus(session: name, running: running, headless: (launch?["headed"] as? Bool).map { !$0 },
-                         cdpUrl: cdpUrl, control: control, handoff: handoff, tabs: tabs)
+                         cdpUrl: cdpUrl, control: control, handoff: handoff, tabs: tabs, resting: resting)
+    }
+
+    /// abx 가 이 브라우저를 마지막으로 쓴 때: 엔진을 부를 때마다 쓰는 `<stateDir>/<세션>.used`, 그 전 abx 면
+    /// 띄운 때(`launch.json`)·탭 목록을 쓴 때 중 가장 늦은 것. 아무것도 없으면 nil
+    public func lastUsed(_ session: AbxSession) -> Date? {
+        let fm = FileManager.default
+        let paths = [(session.stateDir as NSString).appendingPathComponent("\(session.name).used"),
+                     (session.socketDir as NSString).appendingPathComponent("\(session.name).launch.json"),
+                     (session.stateDir as NSString).appendingPathComponent("\(session.name).tabs.json")]
+        return paths.compactMap { (try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()
     }
 
     /// 살아 있는 프로세스인가(EPERM = 남의 프로세스지만 살아 있음)

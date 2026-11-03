@@ -1059,7 +1059,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 print("browser-state \(id.prefix(4)) \(BrowserIndicator(status).map { "\($0)" } ?? "-")")
             }
             for controller in model.browserWindows.visible {
-                print("browser-window \(controller.paneId.prefix(4)) \(controller.pane.debugState) key=\(controller.window?.isKeyWindow == true) level=\(controller.window?.level.rawValue ?? -1)")
+                print("browser-window \(controller.paneId.prefix(4)) \(controller.pane.debugState) key=\(controller.window?.isKeyWindow == true) level=\(controller.window?.level.rawValue ?? -1) shown=\(model.browserWindows.isShown(controller.paneId)) occluded=\(controller.window?.occlusionState.contains(.visible) != true)")
             }
             if let pane = model.browserWindows.dock.hosted, model.browserWindows.isOpen(pane.owner) {
                 print("browser-dock \(pane.owner.prefix(4)) \(pane.debugState)")

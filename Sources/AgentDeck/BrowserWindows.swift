@@ -457,6 +457,14 @@ final class BrowserWindows {
         controllers[owner]?.window?.isVisible == true || dockShows(owner)
     }
 
+    /// 화면에 보이는지(쉬게 하기를 거를 때): 창이 떠 있고 가려지거나 최소화되지 않았거나, 도크에 보이는 중. 앱이 앞인지는 묻지 않는다
+    /// (다른 앱을 쓰면서 옆 화면에 띄워 둔 브라우저도 보는 중)
+    func isShown(_ owner: String) -> Bool {
+        if let window = controllers[owner]?.window, window.isVisible, !window.isMiniaturized,
+           window.occlusionState.contains(.visible) { return true }
+        return dockShows(owner)
+    }
+
     /// 사람이 지금 그 브라우저를 보고 있는지(알림을 거를 때): 앱이 앞이고, 그 창이 키 창이거나 도크에 보이는 중
     func isWatching(_ owner: String) -> Bool {
         guard NSApp.isActive else { return false }

@@ -68,6 +68,16 @@ public struct AbxStatus: Codable, Equatable, Sendable {
     public var control: Control
     public var handoff: String?
     public var tabs: [Tab]
+    /// `abx rest` 로 쉬게 한 브라우저(꺼져 있다 — 다음 abx 호출이나 `abx up` 이 이 탭들을 다시 연다)
+    public var resting: Resting? = nil
+
+    public struct Resting: Codable, Equatable, Sendable {
+        /// 쉬게 한 때(ms, abx 의 Date.now())
+        public var at: Double
+        /// 다시 열 탭 수
+        public var tabs: Int
+        public init(at: Double, tabs: Int) { self.at = at; self.tabs = tabs }
+    }
 
     /// abx 가 마지막으로 본 활성 탭(에이전트가 보고 있는 탭)
     public var activeTab: Tab? { tabs.first(where: \.active) }

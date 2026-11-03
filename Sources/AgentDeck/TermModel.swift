@@ -114,6 +114,8 @@ final class TermModel: ObservableObject {
     let browserWindows = BrowserWindows()
     /// 이미 알린 브라우저 넘김(화면 → 넘김 글)
     private var browserNotified: [String: String] = [:]
+    /// 쉬게 하는 중인 화면(abx rest 가 도는 동안 다시 부르지 않게)
+    private var browserResting: Set<String> = []
     private var browserPrimed = false
     /// Claude Code hook 연결 상태(세션 짝짓기·이름·되살리기·상태 표시의 바탕)
     @Published var hookState: HookState = .unknown
@@ -468,6 +470,8 @@ final class TermModel: ObservableObject {
         }
         browserStore.onChange = { [weak self] states in self?.browserChanged(states) }
         browserStore.start()
+        // 쓰지 않는 브라우저 쉬게 하기(설정 → 브라우저): 1분마다 본다(시험: AGENTDECK_IDLE_REST_SECONDS 면 그 시간·5초마다)
+        Timer.scheduledTimer(withTimeInterval: Self.idleRestOverride == nil ? 60 : 5, repeats: true) { [weak self] _ in self?.restIdleBrowsers() }
         notifier.start()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
                                                queue: .main) { [weak self] _ in self?.markSeen() }
@@ -1205,17 +1209,60 @@ final class TermModel: ObservableObject {
         browserPrimed = true
     }
 
+    /// 쓰지 않는 브라우저를 쉬게 한다(`abx rest` — 끄고 탭은 남긴다, 다음 abx 호출·"다시 켜기"가 다시 연다).
+    /// abx 를 설정한 시간만큼 쓰지 않았고, 화면에 보이지 않고, AI·사람 누구도 쥐고 있지 않을 때만.
+    private static let idleRestOverride = ProcessInfo.processInfo.environment["AGENTDECK_IDLE_REST_SECONDS"].flatMap(TimeInterval.init)
+
+    private func restIdleBrowsers() {
+        guard let limit = Self.idleRestOverride ?? BrowserViewSettings.shared.options.idleRest.seconds else { return }
+        let reader = AbxStateReader()
+        let now = Date()
+        // 꺼진(dormant) 화면도 본다: 셸이 사라져도 abx 엔진·브라우저는 따로 떠 있을 수 있다(가장 오래 안 쓴 브라우저)
+        var candidates = browserStates
+        for row in rows where row.dormant && candidates[row.id] == nil {
+            let status = reader.status(abxSession(row.id))
+            if status.running { candidates[row.id] = status }
+        }
+        for (id, status) in candidates where !browserResting.contains(id) {
+            let session = abxSession(id)
+            guard BrowserViewOptions.shouldRest(status, lastUsed: reader.lastUsed(session), now: now, limit: limit,
+                                                shown: browserWindows.isShown(id)) else { continue }
+            browserResting.insert(id)
+            if Self.idleRestOverride != nil {
+                print("browser-rest \(id.prefix(4)) unused=\(Int(now.timeIntervalSince(reader.lastUsed(session) ?? now)))s shown=\(browserWindows.isShown(id)) t=\(Int(now.timeIntervalSince1970))")
+                fflush(stdout)
+            }
+            let helpers = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                // abx 가 writer 자리를 잡은 뒤 다시 잰다: 그사이 AI 가 쓰기 시작했으면(사용 기록·입력 잠금) 끄지 않는다
+                if let runner = AbxRunner.locate(bundleHelpers: helpers) {
+                    _ = try? runner.run(["rest", "--if-unused-for", String(Int(limit))], session: session, timeout: 60)
+                }
+                DispatchQueue.main.async {
+                    self?.browserResting.remove(id)
+                    self?.browserStore.refreshSoon()
+                }
+            }
+        }
+    }
+
+    private func abxSession(_ id: String) -> AbxSession {
+        let env = BrowserBinding.environment(pane: id, browser: nil)
+        return AbxSession(name: env["ABX_SESSION"]!, socketDir: env["ABX_SOCKET_DIR"]!,
+                          stateDir: env["ABX_STATE_DIR"]!, profileDir: env["ABX_PROFILE_DIR"]!)
+    }
+
     /// 화면이 없어지면 그 브라우저도 끈다(프로필은 남긴다 — 같은 화면을 되살리면 로그인 그대로). 창·알림도 정리.
     /// 상태를 아직 못 읽었을 수도 있어(막 띄움) 엔진 소켓·실행 기록이 있으면 끈다. 여러 번 불려도 된다.
     private func stopBrowser(of id: String) {
         browserWindows.close(owner: id)
         notifier.clear(paneId: "browser:" + id)
         browserNotified[id] = nil
-        let env = BrowserBinding.environment(pane: id, browser: nil)
-        let session = AbxSession(name: env["ABX_SESSION"]!, socketDir: env["ABX_SOCKET_DIR"]!,
-                                 stateDir: env["ABX_STATE_DIR"]!, profileDir: env["ABX_PROFILE_DIR"]!)
+        let session = abxSession(id)
         let socket = (session.socketDir as NSString).appendingPathComponent(session.name + ".sock")
-        guard FileManager.default.fileExists(atPath: socket) else { return }
+        // 쉬는 브라우저(꺼져 있음)도 남긴 탭 기록을 지운다 — 같은 화면을 되살렸을 때 옛 탭이 다시 열리지 않게
+        let rested = (session.stateDir as NSString).appendingPathComponent(session.name + ".rest.json")
+        guard FileManager.default.fileExists(atPath: socket) || FileManager.default.fileExists(atPath: rested) else { return }
         let helpers = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers")
         DispatchQueue.global(qos: .utility).async {
             guard let runner = AbxRunner.locate(bundleHelpers: helpers) else { return }

@@ -29,15 +29,38 @@ public struct BrowserViewOptions: Codable, Equatable {
         }
     }
 
+    /// 쓰지 않는 브라우저를 쉬게 하기(`abx rest` — 끄고 탭은 남겨 다음 abx 호출이 다시 연다): 이만큼 abx 를 쓰지 않고,
+    /// 화면에 보이지 않고, AI·사람 누구도 쥐고 있지 않으면
+    public enum IdleRest: String, Codable, CaseIterable {
+        case m15, m30, h1, h2, never
+        public var seconds: TimeInterval? {
+            switch self {
+            case .m15: return 15 * 60
+            case .m30: return 30 * 60
+            case .h1: return 60 * 60
+            case .h2: return 2 * 60 * 60
+            case .never: return nil
+            }
+        }
+    }
+
     public var sharpness: Sharpness = .sharp
     public var resolution: Resolution = .fit
+    public var idleRest: IdleRest = .m30
     /// 칸이 좁아도 데스크톱 화면(폭 1024 이상)으로 그리고 그림을 줄여 보인다(좁으면 사이트가 모바일 화면으로 바뀌므로)
     public var keepDesktop = false
 
-    public init(sharpness: Sharpness = .sharp, resolution: Resolution = .fit, keepDesktop: Bool = false) {
+    public init(sharpness: Sharpness = .sharp, resolution: Resolution = .fit, keepDesktop: Bool = false, idleRest: IdleRest = .m30) {
         self.sharpness = sharpness
         self.resolution = resolution
         self.keepDesktop = keepDesktop
+        self.idleRest = idleRest
+    }
+
+    /// 쉬게 할 때인가: 돌고 있고, 아무도 쥐지 않았고(AI 잠금·사람에게 넘김 없음), 화면에 보이지 않고, 마지막 사용에서 idleRest 만큼 지남
+    public static func shouldRest(_ status: AbxStatus, lastUsed: Date?, now: Date, limit: TimeInterval?, shown: Bool) -> Bool {
+        guard let limit, status.running, status.control == .idle, !shown, let lastUsed else { return false }
+        return now.timeIntervalSince(lastUsed) >= limit
     }
 
     public init(from decoder: Decoder) throws {
@@ -46,6 +69,7 @@ public struct BrowserViewOptions: Codable, Equatable {
         sharpness = (try? c.decode(Sharpness.self, forKey: .sharpness)) ?? .sharp
         resolution = (try? c.decode(Resolution.self, forKey: .resolution)) ?? .fit
         keepDesktop = (try? c.decode(Bool.self, forKey: .keepDesktop)) ?? false
+        idleRest = (try? c.decode(IdleRest.self, forKey: .idleRest)) ?? .m30
     }
 
     /// screencast 요청(가로세로 상한·JPEG 품질). 측정(레티나, 1937×1083 칸, 스크롤 중):

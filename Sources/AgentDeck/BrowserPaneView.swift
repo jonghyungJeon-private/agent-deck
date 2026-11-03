@@ -31,6 +31,8 @@ final class BrowserPaneView: NSView {
     private var tabBarHeight: NSLayoutConstraint!
     private var chips: [BrowserTabs.Chip] = []
     private let placeholder = NSTextField(wrappingLabelWithString: "")
+    /// 쉬게 한 브라우저를 다시 켠다(안내 아래)
+    private let wakeButton = PillButton(title: "다시 켜기", target: nil, action: nil)
     /// 화면 아래 상태 줄(늘 있다 — 나타났다 사라지면 브라우저 크기가 바뀌어 페이지가 다시 그려진다):
     /// 지금 누가 쥐고 있고 사람은 무엇을 할 수 있는지 한 줄로
     private let statusBar = NSView()
@@ -92,6 +94,11 @@ final class BrowserPaneView: NSView {
         screen.pane = self
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textSecondary
+        wakeButton.font = .systemFont(ofSize: TermAppearance.scaled(12), weight: .semibold)
+        wakeButton.fill = TermAppearance.agentColor
+        wakeButton.target = self
+        wakeButton.action = #selector(wake)
+        wakeButton.isHidden = true
         tabBar.orientation = .horizontal
         tabBar.spacing = 4
         tabBar.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
@@ -103,7 +110,7 @@ final class BrowserPaneView: NSView {
         tabScroll.horizontalScrollElasticity = .allowed
         tabScroll.verticalScrollElasticity = .none
         tabScroll.isHidden = true
-        for view in [statePill, header, displayButton, controlButton, tabScroll, screen, statusBar, placeholder] {
+        for view in [statePill, header, displayButton, controlButton, tabScroll, screen, statusBar, placeholder, wakeButton] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -141,6 +148,8 @@ final class BrowserPaneView: NSView {
             placeholder.centerXAnchor.constraint(equalTo: screen.centerXAnchor),
             placeholder.centerYAnchor.constraint(equalTo: screen.centerYAnchor),
             placeholder.widthAnchor.constraint(lessThanOrEqualTo: screen.widthAnchor, constant: -40),
+            wakeButton.centerXAnchor.constraint(equalTo: screen.centerXAnchor),
+            wakeButton.topAnchor.constraint(equalTo: placeholder.bottomAnchor, constant: 14),
         ])
         show(.waiting("브라우저를 찾는 중…"))
     }
@@ -265,7 +274,18 @@ final class BrowserPaneView: NSView {
     }
 
     private func show(_ state: BrowserFeed.State) {
+        if case .resting = state {} else { wakeButton.isHidden = true }
         switch state {
+        case .resting(let rest, let headless):
+            show(.waiting(""))
+            let minutes = max(1, Int((Date().timeIntervalSince1970 * 1000 - rest.at) / 60_000))
+            let ago = minutes < 60 ? "\(minutes)분" : "\(minutes / 60)시간"
+            let tabs = rest.tabs > 0 ? " · 탭 \(rest.tabs)개는 켜면 그대로 열려요" : ""
+            placeholder.attributedStringValue = Self.placeholderText("브라우저를 쉬게 했어요",
+                detail: "쓰지 않아 \(ago) 전에 껐어요(메모리 절약)\(tabs)\nAI 가 abx 를 쓰면 저절로 켜져요")
+            restingHeadless = headless
+            wakeButton.isHidden = false
+            if !waking { wakeButton.title = wakeFailed ? "켜지 못했어요 · 다시 시도" : "다시 켜기"; wakeButton.isEnabled = true }
         case .waiting(let text):
             setPill(nil)
             header.stringValue = "브라우저"
@@ -582,6 +602,24 @@ final class BrowserPaneView: NSView {
         } else {
             feed.takeControl(completion: done)
             window?.makeFirstResponder(screen)
+        }
+    }
+
+    /// 쉬는 브라우저를 띄울 때 창 없이인지(쉬기 전과 같게) · 켜는 중인지
+    private var restingHeadless = true
+    private var waking = false
+    private var wakeFailed = false
+
+    @objc private func wake() {
+        guard !waking, let feed else { return }
+        waking = true
+        wakeButton.title = "켜는 중…"
+        wakeButton.isEnabled = false
+        feed.wake(headless: restingHeadless) { [weak self] ok in
+            self?.waking = false
+            self?.wakeFailed = !ok
+            self?.wakeButton.title = ok ? "다시 켜기" : "켜지 못했어요 · 다시 시도"
+            self?.wakeButton.isEnabled = true
         }
     }
 
@@ -1181,6 +1219,8 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
 final class BrowserFeed {
     enum State {
         case waiting(String)
+        /// `abx rest` 로 쉬는 중(꺼져 있고 탭을 남겼다), 띄울 때 창 없이인지
+        case resting(AbxStatus.Resting, headless: Bool)
         case live(AbxStatus)
     }
 
@@ -1394,7 +1434,8 @@ final class BrowserFeed {
         let status = AbxStateReader().status(session)
         guard status.running, let url = status.cdpUrl else {
             disconnect()
-            publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았어요\n(이 화면의 claude·codex 가 abx 를 쓰면 여기에 보여요)"))
+            if let rest = status.resting, !status.running { publish(.resting(rest, headless: status.headless ?? true)) }
+            else { publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았어요\n(이 화면의 claude·codex 가 abx 를 쓰면 여기에 보여요)")) }
             return
         }
         let wasControlled = control == .agent || control == .switching
@@ -1716,6 +1757,20 @@ final class BrowserFeed {
         abx(["resume"], timeout: 30) { [weak self] in
             self?.queue.async { self?.releasing = false }
             completion()
+        }
+    }
+
+    /// 쉬게 한 브라우저를 다시 켠다(`abx up` — 남긴 탭을 다시 연다)
+    /// 앞선 명령을 기다리고 탭을 여럿 다시 여는 데 오래 걸릴 수 있다 — 중간에 끊으면 탭이 반만 열린다(넉넉히 기다린다)
+    func wake(headless: Bool, completion: @escaping (Bool) -> Void) {
+        queue.async { [self] in
+            guard let runner else { DispatchQueue.main.async { completion(false) }; return }
+            let session = self.session
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let ok = (try? runner.run(["up"] + (headless ? ["--headless"] : []), session: session, timeout: 300))?.status == 0
+                self?.queue.async { self?.refresh() }
+                DispatchQueue.main.async { completion(ok) }
+            }
         }
     }
 
