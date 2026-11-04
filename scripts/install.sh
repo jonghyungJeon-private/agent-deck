@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# AgentDeck 설치·업데이트·삭제(사내 배포용). Apple Silicon 전용, ad-hoc 서명이라 Gatekeeper 격리 속성을 지우고 설치한다.
-#   install.sh                  최신 릴리스를 받아 설치·업데이트(gh 로그인 + 비공개 저장소 권한 필요)
+# AgentDeck 설치·업데이트·삭제. Apple Silicon 전용, ad-hoc 서명이라 Gatekeeper 격리 속성을 지우고 설치한다.
+#   install.sh                  최신 릴리스를 받아 설치·업데이트(gh 로그인 필요 — 공개 저장소라 계정은 아무거나)
 #   install.sh <zip 경로|URL>    그 zip 으로 설치
 #   install.sh --uninstall      앱·hook 을 지우고, 데이터 폴더는 물어본 뒤 지운다
 # 동료용 한 줄(README):
@@ -112,7 +112,7 @@ download_latest() {
   say "→ $REPO 최신 릴리스를 받는 중…" >&2
   if ! "$gh" release download --repo "$REPO" --pattern 'AgentDeck-*.zip' --dir "$1" 2>"$1/gh.err"; then
     if ! "$gh" api "repos/$REPO" >/dev/null 2>&1; then
-      die "저장소 $REPO 에 접근할 수 없습니다. 관리자에게 collaborator 초대를 요청하고, GitHub 알림·메일에서 초대를 수락한 뒤 다시 실행하세요(gh 로그인 계정: $("$gh" api user --jq .login 2>/dev/null || echo '?'))."
+      die "저장소 $REPO 에 접근할 수 없습니다. 네트워크와 gh 로그인(gh auth status)을 확인하세요(gh 로그인 계정: $("$gh" api user --jq .login 2>/dev/null || echo '?'))."
     fi
     die "릴리스를 받지 못했습니다: $(head -n1 "$1/gh.err")"
   fi

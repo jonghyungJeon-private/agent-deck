@@ -9,13 +9,15 @@
       바꾸려면 올리기 전에 `git filter-repo --mailmap` 으로 고치거나 새 기록으로 올리고, `git config user.email` 을 GitHub noreply 주소로 둔다.
 - [ ] 비밀·개인 정보 훑기: `git ls-files | xargs grep -nIE 'gh[pousr]_|github_pat_|sk-|AKIA|BEGIN .*PRIVATE|/Users/'`(Vendor 의 upstream 디버그 경로는 무시).
 - [ ] `.gitignore` 에 `.build/`·`dist/`·`.swiftpm/` 이 있는지(빌드 결과·zip 은 저장소가 아니라 릴리스에만).
-- [ ] 저장소 만들기: `gh repo create jonghyungJeon-private/agent-deck --private --source . --push`(gh 계정을 jonghyungJeon-private 로 바꾼 뒤).
-- [ ] 동료를 collaborator(Read)로 초대: `gh api -X PUT repos/jonghyungJeon-private/agent-deck/collaborators/<깃허브 아이디> -f permission=pull`.
-      동료는 메일·알림에서 초대를 수락해야 한다.
+- [ ] 저장소 만들기: `gh repo create jonghyungJeon-private/agent-deck --public --source . --push`(gh 계정을 jonghyungJeon-private 로 바꾼 뒤).
+      공개 저장소라 동료 초대는 필요 없다(설치는 아무 GitHub 계정의 gh 로그인으로 된다). 2026-11-04 부터 공개.
 
 ## 매 릴리스
 
 - [ ] `CHANGELOG.md` 에 버전·날짜·바뀐 점, `scripts/build-term-proto.sh` 의 `VERSION` 기본값을 올린다(또는 `VERSION=x.y.z` 로 빌드).
+- [ ] abx 확인(동료에게 abx 는 이 앱에 넣어서만 간다): 설치된 앱의 `Contents/Resources/abx/VERSION` 의 `abx:` 커밋과
+      `git -C ../agent-browser log --oneline <그 커밋>..origin/main -- packages/abx` 를 본다. `../agent-browser` 가 `origin/main` 과 같고
+      깨끗한지 확인하고, 빌드한 앱의 VERSION 에 `-dirty` 가 없어야 한다. abx 가 바뀌었으면 CHANGELOG 에 `- abx: … (abx <커밋>)`.
 - [ ] `swift build && swift test`(최소 `swift test --filter SessionCoreTests`) 통과.
 - [ ] 브라우저: agent-browser 저장소(abx)가 원하는 커밋인지 확인한다(빌드가 `ABX_SRC` 에서 abx 를 만들어 넣는다, 없으면 빌드 실패).
       에이전트 전용 브라우저 고정 판(`Sources/BrowserCore/BrowserInstaller.swift` 의 `BrowserRelease.pinned`)을 그때의 Chrome for Testing
@@ -36,7 +38,7 @@
   gh release create vX.Y.Z dist/AgentDeck-X.Y.Z.zip --repo jonghyungJeon-private/agent-deck --title "AgentDeck vX.Y.Z" --notes-file <(sed -n '/^## X.Y.Z/,/^## /p' CHANGELOG.md)
   ```
   태그 이름은 `v` + 앱 버전(앱이 `CFBundleShortVersionString` 과 숫자로 비교한다). 초안·pre-release 는 `gh release view` 의 최신으로 잡히지 않는다.
-- [ ] 다른 계정(collaborator)으로 설치 한 줄을 실행해 본다:
+- [ ] 다른 GitHub 계정으로 설치 한 줄을 실행해 본다:
   ```bash
   gh api repos/jonghyungJeon-private/agent-deck/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw' | bash
   ```

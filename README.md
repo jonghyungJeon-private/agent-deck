@@ -8,7 +8,7 @@
 ![AgentDeck](docs/images/main.png)
 -->
 
-사내 배포용(Apple Silicon 전용, Developer ID 서명 없음 — 설치 스크립트가 격리 속성을 지운다).
+공개 저장소(Apple Silicon 전용, Developer ID 서명 없음 — 설치 스크립트가 격리 속성을 지운다).
 
 ## 주요 기능
 
@@ -58,8 +58,7 @@
 
 **준비물**
 - Apple Silicon(M1 이상) Mac, macOS 13 이상
-- [GitHub CLI](https://cli.github.com) 로그인: `brew install gh && gh auth login`
-- 저장소 `jonghyungJeon-private/agent-deck` 접근 권한 — 비공개 저장소라 관리자에게 collaborator 초대를 받고, GitHub 알림·메일에서 수락해야 한다
+- [GitHub CLI](https://cli.github.com) 로그인: `brew install gh && gh auth login` — GitHub 계정이면 아무거나 된다(공개 저장소라 초대가 필요 없다)
 - Claude Code(그리고 쓰면 Codex CLI)
 
 **설치·업데이트(같은 명령)**
@@ -69,8 +68,16 @@ gh api repos/jonghyungJeon-private/agent-deck/contents/scripts/install.sh -H 'Ac
 ```
 
 최신 릴리스의 `AgentDeck-<버전>.zip` 을 받아 `/Applications/AgentDeck.app`(쓸 수 없으면 `~/Applications`)에 설치하고 연다.
-`gh: Not Found (HTTP 404)` 가 나오면 저장소 권한이 없는 것이다(초대 수락 여부와 `gh auth status` 의 계정을 확인).
-zip 파일을 직접 받았다면 `bash install.sh AgentDeck-0.2.0.zip`.
+
+gh 없이 설치하려면 릴리스 zip 주소를 넘긴다(그 버전으로 고정 — 앱의 업데이트 안내는 gh 명령을 쓰므로 gh 방식을 권한다):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jonghyungJeon-private/agent-deck/main/scripts/install.sh \
+  | bash -s -- https://github.com/jonghyungJeon-private/agent-deck/releases/download/v<버전>/AgentDeck-<버전>.zip
+```
+
+[릴리스 페이지](https://github.com/jonghyungJeon-private/agent-deck/releases)에서 zip 을 받아 더블클릭하면 macOS 가 막는다(Apple 서명이 없다).
+zip 을 직접 받았다면 설치 스크립트로 연다: `bash install.sh AgentDeck-<버전>.zip`.
 
 ## 처음 실행
 
@@ -87,7 +94,10 @@ zip 파일을 직접 받았다면 `bash install.sh AgentDeck-0.2.0.zip`.
    - **앱을 지우거나 옮겨도 안전하다**: 실행 파일이 없으면 아무것도 하지 않고 끝나 어떤 터미널의 claude 에도 오류가 나지 않는다.
    - 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
 2. Codex 를 쓰면 **Codex 연결하기** 를 누른 뒤, Codex 의 `/hooks` 에서 AgentDeckDaemon 훅을 검토·신뢰한다.
-3. 위 **+ claude**·**+ codex**·**+ 셸** 이나 ⌘T 로 시작한다.
+3. 에이전트에게 브라우저를 쓰게 하려면 사이드바 아래 **브라우저 연결하기** 를 누른다(설정 → 브라우저에서도 할 수 있다).
+   abx 스킬을 `~/.claude/skills/abx`·`~/.agents/skills/abx` 에 넣고, 전용 브라우저(Chrome for Testing, 약 190MB)를 `~/.abx/browsers` 에 받는다.
+   `abx` 실행 파일은 앱에 들어 있어 따로 설치하지 않는다 — 이 앱에서 연 세션의 PATH 에 자동으로 잡힌다(다른 터미널 앱에서는 안 보인다).
+4. 위 **+ claude**·**+ codex**·**+ 셸** 이나 ⌘T 로 시작한다. 이미 떠 있던 claude·codex 는 새로 시작해야 연결·스킬이 적용된다.
 
 예전 판(0.3 까지 — 안쪽 이름 ClaudeTerm·ClaudeTermDaemon, 그 전 ClaudeSessions 앱)을 쓰던 PC:
 - 설치 스크립트가 `ClaudeTerm.app` 을 `AgentDeck.app` 으로 바꿔 끼운다. 사이드바에 **갱신하기** 가 뜨면 누른다(hook 이 `AgentDeckDaemon` 으로 바뀐다).

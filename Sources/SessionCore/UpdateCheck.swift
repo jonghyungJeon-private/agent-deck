@@ -1,6 +1,6 @@
 import Foundation
 
-/// 새 버전 확인: 비공개 GitHub 저장소의 최신 릴리스를 gh CLI 로 읽어 앱 버전과 비교한다.
+/// 새 버전 확인: GitHub 저장소(공개)의 최신 릴리스를 gh CLI 로 읽어 앱 버전과 비교한다.
 /// gh 가 없거나 로그인·권한이 없거나 오프라인이면 실패로 돌려주고, 앱은 조용히 넘어간다(물어볼 때만 알린다).
 public enum UpdateCheck {
     /// 릴리스를 올리는 저장소(owner/repo). 바꾸면 scripts/install.sh 의 REPO 와 README 도 같이 바꾼다.
