@@ -651,30 +651,40 @@ enum EditorStyle {
         return NSFont(descriptor: descriptor, size: base.pointSize) ?? base
     }
 
-    static let text = NSColor(srgbHex: 0xc9ccd3)
+    // 화면 모드에 따라 바뀌는 색(PaletteColor — 다크는 Darcula 계열, 라이트는 IntelliJ Light 계열)
+    static let text = NSColor.palette(.editorText)
     static let background = TermAppearance.background
-    static let gutter = NSColor(srgbHex: 0x262a31)
-    static let lineNumber = NSColor(srgbHex: 0x5c6370)
-    static let currentLineNumber = NSColor(srgbHex: 0xb6bac2)
-    static let currentLine = NSColor(srgbHex: 0x2f343e)
-    static let selection = NSColor(srgbHex: 0x3e4a5e)
-    static let caret = NSColor(srgbHex: 0xdcdfe4)
+    static let gutter = NSColor.palette(.editorGutter)
+    static let lineNumber = NSColor.palette(.editorLineNumber)
+    static let currentLineNumber = NSColor.palette(.editorCurrentLineNumber)
+    static let currentLine = NSColor.palette(.editorCurrentLine)
+    static let selection = NSColor.palette(.editorSelection)
+    static let caret = NSColor.palette(.editorCaret)
 
     // git 변경 표시(files 도구 색과 같은 계열)
-    static let added = NSColor(srgbHex: 0x5f9e4f)
-    static let modified = NSColor(srgbHex: 0x4f80c4)
-    static let deleted = NSColor(srgbHex: 0xd0605a)
+    static let added = NSColor.palette(.diffAdded)
+    static let modified = NSColor.palette(.diffModified)
+    static let deleted = NSColor.palette(.diffDeleted)
+
+    private static let keywordColor = NSColor.palette(.syntaxKeyword)     // 다크: Darcula 키워드(주황) / 라이트: 파랑
+    private static let stringColor = NSColor.palette(.syntaxString)       // 문자열(초록)
+    private static let commentColor = NSColor.palette(.syntaxComment)     // 주석(회색)
+    private static let numberColor = NSColor.palette(.syntaxNumber)       // 숫자(다크 청록 / 라이트 파랑)
+    private static let typeColor = NSColor.palette(.syntaxType)           // 타입(다크 옅은 노랑 / 라이트 호박색)
+    private static let attributeColor = NSColor.palette(.syntaxAttribute) // @속성·변수(올리브)
+    private static let keyColor = NSColor.palette(.syntaxKey)             // JSON·YAML 키(보라)
+    private static let headingColor = NSColor.palette(.syntaxHeading)     // 제목·표 이름
 
     static func color(_ kind: SyntaxKind) -> NSColor {
         switch kind {
-        case .keyword: return NSColor(srgbHex: 0xcf8e6d)   // Darcula 키워드(주황)
-        case .string: return NSColor(srgbHex: 0x6aab73)    // 문자열(초록)
-        case .comment: return NSColor(srgbHex: 0x7a7e85)   // 주석(회색)
-        case .number: return NSColor(srgbHex: 0x2aacb8)    // 숫자(청록)
-        case .type: return NSColor(srgbHex: 0xe0c58a)      // 타입(옅은 노랑)
-        case .attribute: return NSColor(srgbHex: 0xb3ae60) // @속성·변수(올리브)
-        case .key: return NSColor(srgbHex: 0xc77dbb)       // JSON·YAML 키(보라)
-        case .heading: return NSColor(srgbHex: 0xcf8e6d)   // 제목·표 이름
+        case .keyword: return keywordColor
+        case .string: return stringColor
+        case .comment: return commentColor
+        case .number: return numberColor
+        case .type: return typeColor
+        case .attribute: return attributeColor
+        case .key: return keyColor
+        case .heading: return headingColor
         }
     }
 

@@ -385,9 +385,13 @@ final class BrowserFloatTests: XCTestCase {
 
     func testRoundTripKeepsFloatState() throws {
         var layout = ToolLayout()
+        layout.follow(session: "ad-aaaaaaaaaaaa")
         layout.showBrowserFloat()
-        layout.browserFloat.frame = BrowserFloatFrame(right: 0.02, bottom: 0.1, width: 0.5, height: 0.6)
-        let back = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(layout.data()))
+        layout.browserFloat.frame = FloatFrame(right: 0.02, bottom: 0.1, width: 0.5, height: 0.6)
+        var back = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(layout.data()))
+        // 열림은 세션마다 파일에 남고, 지금 보임(shown)은 세션을 따라갈 때 정해진다
+        XCTAssertFalse(back.browserFloat.shown)
+        back.follow(session: "ad-aaaaaaaaaaaa")
         XCTAssertEqual(back.browserFloat, layout.browserFloat)
         XCTAssertEqual(back, layout)
     }
@@ -397,8 +401,8 @@ final class BrowserFloatTests: XCTestCase {
         func load(_ json: String) throws -> ToolLayout { try JSONDecoder().decode(ToolLayout.self, from: Data(json.utf8)) }
         let shown = try load(#"{"version":1,"tools":{"spaces":"left","files":"left","browser":"right"},"selected":{"left":"spaces","right":"browser"}}"#)
         XCTAssertEqual(shown.side(of: .browser), .hidden)
-        XCTAssertTrue(shown.browserFloat.shown)
-        XCTAssertTrue(shown.isBrowserShown)
+        XCTAssertFalse(shown.browserFloat.shown) // 열림은 세션마다 처음부터(예전 전역 값은 읽지 않는다)
+        XCTAssertFalse(shown.isBrowserShown)
         XCTAssertNil(shown.visibleTool(in: .right))
         XCTAssertEqual(shown.visibleTool(in: .left), .spaces)
         // 도크에는 붙어 있었지만 다른 도구가 앞이라 안 보이던 브라우저는 숨김 그대로
@@ -408,8 +412,8 @@ final class BrowserFloatTests: XCTestCase {
         XCTAssertEqual(behind.visibleTool(in: .left), .files)
         // 저장된 작은 창 자리는 그대로, 다시 저장해 읽어도 도크로 돌아가지 않는다
         let framed = try load(#"{"version":1,"tools":{"browser":"left"},"selected":{"left":"browser"},"browserFloat":{"frame":{"right":0.02,"bottom":0.1,"width":0.5,"height":0.6}}}"#)
-        XCTAssertTrue(framed.browserFloat.shown)
-        XCTAssertEqual(framed.browserFloat.frame, BrowserFloatFrame(right: 0.02, bottom: 0.1, width: 0.5, height: 0.6))
+        XCTAssertFalse(framed.browserFloat.shown)
+        XCTAssertEqual(framed.browserFloat.frame, FloatFrame(right: 0.02, bottom: 0.1, width: 0.5, height: 0.6))
         let again = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(framed.data()))
         XCTAssertEqual(again, framed)
     }
@@ -422,16 +426,15 @@ final class BrowserFloatTests: XCTestCase {
         let bad = #"{"version":1,"browserFloat":{"shown":true,"frame":{"right":-3,"bottom":0.1,"width":0.5,"height":0.5}}}"#
         let broken = try JSONDecoder().decode(ToolLayout.self, from: Data(bad.utf8))
         XCTAssertNil(broken.browserFloat.frame)
-        XCTAssertTrue(broken.browserFloat.shown)
+        XCTAssertFalse(broken.browserFloat.shown)
         // 도크에 붙어 있으면서 작은 창도 떠 있다고 적힌 파일: 한 곳(작은 창)만
         let both = #"{"version":1,"tools":{"browser":"left"},"browserFloat":{"shown":true}}"#
         let merged = try JSONDecoder().decode(ToolLayout.self, from: Data(both.utf8))
-        XCTAssertTrue(merged.browserFloat.shown)
         XCTAssertEqual(merged.side(of: .browser), .hidden)
     }
 
     func testDefaultRectAnchorsAboveButton() {
-        let rect = BrowserFloatFrame.defaultRect(in: host, bottomInset: 56)
+        let rect = FloatSpec.browser.defaultRect(in: host, corner: .bottomRight, edgeInset: 56)
         XCTAssertEqual(rect.width, 450, accuracy: 0.01)
         XCTAssertEqual(rect.height, 455, accuracy: 0.01)
         XCTAssertEqual(rect.maxX, 1000 - 14, accuracy: 0.01)
@@ -440,27 +443,484 @@ final class BrowserFloatTests: XCTestCase {
 
     func testRectIsClampedInsideHost() {
         // 최소 크기 이상, 호스트 안
-        let small = BrowserFloatFrame(right: 0.1, bottom: 0.1, width: 0.1, height: 0.1).rect(in: host)
-        XCTAssertEqual(small.size, BrowserFloatFrame.minSize)
-        let out = BrowserFloatFrame(right: 0, bottom: 0.95, width: 0.5, height: 0.5).rect(in: host)
+        let small = FloatFrame(right: 0.1, bottom: 0.1, width: 0.1, height: 0.1).rect(in: host, spec: .browser)
+        XCTAssertEqual(small.size, FloatSpec.browser.minSize)
+        let out = FloatFrame(right: 0, bottom: 0.95, width: 0.5, height: 0.5).rect(in: host, spec: .browser)
         XCTAssertLessThanOrEqual(out.maxY, host.height)
         XCTAssertGreaterThanOrEqual(out.minY, 0)
         // 창이 줄어도 안에 남는다
         let narrow = CGSize(width: 500, height: 320)
-        let moved = BrowserFloatFrame(right: 0.02, bottom: 0.1, width: 0.45, height: 0.65).rect(in: narrow)
+        let moved = FloatFrame(right: 0.02, bottom: 0.1, width: 0.45, height: 0.65).rect(in: narrow, spec: .browser)
         XCTAssertTrue(CGRect(origin: .zero, size: narrow).contains(moved))
         // 최소 크기보다 작은 호스트는 호스트 크기까지만
-        let tiny = BrowserFloatFrame(right: 0, bottom: 0, width: 0.5, height: 0.5).rect(in: CGSize(width: 300, height: 200))
+        let tiny = FloatFrame(right: 0, bottom: 0, width: 0.5, height: 0.5).rect(in: CGSize(width: 300, height: 200), spec: .browser)
         XCTAssertEqual(tiny.size, CGSize(width: 300, height: 200))
     }
 
     func testFrameRatioRoundTrip() {
         let rect = CGRect(x: 120, y: 80, width: 500, height: 400)
-        let frame = BrowserFloatFrame(rect: rect, in: host)
-        XCTAssertEqual(frame.rect(in: host).origin.x, rect.origin.x, accuracy: 0.01)
-        XCTAssertEqual(frame.rect(in: host).origin.y, rect.origin.y, accuracy: 0.01)
-        XCTAssertEqual(frame.rect(in: host).width, rect.width, accuracy: 0.01)
+        let frame = FloatFrame(rect: rect, in: host)
+        XCTAssertEqual(frame.rect(in: host, spec: .browser).origin.x, rect.origin.x, accuracy: 0.01)
+        XCTAssertEqual(frame.rect(in: host, spec: .browser).origin.y, rect.origin.y, accuracy: 0.01)
+        XCTAssertEqual(frame.rect(in: host, spec: .browser).width, rect.width, accuracy: 0.01)
         // 호스트가 커지면 비율대로 커진다
-        XCTAssertEqual(frame.rect(in: CGSize(width: 2000, height: 700)).width, 1000, accuracy: 0.01)
+        XCTAssertEqual(frame.rect(in: CGSize(width: 2000, height: 700), spec: .browser).width, 1000, accuracy: 0.01)
+    }
+}
+
+/// 작은 창 열림·닫힘은 세션마다, 자리는 창 종류마다 하나
+final class PerSessionFloatTests: XCTestCase {
+    private let host = CGSize(width: 1000, height: 700)
+    private func decode(_ json: String) throws -> ToolLayout { try JSONDecoder().decode(ToolLayout.self, from: Data(json.utf8)) }
+
+    func testOpenStateFollowsSession() {
+        var layout = ToolLayout()
+        layout.follow(session: "ad-1")
+        layout.showBrowserFloat()
+        layout.toggleTerminalFloat()
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertTrue(layout.terminalFloat.shown)
+        layout.follow(session: "ad-2") // 두 번째 세션도 브라우저만 연다
+        XCTAssertFalse(layout.browserFloat.shown)
+        XCTAssertFalse(layout.terminalFloat.shown)
+        layout.showBrowserFloat()
+        layout.follow(session: "ad-3") // 새 세션: 둘 다 닫힘
+        XCTAssertFalse(layout.isBrowserShown)
+        XCTAssertFalse(layout.terminalFloat.shown)
+        layout.follow(session: "ad-1")
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertTrue(layout.terminalFloat.shown)
+        layout.follow(session: "ad-2")
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertFalse(layout.terminalFloat.shown)
+    }
+
+    func testClosingOnlyAffectsSelectedSession() {
+        var layout = ToolLayout()
+        for session in ["ad-1", "ad-2"] {
+            layout.follow(session: session)
+            layout.showBrowserFloat()
+            layout.toggleTerminalFloat()
+        }
+        layout.toggle(.browser) // ⌘⇧B / ✕ : 지금(2번) 세션만 닫는다
+        layout.toggleTerminalFloat()
+        XCTAssertFalse(layout.isBrowserShown)
+        XCTAssertFalse(layout.terminalFloat.shown)
+        layout.follow(session: "ad-1")
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertTrue(layout.terminalFloat.shown)
+    }
+
+    func testNoSessionStaysClosedAndKeepsNothing() {
+        var layout = ToolLayout()
+        layout.toggleTerminalFloat() // 세션이 없을 때 열어도 어느 세션 몫으로도 남지 않는다
+        XCTAssertTrue(layout.terminalFloat.shown)
+        layout.follow(session: "ad-1")
+        XCTAssertFalse(layout.terminalFloat.shown)
+        layout.follow(session: nil)
+        XCTAssertFalse(layout.browserFloat.shown)
+    }
+
+    func testRoundTripAndPrune() throws {
+        var layout = ToolLayout()
+        for session in ["ad-1", "ad-2", "ad-3"] {
+            layout.follow(session: session)
+            layout.showBrowserFloat()
+        }
+        layout.follow(session: "ad-1")
+        layout.toggleTerminalFloat()
+        layout.terminalFloat.frame = FloatFrame(right: 0.4, bottom: 0.05, width: 0.55, height: 0.4)
+        var back = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(layout.data()))
+        XCTAssertEqual(back.browserFloat.openSessions, ["ad-1", "ad-2", "ad-3"])
+        XCTAssertEqual(back.terminalFloat.openSessions, ["ad-1"])
+        XCTAssertEqual(back.terminalFloat.frame, layout.terminalFloat.frame)
+        back.prune(sessions: ["ad-1", "ad-3"]) // 없어진 세션(ad-2)의 기록은 지운다
+        XCTAssertEqual(back.browserFloat.openSessions, ["ad-1", "ad-3"])
+        back.follow(session: "ad-1")
+        XCTAssertTrue(back.terminalFloat.shown)
+    }
+
+    /// 예전 파일(전역 shown·작은 터미널 정보 없음)과 망가진 값
+    func testOldAndBrokenFilesDecode() throws {
+        let old = try decode(#"{"version":1,"browserFloat":{"shown":true,"frame":{"right":0.02,"bottom":0.1,"width":0.45,"height":0.65}}}"#)
+        XCTAssertFalse(old.browserFloat.shown)
+        XCTAssertTrue(old.browserFloat.openSessions.isEmpty)
+        XCTAssertNotNil(old.browserFloat.frame)
+        XCTAssertNil(old.terminalFloat.frame)
+        XCTAssertFalse(old.terminalFloat.shown)
+        let broken = try decode(#"{"version":1,"terminalFloat":{"frame":{"right":-1,"bottom":0,"width":0.5,"height":0.5},"sessions":["","ad-1"]}}"#)
+        XCTAssertNil(broken.terminalFloat.frame)
+        XCTAssertEqual(broken.terminalFloat.openSessions, ["ad-1"])
+    }
+
+    func testTerminalDefaultIsBottomLeftAndMinSize() {
+        let rect = FloatSpec.terminal.defaultRect(in: host, corner: .bottomRight, edgeInset: 14)
+        XCTAssertEqual(rect.minX, 14, accuracy: 0.01)
+        XCTAssertEqual(rect.minY, 14, accuracy: 0.01)
+        XCTAssertEqual(rect.width, 500, accuracy: 0.01)
+        XCTAssertEqual(rect.height, 280, accuracy: 0.01)
+        let browser = FloatSpec.browser.defaultRect(in: host, corner: .bottomRight, edgeInset: 70)
+        XCTAssertLessThanOrEqual(rect.maxX, browser.minX) // 오른쪽 아래의 브라우저 처음 자리와 겹치지 않는다
+        let small = FloatFrame(right: 0.5, bottom: 0.1, width: 0.1, height: 0.1).rect(in: host, spec: .terminal)
+        XCTAssertEqual(small.size, CGSize(width: 360, height: 200))
+        XCTAssertTrue(CGRect(origin: .zero, size: host).contains(FloatSpec.terminal.largeRect(in: host, corner: .bottomRight, edgeInset: 14)))
+    }
+}
+
+final class FloatCornerTests: XCTestCase {
+    /// 오른쪽 위: 탭 줄 28 + 버튼 줄(위 10 + 버튼 44) 아래 + 14 — 앱이 넘기는 값과 같은 식
+    private let tabBar = 28.0, buttonTop = 10.0, button = 44.0
+    private var inset: Double { tabBar + buttonTop + button + FloatSpec.margin }
+    private func decode(_ json: String) throws -> ToolLayout { try JSONDecoder().decode(ToolLayout.self, from: Data(json.utf8)) }
+
+    /// 버튼 줄(원점 왼쪽 아래 좌표): 호스트 위쪽에서 tabBar + 10 아래로 44pt, 오른쪽 22pt 안쪽에서 왼쪽으로 ⌨(44)·간격 8·🌐(알약이면 더 넓게)
+    private func buttonRow(in host: CGSize, pillWidth: Double = 160) -> CGRect {
+        let top = Double(host.height) - tabBar - buttonTop
+        let width = pillWidth + 8 + button
+        return CGRect(x: Double(host.width) - 22 - width, y: top - button, width: width, height: button)
+    }
+
+    func testTopRightDefaultsDoNotOverlapEachOtherOrButtons() {
+        for host in [CGSize(width: 1000, height: 700), CGSize(width: 1440, height: 900), CGSize(width: 800, height: 600)] {
+            let bounds = CGRect(origin: .zero, size: host)
+            let browser = FloatSpec.browser.defaultRect(in: host, corner: .topRight, edgeInset: inset)
+            let terminal = FloatSpec.terminal.defaultRect(in: host, corner: .topRight, edgeInset: inset)
+            XCTAssertTrue(bounds.contains(browser), "\(host)")
+            XCTAssertTrue(bounds.contains(terminal), "\(host)")
+            // 브라우저: 오른쪽 위(오른쪽 14, 버튼 줄 아래)
+            XCTAssertEqual(browser.maxX, host.width - 14, accuracy: 0.01)
+            XCTAssertEqual(browser.maxY, host.height - inset, accuracy: 0.01)
+            XCTAssertEqual(browser.width, host.width * 0.45, accuracy: 0.01)
+            // 작은 터미널: 같은 높이에서 브라우저 왼쪽, 겹치지 않는다
+            XCTAssertEqual(terminal.maxY, host.height - inset, accuracy: 0.01)
+            XCTAssertLessThanOrEqual(terminal.maxX, browser.minX - FloatSpec.gap + 0.01, "\(host)")
+            XCTAssertFalse(terminal.intersects(browser), "\(host)")
+            // 버튼 줄과 겹치지 않는다
+            let row = buttonRow(in: host)
+            XCTAssertFalse(browser.intersects(row), "\(host)")
+            XCTAssertFalse(terminal.intersects(row), "\(host)")
+            XCTAssertGreaterThanOrEqual(terminal.width, FloatSpec.terminal.minSize.width)
+            XCTAssertGreaterThanOrEqual(browser.width, FloatSpec.browser.minSize.width)
+        }
+        // 1000×700: 터미널은 0.5 폭 그대로
+        let terminal = FloatSpec.terminal.defaultRect(in: CGSize(width: 1000, height: 700), corner: .topRight, edgeInset: inset)
+        XCTAssertEqual(terminal.width, 500, accuracy: 0.01) // 자리가 되면 0.5 폭 그대로(모자라면 줄어든다)
+        XCTAssertEqual(terminal.height, 280, accuracy: 0.01)
+    }
+
+    func testTopRightLargeStaysInsideHostBelowButtons() {
+        for host in [CGSize(width: 1000, height: 700), CGSize(width: 700, height: 500)] {
+            let bounds = CGRect(origin: .zero, size: host)
+            for spec in [FloatSpec.browser, .terminal] {
+                let large = spec.largeRect(in: host, corner: .topRight, edgeInset: inset)
+                XCTAssertTrue(bounds.contains(large), "\(host)")
+                XCTAssertLessThanOrEqual(large.maxY, host.height - inset + 0.01)
+                XCTAssertFalse(large.intersects(buttonRow(in: host)))
+            }
+        }
+    }
+
+    func testBottomRightIsUnchanged() {
+        let host = CGSize(width: 1000, height: 700)
+        let browser = FloatSpec.browser.defaultRect(in: host, corner: .bottomRight, edgeInset: 70)
+        XCTAssertEqual(browser, CGRect(x: 1000 - 14 - 450, y: 70, width: 450, height: 455))
+        let terminal = FloatSpec.terminal.defaultRect(in: host, corner: .bottomRight, edgeInset: 14)
+        XCTAssertEqual(terminal, CGRect(x: 14, y: 14, width: 500, height: 280))
+        XCTAssertEqual(FloatSpec.browser.largeRect(in: host, corner: .bottomRight, edgeInset: 70),
+                       FloatSpec.browser.clamp(CGRect(x: 1000 - 14 - 800, y: 70, width: 800, height: 616), in: host))
+    }
+
+    func testSavedFrameRoundTripsAsHostFractions() {
+        // 오른쪽 위 기본 자리를 비율로 저장했다가 같은 호스트에서 같은 자리로
+        let host = CGSize(width: 1000, height: 700)
+        let rect = FloatSpec.browser.defaultRect(in: host, corner: .topRight, edgeInset: inset)
+        let frame = FloatFrame(rect: rect, in: host)
+        let back = frame.rect(in: host, spec: .browser)
+        XCTAssertEqual(back.minX, rect.minX, accuracy: 0.01)
+        XCTAssertEqual(back.minY, rect.minY, accuracy: 0.01)
+        // 작아진 호스트에서도 안에 남는다
+        let small = CGSize(width: 500, height: 400)
+        XCTAssertTrue(CGRect(origin: .zero, size: small).contains(frame.rect(in: small, spec: .browser)))
+    }
+
+    func testSettingDefaultsToTopRightAndToleratesBadValues() throws {
+        XCTAssertEqual(ToolLayout().floatCorner, .topRight)
+        XCTAssertEqual(try decode(#"{"version":1}"#).floatCorner, .topRight)
+        XCTAssertEqual(try decode(#"{"version":1,"floatCorner":"nowhere"}"#).floatCorner, .topRight)
+        XCTAssertEqual(try decode(#"{"version":1,"floatCorner":"bottomRight"}"#).floatCorner, .bottomRight)
+        XCTAssertEqual(try decode(#"{"version":1,"floatCorner":"topRight"}"#).floatCorner, .topRight)
+        // 저장 → 읽기
+        var layout = ToolLayout()
+        layout.setFloatCorner(.bottomRight)
+        let data = try XCTUnwrap(layout.data())
+        XCTAssertEqual(try JSONDecoder().decode(ToolLayout.self, from: data).floatCorner, .bottomRight)
+    }
+
+    func testChangingCornerClearsFramesButKeepsOpenSessions() throws {
+        var layout = ToolLayout()
+        layout.browserFloat.follow("ad-1")
+        layout.browserFloat.setShown(true)
+        layout.browserFloat.frame = FloatFrame(right: 0.02, bottom: 0.1, width: 0.45, height: 0.65)
+        layout.terminalFloat.frame = FloatFrame(right: 0.5, bottom: 0.1, width: 0.5, height: 0.4)
+        layout.setFloatCorner(.bottomRight)
+        XCTAssertNil(layout.browserFloat.frame)
+        XCTAssertNil(layout.terminalFloat.frame)
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-1"])
+        // 같은 값으로 "바꿔도" 자리는 그대로
+        layout.browserFloat.frame = FloatFrame(right: 0.02, bottom: 0.1, width: 0.45, height: 0.65)
+        layout.setFloatCorner(.bottomRight)
+        XCTAssertNotNil(layout.browserFloat.frame)
+    }
+}
+
+final class ScratchPaneTests: XCTestCase {
+    func testIdRoundTrip() {
+        let id = ScratchPane.id(owner: "ABC-123")
+        XCTAssertTrue(ScratchPane.isScratch(id))
+        XCTAssertEqual(ScratchPane.owner(of: id), "ABC-123")
+        XCTAssertFalse(ScratchPane.isScratch("ABC-123"))
+        XCTAssertNil(ScratchPane.owner(of: "ABC-123"))
+        XCTAssertNil(ScratchPane.owner(of: "scratch-"))
+    }
+
+    func testSplitKeepsOrderAndSeparates() {
+        let ids = ["a", ScratchPane.id(owner: "a"), "b", ScratchPane.id(owner: "b")]
+        let (regular, scratch) = ScratchPane.split(ids) { $0 }
+        XCTAssertEqual(regular, ["a", "b"])
+        XCTAssertEqual(scratch, ["scratch-a", "scratch-b"])
+    }
+
+    func testOrphansAreScratchWithoutLiveOwner() {
+        let scratch = [ScratchPane.id(owner: "a"), ScratchPane.id(owner: "gone"), "scratch-"]
+        XCTAssertEqual(ScratchPane.orphans(scratch, liveOwners: ["a", "b"]), ["scratch-gone", "scratch-"])
+    }
+}
+
+
+final class ScratchShellTrackerTests: XCTestCase {
+    private let id = ScratchPane.id(owner: "a")
+    private let t0 = Date(timeIntervalSince1970: 1_000)
+    private func tracker() -> ScratchShellTracker { ScratchShellTracker(timeout: 15) }
+
+    func testPendingCreateCountsAsExistingUntilListedOrTimeout() {
+        var t = tracker()
+        XCTAssertFalse(t.exists(id, listed: false, now: t0))
+        t.requestCreate(id, now: t0)
+        XCTAssertTrue(t.exists(id, listed: false, now: t0 + 5))
+        XCTAssertFalse(t.exists(id, listed: false, now: t0 + 16)) // 시간 초과
+        t.reconcile(listed: [id], now: t0 + 2)
+        XCTAssertTrue(t.exists(id, listed: true, now: t0 + 3)) // 목록에 나타남
+        XCTAssertFalse(t.exists(id, listed: false, now: t0 + 3)) // 기록은 지워졌다
+    }
+
+    func testEndBeforeListedClearsPendingSoReopenCreatesFresh() {
+        var t = tracker()
+        t.requestCreate(id, now: t0)
+        t.requestEnd(id, now: t0 + 1) // 목록에 나타나기 전에 끝내기
+        XCTAssertFalse(t.exists(id, listed: false, now: t0 + 2))
+        // 만들기가 큐에서 먼저 처리돼 목록에 옛 셸이 잠깐 보여도 "있는 셈"이 아니다 → 다시 열면 새로 만든다
+        XCTAssertFalse(t.exists(id, listed: true, now: t0 + 2))
+        // 목록에서 사라지면 끝난 것
+        t.reconcile(listed: [], now: t0 + 3)
+        XCTAssertFalse(t.exists(id, listed: false, now: t0 + 3))
+        XCTAssertTrue(t.exists(id, listed: true, now: t0 + 3)) // 이제 목록의 항목은 새 셸
+    }
+
+    func testReopenWhileOldShellStillListedRecreatesAfterItExits() {
+        var t = tracker()
+        t.requestEnd(id, now: t0)
+        t.requestCreate(id, now: t0 + 1) // 옛 셸이 아직 있을 때 다시 열어 만들기를 보냄(데몬이 무시)
+        XCTAssertTrue(t.exists(id, listed: true, now: t0 + 1))
+        t.reconcile(listed: [id], now: t0 + 2) // 아직 옛 셸이 목록에 있다
+        XCTAssertTrue(t.exists(id, listed: true, now: t0 + 2))
+        XCTAssertTrue(t.exited(id)) // 옛 셸이 죽음 → 다시 만들라고 보내야 한다
+        XCTAssertFalse(t.exited(id))
+    }
+
+    func testExitWithoutRecreateClearsRecords() {
+        var t = tracker()
+        t.requestCreate(id, now: t0)
+        XCTAssertFalse(t.exited(id))
+        XCTAssertFalse(t.exists(id, listed: false, now: t0 + 1))
+        t.requestEnd(id, now: t0)
+        XCTAssertFalse(t.exited(id))
+        XCTAssertTrue(t.exists(id, listed: true, now: t0 + 1)) // 끝내기 기록도 지워졌다
+    }
+
+    func testResetDropsEverythingAfterDisconnect() {
+        var t = tracker()
+        t.requestCreate(id, now: t0)
+        t.requestEnd(ScratchPane.id(owner: "b"), now: t0)
+        t.reset()
+        XCTAssertFalse(t.exists(id, listed: false, now: t0 + 1))
+        XCTAssertTrue(t.exists(ScratchPane.id(owner: "b"), listed: true, now: t0 + 1))
+    }
+}
+
+/// 다시 켜도 세션마다 열림이 남는다: 파일 읽기 → 시작 직후의 정리(따라가기·목록 맞추기) → 다시 저장해도 그대로
+final class FloatRelaunchTests: XCTestCase {
+    private func decode(_ data: Data) throws -> ToolLayout { try JSONDecoder().decode(ToolLayout.self, from: data) }
+
+    private func openedBoth(session: String) -> ToolLayout {
+        var layout = ToolLayout()
+        layout.follow(session: session)
+        layout.showBrowserFloat()
+        layout.toggleTerminalFloat()
+        return layout
+    }
+
+    /// 실제 파일 모양(관측: browserFloat·terminalFloat 모두 sessions 만, tools.browser = hidden)
+    func testRealFileShapeRestoresBothKindsOnFollow() throws {
+        let json = #"""
+        {"version":1,"floatCorner":"topRight","tools":{"browser":"hidden","files":"left","spaces":"left"},
+         "lastSides":{"browser":"right","files":"left","spaces":"left"},"selected":{"left":"spaces"},
+         "widths":{"left":260,"right":280},
+         "browserFloat":{"sessions":["ad-1769d88f6da7"]},"terminalFloat":{"sessions":["ad-1769d88f6da7"]}}
+        """#
+        var layout = try decode(Data(json.utf8))
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-1769d88f6da7"])
+        XCTAssertFalse(layout.browserFloat.shown) // 세션을 고르기 전에는 안 보인다
+        layout.follow(session: "ad-1769d88f6da7")
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertTrue(layout.terminalFloat.shown)
+    }
+
+    /// 시작 직후 일어나는 일들(세션 없음 → 세션 고르기 → 목록 맞추기 → 구조 정리 → 저장)이 열림 기록을 지우지 않는다
+    func testStartupChurnKeepsOpenRecords() throws {
+        var layout = try decode(XCTUnwrap(openedBoth(session: "ad-1").data()))
+        layout.follow(session: nil)              // 도크가 세션을 놓았다 다시 따라감(연결 끊김·되살리기)
+        layout.prune(sessions: [])               // 아직 목록을 못 받음 → 지우지 않는다
+        layout.follow(session: "ad-1")
+        layout.normalize()
+        layout.move(.browser, to: .right)        // 도크로 옮겨 봤다가(시험 명령) 화면에서만 내려간다
+        layout.move(.spaces, to: .left)          // 다른 도구의 구조 정리
+        layout.prune(sessions: ["ad-1", "ad-2"])
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-1"])
+        XCTAssertEqual(layout.terminalFloat.openSessions, ["ad-1"])
+        let again = try decode(XCTUnwrap(layout.data()))
+        XCTAssertEqual(again.browserFloat.openSessions, ["ad-1"])
+        XCTAssertEqual(again.terminalFloat.openSessions, ["ad-1"])
+    }
+
+    /// 사람이 닫은 것만 기록에서 지운다: 숨기기(✕·🌐·⌘W)는 그 세션 몫만 지우고, 도크로 옮기기·정리는 지우지 않는다
+    func testOnlyAnExplicitCloseForgetsASession() {
+        var layout = openedBoth(session: "ad-1")
+        layout.follow(session: "ad-2")
+        layout.showBrowserFloat()
+        layout.move(.browser, to: .left) // 도크로: 화면에서만 내림
+        XCTAssertFalse(layout.browserFloat.shown)
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-1", "ad-2"])
+        layout.move(.browser, to: .hidden) // 숨기기: 지금 세션(ad-2)의 기록만 지운다
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-1"])
+        layout.follow(session: "ad-1")
+        XCTAssertTrue(layout.browserFloat.shown)
+    }
+
+    func testPruneForgetsClosedSessionsButNeverWithoutAList() {
+        var layout = openedBoth(session: "ad-1")
+        layout.follow(session: "ad-2")
+        layout.showBrowserFloat()
+        layout.prune(sessions: [])
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-1", "ad-2"])
+        layout.prune(sessions: ["ad-2"]) // ad-1 은 닫힌 세션
+        XCTAssertEqual(layout.browserFloat.openSessions, ["ad-2"])
+        XCTAssertTrue(layout.terminalFloat.openSessions.isEmpty)
+    }
+
+    /// 예전 파일의 shown·prefersFloat 는 읽지 않고, 같은 파일의 세션 기록은 그대로 읽는다
+    func testOldFieldsDoNotWipeSessions() throws {
+        let json = #"{"version":1,"browserFloat":{"shown":false,"prefersFloat":true,"sessions":["ad-9"]},"terminalFloat":{"shown":true,"sessions":["ad-9"]}}"#
+        var layout = try decode(Data(json.utf8))
+        layout.follow(session: "ad-9")
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertTrue(layout.terminalFloat.shown)
+    }
+}
+
+/// 작은 터미널의 기본 자리: 브라우저가 안 보이면 구석에 혼자, 보이면 브라우저 왼쪽, 저장된 자리는 그대로
+final class TerminalDefaultPlacementTests: XCTestCase {
+    private let tabBar = 28.0, buttonTop = 10.0, button = 44.0
+    private var topInset: Double { tabBar + buttonTop + button + FloatSpec.margin }
+    private let bottomBrowserInset = 12 + 44 + FloatSpec.margin
+
+    func testAloneHugsTheCornerWithTheBrowsersInsets() {
+        for host in [CGSize(width: 1000, height: 700), CGSize(width: 1440, height: 900), CGSize(width: 800, height: 600)] {
+            let top = FloatSpec.terminal.defaultRect(in: host, corner: .topRight, edgeInset: topInset, besideBrowser: false)
+            XCTAssertEqual(top.maxX, host.width - FloatSpec.margin, accuracy: 0.01, "\(host)")
+            XCTAssertEqual(top.maxY, host.height - topInset, accuracy: 0.01, "\(host)")
+            XCTAssertEqual(top.width, max(host.width * 0.5, 360), accuracy: 0.01)
+            XCTAssertTrue(CGRect(origin: .zero, size: host).contains(top))
+            let bottom = FloatSpec.terminal.defaultRect(in: host, corner: .bottomRight, edgeInset: bottomBrowserInset, besideBrowser: false)
+            XCTAssertEqual(bottom.maxX, host.width - FloatSpec.margin, accuracy: 0.01, "\(host)")
+            XCTAssertEqual(bottom.minY, bottomBrowserInset, accuracy: 0.01, "\(host)")
+            XCTAssertTrue(CGRect(origin: .zero, size: host).contains(bottom))
+            // 브라우저 처음 자리와 같은 구석(오른쪽 가장자리·같은 세로 기준)
+            let browserTop = FloatSpec.browser.defaultRect(in: host, corner: .topRight, edgeInset: topInset)
+            XCTAssertEqual(top.maxX, browserTop.maxX, accuracy: 0.01)
+            XCTAssertEqual(top.maxY, browserTop.maxY, accuracy: 0.01)
+            let browserBottom = FloatSpec.browser.defaultRect(in: host, corner: .bottomRight, edgeInset: bottomBrowserInset)
+            XCTAssertEqual(bottom.maxX, browserBottom.maxX, accuracy: 0.01)
+            XCTAssertEqual(bottom.minY, browserBottom.minY, accuracy: 0.01)
+        }
+    }
+
+    func testBesideBrowserIsLeftOfItWithoutOverlap() {
+        for host in [CGSize(width: 1000, height: 700), CGSize(width: 1440, height: 900), CGSize(width: 800, height: 600)] {
+            let topBrowser = FloatSpec.browser.defaultRect(in: host, corner: .topRight, edgeInset: topInset)
+            let top = FloatSpec.terminal.defaultRect(in: host, corner: .topRight, edgeInset: topInset, besideBrowser: true)
+            XCTAssertLessThanOrEqual(top.maxX, topBrowser.minX - FloatSpec.gap + 0.01, "\(host)")
+            XCTAssertFalse(top.intersects(topBrowser))
+            let bottomBrowser = FloatSpec.browser.defaultRect(in: host, corner: .bottomRight, edgeInset: bottomBrowserInset)
+            let bottom = FloatSpec.terminal.defaultRect(in: host, corner: .bottomRight, edgeInset: FloatSpec.margin, besideBrowser: true)
+            XCTAssertLessThanOrEqual(bottom.maxX, bottomBrowser.minX + 0.01, "\(host)")
+            XCTAssertFalse(bottom.intersects(bottomBrowser))
+        }
+    }
+
+    func testLargeModeIsIndependentOfTheBrowser() {
+        let host = CGSize(width: 1000, height: 700)
+        for corner in [FloatCorner.topRight, .bottomRight] {
+            let large = FloatSpec.terminal.largeRect(in: host, corner: corner, edgeInset: topInset)
+            XCTAssertEqual(large.minX, FloatSpec.margin, accuracy: 0.01) // 예전과 같다: 왼쪽 기준
+        }
+    }
+
+    func testLayoutPicksAloneBesideOrSaved() {
+        let host = CGSize(width: 1000, height: 700)
+        var layout = ToolLayout()
+        layout.follow(session: "ad-1")
+        layout.toggleTerminalFloat()
+        XCTAssertEqual(layout.terminalRectKind, .defaultAlone)
+        let alone = layout.terminalRect(in: host, browserEdgeInset: topInset, terminalEdgeInset: topInset)
+        XCTAssertEqual(alone.maxX, host.width - FloatSpec.margin, accuracy: 0.01)
+        layout.showBrowserFloat() // 브라우저가 열림 → 나란히
+        XCTAssertEqual(layout.terminalRectKind, .defaultBeside)
+        let beside = layout.terminalRect(in: host, browserEdgeInset: topInset, terminalEdgeInset: topInset)
+        let browser = FloatSpec.browser.defaultRect(in: host, corner: .topRight, edgeInset: topInset)
+        XCTAssertFalse(beside.intersects(browser))
+        XCTAssertLessThan(beside.maxX, alone.maxX)
+        layout.follow(session: "ad-2") // 다른 세션: 브라우저가 닫혀 있다
+        XCTAssertEqual(layout.terminalRectKind, .defaultAlone)
+        layout.toggle(.browser)
+        layout.toggle(.browser) // 열었다 닫음
+        XCTAssertEqual(layout.terminalRectKind, .defaultAlone)
+    }
+
+    func testSavedFrameIsNeverMovedByTheBrowser() {
+        let host = CGSize(width: 1000, height: 700)
+        var layout = ToolLayout()
+        layout.follow(session: "ad-1")
+        layout.toggleTerminalFloat()
+        let frame = FloatFrame(right: 0.3, bottom: 0.2, width: 0.4, height: 0.35)
+        layout.terminalFloat.frame = frame
+        let before = layout.terminalRect(in: host, browserEdgeInset: topInset, terminalEdgeInset: topInset)
+        XCTAssertEqual(layout.terminalRectKind, .saved)
+        layout.showBrowserFloat()
+        XCTAssertEqual(layout.terminalRectKind, .saved)
+        XCTAssertEqual(layout.terminalRect(in: host, browserEdgeInset: topInset, terminalEdgeInset: topInset), before)
+        layout.toggle(.browser)
+        XCTAssertEqual(layout.terminalRect(in: host, browserEdgeInset: topInset, terminalEdgeInset: topInset), before)
+        XCTAssertEqual(before, frame.rect(in: host, spec: .terminal))
     }
 }

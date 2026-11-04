@@ -147,7 +147,7 @@ final class SessionSwitcher {
         label.alignment = .center
         label.wantsLayer = true
         label.layer?.cornerRadius = 6
-        label.layer?.borderColor = TermAppearance.border.cgColor
+        label.layer?.borderColor = TermAppearance.border.cg(in: host.view)
         label.layer?.borderWidth = 1
         let width = TermAppearance.scaled(260), height = TermAppearance.scaled(32)
         label.frame = NSRect(x: (host.view.bounds.width - width) / 2, y: host.view.bounds.height - 80, width: width, height: height)

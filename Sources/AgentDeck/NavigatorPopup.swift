@@ -41,19 +41,11 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         self.searchable = searchable
         super.init(frame: NSRect(x: 0, y: 0, width: 600, height: 200))
         wantsLayer = true
-        layer?.backgroundColor = TermAppearance.chrome.cgColor
         layer?.cornerRadius = 8
         layer?.borderWidth = 1
-        layer?.borderColor = TermAppearance.border.cgColor
         layer?.masksToBounds = false
-        shadow = {
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.55)
-            shadow.shadowBlurRadius = 18
-            shadow.shadowOffset = NSSize(width: 0, height: -6)
-            return shadow
-        }()
-        appearance = NSAppearance(named: .darkAqua)
+        shadow = NSShadow()
+        refreshLayerColors()
 
         titleLabel.stringValue = title
         titleLabel.font = TermAppearance.scaledUIFont(12, bold: true)
@@ -111,6 +103,22 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         scroll.scrollerStyle = .overlay
 
         for view in [titleLabel, statusLabel, field, scroll, footerLabel, emptyLabel] as [NSView] { addSubview(view) }
+    }
+
+    /// 레이어 색은 값으로 굳으므로 모양(라이트·다크)이 바뀔 때마다 다시 받는다. 그림자는 밝은 바탕에서 옅게.
+    private func refreshLayerColors() {
+        layer?.backgroundColor = TermAppearance.chrome.cg(in: self)
+        layer?.borderColor = TermAppearance.border.cg(in: self)
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(effectiveAppearance.isDark ? 0.55 : 0.25)
+        shadow.shadowBlurRadius = 18
+        shadow.shadowOffset = NSSize(width: 0, height: -6)
+        self.shadow = shadow
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshLayerColors()
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -326,11 +334,11 @@ extension SymbolKind {
     /// 목록 종류 표시 색(IntelliJ 아이콘 색 계열)
     var badgeColor: NSColor {
         switch self {
-        case .class, .record, .object, .struct: return NSColor(srgbHex: 0x6ca0dc)
-        case .interface, .protocol, .trait: return NSColor(srgbHex: 0x8cc47a)
+        case .class, .record, .object, .struct: return NSColor.palette(.gitModified)
+        case .interface, .protocol, .trait: return NSColor.palette(.gitAdded)
         case .enum, .enumCase: return TermAppearance.yellow
-        case .annotation: return NSColor(srgbHex: 0xb3ae60)
-        case .function, .method, .constructor: return NSColor(srgbHex: 0xd7875f)
+        case .annotation: return NSColor.palette(.symbolAnnotation)
+        case .function, .method, .constructor: return TermAppearance.claudeColor
         case .property, .field, .variable, .constant: return TermAppearance.cyan
         case .typeAlias, .module: return TermAppearance.textDim
         }

@@ -603,6 +603,22 @@ extension TerminalView {
         return GlyphSlotFit(dx: dx, dy: dy, scale: scale)
     }
 
+    /// AgentDeck patch: `fg` raised to `minimumContrast` against `bg` (see MinimumContrast.swift); unchanged when off.
+    func contrastAdjusted (_ fg: TTColor, against bg: TTColor) -> TTColor
+    {
+#if os(macOS)
+        guard minimumContrast > 1 else { return fg }
+        guard let f = fg.usingColorSpace(.sRGB), let b = bg.usingColorSpace(.sRGB) else { return fg }
+        let fr = ContrastRGB(r: f.redComponent, g: f.greenComponent, b: f.blueComponent)
+        let br = ContrastRGB(r: b.redComponent, g: b.greenComponent, b: b.blueComponent)
+        let out = minimumContrastCache.adjusted(fg: fr, bg: br, threshold: minimumContrast)
+        if out == fr { return fg }
+        return TTColor.make(red: out.r, green: out.g, blue: out.b, alpha: f.alphaComponent)
+#else
+        return fg   // minimumContrast exists only in the Mac view (iOS is not vendored)
+#endif
+    }
+
     func mapColor (color: Attribute.Color, isFg: Bool, isBold: Bool, useBrightColors: Bool = true) -> TTColor
     {
         switch color {
@@ -1026,6 +1042,8 @@ extension TerminalView {
         if flags.contains (.dim) {
             fgColor = fgColor.dimmedColor (towards: bgColor)
         }
+        // AgentDeck patch: minimum contrast (after inverse swap and dim, against the cell's real background)
+        fgColor = contrastAdjusted (fgColor, against: bgColor)
         var nsattr: [NSAttributedString.Key:Any] = [
             .font: tf,
             .foregroundColor: fgColor,
@@ -1033,7 +1051,7 @@ extension TerminalView {
         ]
         if flags.contains (.underline) {
             let underlineColor = attribute.underlineColor.map {
-                mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors)
+                contrastAdjusted (mapColor(color: $0, isFg: true, isBold: isBold, useBrightColors: useBrightColors), against: bgColor)
             } ?? fgColor
             let underlineVariant = attribute.underlineStyle == .none ? .single : attribute.underlineStyle
             nsattr [.underlineColor] = underlineColor

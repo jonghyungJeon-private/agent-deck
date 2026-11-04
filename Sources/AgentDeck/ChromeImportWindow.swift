@@ -366,12 +366,10 @@ final class ChromeImportWindowController {
 
     func show() {
         if window == nil {
-            let host = NSHostingController(rootView: ChromeImportView(model: model).environment(\.colorScheme, .dark))
-            host.view.appearance = NSAppearance(named: .darkAqua)
+            let host = NSHostingController(rootView: ChromeImportView(model: model))
             let window = NSWindow(contentViewController: host)
             window.title = "Chrome 로그인 가져오기"
             window.styleMask = [.titled, .closable, .resizable]
-            window.appearance = NSAppearance(named: .darkAqua)
             window.backgroundColor = TermAppearance.chrome
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 520, height: 560))

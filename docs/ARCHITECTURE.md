@@ -193,11 +193,11 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   🌐 버튼·목록 아이콘·⇧⌘B("브라우저 보기") = 그 세션의 브라우저.
 - **나를 기다림:** Dock 배지(터미널 대기와 합쳐 화면당 한 번), macOS 알림("브라우저 · <세션>" + 에이전트 글 — 누르면 그 창, 그 창을 보고
   있으면 알리지 않음, 앱을 켠 첫 상태는 기억만, 같은 글은 한 번). 내가 가져온 것은 알리지 않는다.
-- **표시 방식(0.9, `BrowserCore/BrowserDisplay`, 머리 줄 "표시 ▾"):** 보는 곳(별도 창 / 세션 창 안) + 창 동작(일반 창[기본] /
+- **표시 방식(0.9, `BrowserCore/BrowserDisplay`, 별도 창 머리 줄 "⋯" 메뉴 · 작은 창 제목 줄 "별도 창으로 떼기"):** 보는 곳(별도 창 / 세션 창 안) + 창 동작(일반 창[기본] /
   AgentDeck 쓸 때만 위 — 앱이 앞일 때만 `.floating`, `didBecomeActive`·`didResignActive` 로 다시 적용 / 항상 위 `.floating`).
   고르면 그 세션 값이 되고 새 세션의 기본값도 된다 — 기본값이 바뀌기 전에 열려 있는 다른 세션의 지금 값을 먼저 그 세션 값으로 적어 두어
-  다른 세션이 따라 움직이지 않는다. `term/browser-display.json`(`defaults` + `sessions[세션 이름]`). 세션 창 안이면 메뉴에
-  작은 창(체크) / 숨기기(⌘⇧B 로 다시)만 있다 — 옆 도크 항목은 없다.
+  다른 세션이 따라 움직이지 않는다. `term/browser-display.json`(`defaults` + `sessions[세션 이름]`). 메뉴는 "세션 안으로 보기" + 창 높이
+  세 가지뿐이다(세션 창 안에서는 "표시" 버튼 없이 작은 창 제목 줄 아이콘 버튼이 같은 일을 한다) — 옆 도크 항목은 없다.
 - **칸은 세션마다 하나(`BrowserWindows` 가 가짐):** `BrowserPaneView`(스트림·고른 탭·맞춘 크기)는 창이나 도크가 빌려 단다 — 한 세션의
   브라우저는 한 곳에만 보인다. 안 보이면(숨김·가려짐·다른 세션으로 감·최소화) `BrowserFeed.pause()`(watch 파일 빼고 연결을 끊되
   고른 탭·사람이 연 탭·맞춘 크기는 둔다), 다시 보이면 `resume()`(실행 중인 브라우저를 다시 찾음, 그사이 닫힌 탭은 잊음).
@@ -209,20 +209,56 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   빈 띠 없이 칸을 채우고, 좁은 도크에서도 데스크톱 배치. (0.9.1 까지는 폭 1280 고정이라 좁은 도크에서 반 크기로 작게 보였다.) 창↔도크로 옮기면 AI 차례여도 한 번 맞춘다(writer 자리).
   도크 브라우저에 키보드가 있으면 ⌘W 는 도구만 숨기고, 뒤 터미널·편집기에 하는 단축키·메뉴(지우기·찾기·나누기·저장·이동…)는
   브라우저로 보낸다(`paneOnlyActions`) — 탭·도구·세션 전환은 그대로.
-- **작은 창(세션 창 안에 떠 있는 패널, `BrowserFloatPanel`)과 🌐 버튼(`BrowserToggleButton`):** 세션 창 오른쪽 아래 🌐 버튼(44pt, 상태 색 + 상태 알약)이
+- **작은 창(세션 창 안에 떠 있는 패널, `FloatPanel` — 작은 터미널과 같이 씀)과 🌐 버튼(`BrowserToggleButton`):** 세션 창 구석(기본 **오른쪽 위**, 탭 줄 아래 10pt·오른쪽 22pt — 터미널 스크롤바를 피함; 설정 → 화면 "작은 창 버튼 위치"에서 오른쪽 아래로) 🌐 버튼(44pt, 상태 색 + 상태 알약, 왼쪽으로 늘어남)이
   browser 도구를 켜고 끈다(⌘⇧B 와 같음, 세션이 별도 창이면 세션 창 안으로 옮기며 연다; 열려 있으면 버튼이 채워져 보인다). 세션 창 안 브라우저는
   **작은 창만** 있다(옆 도크는 UI 에서 뺐다 — "옆에 붙이기"·왼쪽에/오른쪽에·보기 메뉴 위치 항목 없음; 시험 명령 `dock browser left|right` 만 남음).
   예전 `ui.json` 에서 브라우저가 옆 도크에 붙어 있었으면 읽을 때 작은 창으로 옮긴다(보이고 있었으면 작은 창을 띄움, `ToolLayout.init(from:)`).
-  작은 창은 `host.view` 안, 터미널 위·🌐 버튼 아래에 뜨며 기본은 오른쪽 아래 버튼 위(여백 14pt), 호스트의 45%×65%(최소 360×260, 항상 호스트 안).
-  제목 줄을 끌어 옮기고 가장자리·모서리를 끌어 크기를 바꾸며 "크게/작게"·✕ 가 있다. 자리는 호스트 대비 비율(`BrowserFloatFrame`)로 `ui.json` 의
-  `browserFloat`(`shown`·`frame`)에 저장해 창 크기가 바뀌어도 안에 남는다. 모델은 도구 쪽을 건드리지 않고 작은 창이 떠 있는 동안
+  작은 창은 `host.view` 안, 터미널 위에 뜨며 기본은 **버튼 줄 바로 아래의 오른쪽 위**(여백 14pt), 호스트의 45%×65%(최소 360×260, 항상 호스트 안). 구석은 `ToolLayout.floatCorner`(`FloatCorner` topRight[기본]·bottomRight, `ui.json` 의 `floatCorner`, 빠진·모르는 값은 topRight)이고 `FloatSpec.defaultRect/largeRect(in:corner:edgeInset:)` 가 순수 함수로 자리를 낸다(오른쪽 아래는 예전 그대로). 설정을 바꾸면 바로 버튼을 다시 붙이고 두 작은 창의 저장된 자리(`frame`)를 지워 새 구석의 처음 자리로 다시 연다(세션마다 열림은 그대로). 시험: `float-corner <top|bottom>`.
+  제목 줄을 끌어 옮기고 가장자리·모서리를 끌어 크기를 바꾸며 아이콘 버튼(별도 창으로 떼기·크게/작게·✕, 24pt, 글자 배율을 따름)이 있다.
+  커서: 안쪽 터미널·브라우저 화면이 자기 영역 전체에 커서를 선언해 겹친 패널이 지면 I빔이 보였으므로, 제목 줄은 화살표·가장자리는 맨 위
+  덮개(`FloatEdgeCursorView`)가 크기 바꾸기 커서를 선언하고 `cursorUpdate` 추적 영역을 보조로 둔다. 브라우저 화면은 마우스 밑 요소의 커서를
+  페이지에 물어(`PageCursor`, 80ms 에 한 번·앞선 물음이 끝나야 다음) 손가락·I빔 등으로 보이고 못 읽으면 화살표.
+  자리는 호스트 대비 비율(`FloatFrame`, 창 종류마다 하나)로 `ui.json` 의 `browserFloat`·`terminalFloat`(`frame`)에 저장해 창 크기가 바뀌어도 안에 남는다.
+  **열림·닫힘은 세션마다**(`FloatState.openSessions` = 세션 키 `BrowserBinding.sessionName`, `ui.json` 의 `sessions` 배열): 세션 창에서 고른 세션이
+  바뀌면(`BrowserWindows.follow` → `BrowserDockController.follow` → `onOwnerWillRefresh`) 두 작은 창이 각각 그 세션이 열어 둔 것만 보이고,
+  🌐·⌨·⌘⇧B·⌃`·✕ 는 고른 세션 몫만 바꾼다. 새 세션은 둘 다 닫힌 채. 없어진 세션의 기록은 목록이 바뀔 때 지운다(`ToolLayout.prune` — 살아 있는 세션을 하나도 모르면 지우지 않는다). 열림 기록을 지우는 것은 사람이 닫을 때(`setShown(false)`, 숨기기)뿐이고, 도크로 옮기기·배치 정리(`normalize`)는 화면에서만 내린다(`FloatState.hide`). 시험 출력(`browsers`·`scratch-state`)에 `session=`(지금 따라가는 세션 키)·`open-sessions=` 가 나온다.
+  예전 파일의 전역 `shown` 은 읽지 않는다(세션마다 처음엔 닫힘). `FloatState.shown` 은 고른 세션 몫을 비춘 값이라 저장하지 않는다. 모델은 도구 쪽을 건드리지 않고 작은 창이 떠 있는 동안
   `sides[.browser] = .hidden`(도크와 작은 창은 한 곳만)이라 도크 배치 논리가 그대로다.
   안의 내용은 `BrowserDockController` 가 보여 주는 같은 칸(옮겨 달기, 도구가 보일 때만 스트림, `docked` 크기). ⌘W 는 작은 창만 닫는다.
   시험: `dock browser float`, `uilayout`·`browsers`(`browser-float` 줄: 방식·저장된 자리·창 좌표 자리).
+- **작은 터미널(⌃`, `ScratchTerminals`·`ScratchToggleButton`):** 🌐 왼쪽(8pt)의 ⌨ 버튼(44pt, `terminal` 기호; 열리면 채움, 닫아 둔 채 명령이 돌면 점)이
+  고른 세션의 임시 셸 창을 켜고 끈다. 창은 `FloatPanel`(호스트의 50%×40%, 최소 360×200)이고 **기본 자리는 이 세션의 브라우저가 보이는지에 따라 다르다**(`ToolLayout.terminalRect`·`terminalRectKind`, 순수 함수 `FloatSpec.defaultRect(in:corner:edgeInset:besideBrowser:)`): 브라우저가 안 보이면 터미널 혼자 구석에 붙는다(오른쪽 위면 버튼 줄 아래, 오른쪽 아래면 🌐 버튼 위 — 브라우저와 같은 쪽·같은 edgeInset); 함께 보이면 나란히(오른쪽 위는 브라우저 처음 자리의 왼쪽 같은 높이에서 겹치지 않게 — 모자라면 폭을 줄이되 최소 폭까지, 오른쪽 아래는 왼쪽 아래 14pt). 브라우저가 열리고 닫힐 때(세션 전환 포함) 터미널이 아직 기본 자리면 다시 놓는다(크기가 같으면 0.18초 미끄러짐 — 줄바꿈이 일어나지 않게 자리만 바뀔 때만). 끌거나 크기를 바꿔 저장된 자리(`terminalFloat.frame`)는 자동으로 옮기지 않는다. "크게" 는 그대로. `scratch-state` 의 `rect=default-alone|default-beside|saved` 로 확인. 창은 제목은 "⌨ 터미널 · 세션 이름 · 폴더",
+  버튼은 끝내기(셸 종료, 다음엔 새 셸)·크게/작게·✕(숨김, 셸은 계속). **세션마다 임시 셸 하나**, 처음 열 때 만들고 작업 폴더 = 그 세션의 지금 폴더
+  (`PaneRow.cwd`, 없으면 홈). **세션이 아니다:** 데몬에는 보통 화면(PTY)이지만 ID 가 `scratch-<세션 화면 ID>`(`TermLayout/ScratchPane`)라
+  `TermModel.apply` 가 데몬 목록을 읽자마자 떼어 낸다 → 목록·탭·Dock 배지·알림·hook/상태 추적·되살리기(`Workspace.reconcile` 의 새 탭 채택 포함)에는
+  보통 화면만 들어간다. 데몬·와이어는 그대로(예전 데몬도 됨). 주인이 없는 임시 셸(세션이 닫힘)은 `updateScratch` 가 끝낸다.
+  앱을 다시 켜도 데몬이 살아 있으면 ID 로 주인을 찾아 이어 쓰고, 데몬이 바뀌었으면 셸도 사라진다(세션으로 되살리지 않는다).
+  뷰(`PaneTerminal`)는 창이 보이는 동안만 만들고 닫으면 버린다(다시 열면 데몬의 지난 출력으로 되살림). 키보드는 열 때 그 터미널로, ⌘W 는 이 창만 숨기고,
+  지우기·찾기 단축키는 이 터미널에 한다. 시험: `scratch show|hide|toggle|end`, `scratch-state`(`uilayout` 에도 나옴).
 - **끄는 동안 페이지 크기 유지(`BrowserPaneView.beginResizeGesture`·`setLiveResizing`):** 작은 창을 끌어 옮기거나 크기를 바꾸는 동안, 그리고 창 크기를
   끄는 동안(`viewWillStartLiveResize`)에는 페이지를 다시 맞추지(`feed.fit` → `Browser.setWindowBounds`) 않고 그림만 칸에 맞춰 줄이고 늘린다(`placeImage` 가
   비율을 지켜 빈 띠). 끝나면 크기가 바뀌었을 때만 한 번 맞춘다. 옮기기만(크기 그대로)은 맞추지 않는다. 그 밖의 크기 변화는 그대로 0.3초 모았다 한 번.
   AI 가 입력을 쥔 동안 크기를 바꾸지 않는 규칙(`applySize`)은 그대로다.
+- **끄는 동안 자동 배치 보류(`TermLayout/FloatLayoutGate`, `ToolWindowsController.floatGate`):** 작은 창(브라우저·작은 터미널 각각)을 끌기 시작(`onGestureBegan`)부터
+  끝(`onGestureEnded`)까지, 그 창의 자동 배치(`layoutFloat` — 세션 목록 갱신 `rowsChanged`→`applyScratch`, 호스트·탭 줄 크기 변화, 글꼴 배율,
+  브라우저가 열고 닫혀 바뀌는 작은 터미널 기본 자리 혼자↔나란히)는 미뤄 두었다가 끝나면 한 번만 돌린다. 안 그러면 데몬의 일상 갱신(`bufferedBytes`)이
+  끄는 도중 저장된·기본 자리로 되돌려 창이 튀고 마우스를 뗄 때 엉뚱한 자리가 저장된다(`FloatPanel` 은 뗄 때만 저장). 끌기 끝의 저장·"크게/작게"는
+  `userInitiated` 라 막지 않는다. 자리가 안 바뀐 클릭은 저장하지 않고(기본 자리가 저장된 자리로 굳지 않게), 끄는 중 창이 호스트에서 빠지면 끝을 알린다.
+- **에이전트가 브라우저를 쓰면 작은 창 자동 열기·결과 없이 끝나면 자동 닫기(`BrowserCore/BrowserAutoOpen` 의 순수 규칙 `BrowserAutoState`·`BrowserAutoPolicy`,
+  화면 쪽 `BrowserAutoController`(TermModel.browserAuto) + `ToolWindowsController.autoSetBrowserFloat`):** 상태는 세션마다 메모리에만 둔다
+  (`autoOpened`·`userInteracted`·`dismissedThisRun`·`lastDoneAt`·결과 알림 시각). 설정 → 브라우저 "에이전트가 브라우저를 쓰면 작은 창 자동으로 열기"(기본 켬,
+  `ui.json` 의 `autoOpenBrowser`, 모르는 값은 켬).
+  - **시작 신호:** 상태 파일에서 읽은 제어가 `agent`(잠금 소켓 + 살아 있는 잠금 pid — 작업 하나의 첫 abx 동작이 잠금 홀더를 띄우고 `abx done`·넘김·30초 무동작까지 쥔다).
+    `BrowserStatusStore` 가 abx 폴더(소켓·상태) 쓰기 이벤트를 0.15초 모아 읽거나 2초 주기로 읽으므로 보통 0.2~0.4초, 이벤트를 놓쳐도 최대 2초. 앱을 켠 첫 상태는 기억만(이미 도는 작업이라 열지 않음).
+    작은 창이 닫혀 있고, 설정이 켜 있고, 그 세션이 브라우저를 세션 창 안 작은 창으로 보고(별도 창이면 아무것도 안 함), 이번 작업 중 사람이 닫은 적 없을 때만 연다. 키보드 포커스는 옮기지 않고(🌐·⌘⇧B 와 다름), 보이는 세션이면 옅게 나타난다.
+  - **사람이 한 것:** 열면(🌐·⌘⇧B…) 자기 창이라 자동으로 닫지 않는다. 작업 중 닫으면 `dismissedThisRun` — done 신호나 작업 끝(제어가 idle·브라우저 꺼짐)에 지운다.
+    "건드림" = 창 안을 눌렀거나(`BrowserPaneView.onUserInteraction`: 화면·탭 칩) 제어를 가져옴, 작은 창을 끌거나 크게/작게를 누름. 보기만 한 것은 아니다.
+  - **끝 신호 `<stateDir>/<세션>.done.json`(`AbxDone`, `AbxStateReader.done`):** 상태와 같은 감시로 읽는다(`BrowserStatusStore.onDone`). `at` 이 이 작업의 시작(앱이 본 때 − 3초)보다 오래됐거나
+    이미 처리한 `at`(세션마다 `lastDoneAt`)이면 버린다. 쓸 수 있으면: `requested`(= `--keep` 으로 남긴 탭, `kept` 는 쓰지 않음)가 비고 `remainingAgentTabs == 0` 이고 자동으로 연 창을 사람이
+    건드리지 않았으면 ✕ 와 같이 닫는다(사라지는 사이 건드리면 그대로). `requested` 가 있으면 창을 둔 채(닫혀 있고 자동 열기가 켜 있으면 열고) 첫 탭을 탭 칩과 같은 길(`BrowserPaneView.showTab` → `feed.watch`)로
+    보이고, 🌐 알약에 "결과 있음"(초록, 약 60초 — 열거나 누르거나 그 세션으로 가서 창을 보면 거둠, 새 작업이 시작돼도 거둠). 결과를 남긴 창은 이후 자동으로 닫지 않는다.
+  - **세션마다:** 백그라운드 세션의 열기·닫기는 그 세션의 열림 기록(`FloatState.setOpen`)과 알림만 바꾸고, 그 세션으로 갔을 때 보인다. 보이는 세션만 애니메이션.
+  - 시험: `browser-autostate`(세션마다 `autoOpened`·`dismissed`·`lastDoneAt`·`badge`·`interacted`·`agentActive`), `browsers` 의 `browser-state` 줄 `badge=`.
 - **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태·제목·주소·탭 수·"표시 ▾"·"제어 가져오기/AI 에게 돌려주기") + 화면.
   위치·크기는 세션별로 기억(`AgentDeckBrowser-<세션>`). 닫아도(⌘W — 브라우저 창이 앞이면 그 창만) 브라우저·에이전트는 계속 돈다.
   창이 가려지거나(occlusion)·최소화·앱 숨김이면 스트림을 멈춘다.
@@ -366,6 +402,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   연결이 안 됐거나 예전 것이면 사이드바 아래에 안내와 "연결하기/갱신하기" 버튼이 뜬다.
   누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 이름 hook 은 같이 뺀다. hook 이 적는 위치는 위 "이름과 예전 판 이어받기".
 - 되살릴 때 이어받는 claude 옵션은 허용 목록(권한·모델·effort·add-dir·MCP·허용 도구 등)만. 처음 질문·`--worktree`·세션 지정은 뺀다.
+- 설정 창(⌘,)은 도구 막대 아이콘 탭 넷 — 연결(Claude Code·Codex hook)·브라우저(abx 스킬·전용 브라우저·선명도·해상도·쉬게 하기·Chrome 로그인)·새 세션(아래 기본 옵션)·화면(작은 창 버튼 위치) — 이고 탭을 고르면 창 높이가 내용에 맞게 바뀐다(화면보다 길면 스크롤). 마지막 탭은 UserDefaults `AgentDeckSettingsTab` 에 기억한다.
 - 새 세션 기본 옵션(설정 창 ⌘,, `term/launch.json`, `TermLayout/LaunchOptions`): + claude·+ codex·폴더 메뉴 "여기서 … 열기"가
   `TermModel.newAgent` 로 `claude <옵션>`·`codex <옵션>` 을 셸에 넣는다. 인자는 화면 짝짓기 때 프로세스 인자에서 다시 읽어
   되살리기 정보(`claudeArgs`·`codexArgs`)에 남으므로, 되살릴 때는 그 세션을 띄운 옵션을 쓰고 지금 기본값은 넣지 않는다(허용 목록에 없는 추가 인자는 빠짐).
@@ -490,6 +527,20 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   같은 도크에서 files 로 바꾸면 23~25MB(SwiftUI 목록이 화면에서 빠짐), spaces+files 둘 다 보이면 32MB, 이 저장소 폴더 9개를 펼친 뒤(95줄) 37~38MB.
   files 를 보이는 채 쉬는 동안 CPU 는 files 없는 때와 차이가 보이지 않았다(git 은 처음 한 번, 이 저장소에서 약 0.1~0.5초).
 - 화면 모양은 herdr 를 참고했다: 어두운 사이드바·탭 줄에 고정폭 글꼴, 나눈 화면마다 테두리와 제목, 포커스 화면은 보라색 테두리.
+- **화면 모드(설정 → 화면 → "화면 모드": 자동 / 라이트 / 다크, 기본 자동):** `AppearanceMode`(`TermLayout/Appearance.swift`)를 `ui.json` 의 `appearance` 에 저장한다
+  (없거나 모르는 값이면 자동, 자동은 적지 않음). `AppearanceSetting`(싱글턴, 글꼴 크기처럼 처음 읽을 때 파일에서)이 바뀔 때마다 `NSApp.appearance`(자동 = nil, 라이트 = .aqua,
+  다크 = .darkAqua)로 바로 적용하고 도구 창 관리자가 저장한다. **창·뷰마다 `.darkAqua` 를 고정하지 않는다**(전부 앱 모양을 상속) — SwiftUI 쪽 `.colorScheme(.dark)` 도 뺐다.
+  색은 이름표 `PaletteColor`(어두운·밝은 값 한 쌍 — 다크는 예전 값 그대로, 순수 데이터라 시험한다)에서 나오고, `TermAppearance` 의 앱 색은 모두
+  `NSColor(name:dynamicProvider:)`(`NSColor.palette`)라 그릴 때 그 뷰의 effectiveAppearance 로 정해진다(`NSAppearance.isDark`). 라이트는 다크와 같은 성격(차분한 바탕,
+  사이드바·탭 줄은 터미널보다 한 단계 진하게, 보라 포커스, 상태만 색)으로 맞춘 짝이고 글자·상태 색은 사이드바 바탕에서 대비 4:1 이상.
+  **CGColor 로 굳는 곳**(layer.backgroundColor·borderColor, CAGradientLayer·CATextLayer 의 색, NSShadow)은 `NSColor.cg(in:)` 로 받고
+  `viewDidChangeEffectiveAppearance` 에서 다시 받는다(작은 창·브라우저 칸·AI 표시 레이어·찾기 막대·이동 목록·편집기 안내/배너·마크다운 미리보기).
+  **터미널**은 색을 직접 넣으므로 `TermAppearance.apply(to:)` 가 뷰의 모양으로 `TerminalTheme`(다크 = Ghostty 기본, 라이트 = Atom One Light 계열 — 바탕 #fafafa,
+  글자 #383a42, 16색, 밝은 바탕에서 읽히게 7·15번은 어두운 회색)를 넣고, `PaneTerminal` 이 만드는 `ThemedTerminalView`(세션 화면·작은 터미널 모두)가
+  `viewDidChangeEffectiveAppearance` 에서 다시 부른다. 스크롤 막대는 뷰의 모양을 따른다. 256색(16~255)은 표준 xterm 값 그대로라 밝은 바탕에서 옅은 색(예: 117·221)은 흐릴 수 있다.
+  **편집기** 글자색은 `EditorStyle`(다크 Darcula 계열 / 라이트 IntelliJ Light 계열). **마크다운 미리보기** CSS 는 라이트 + `@media (prefers-color-scheme: dark)` 두 벌을
+  한 번 만들어 해시(CSP)를 정하고, 웹 화면이 뷰의 모양을 따라 문서를 다시 읽지 않고 바뀐다. 시험: `appearance <auto|light|dark>`, `settings`(출력에 `appearance=… effective=…`).
+  의도적으로 그대로 둔 곳: 브라우저 화면 위 AI 커서의 흰 화살표(페이지 위에 겹치는 마우스 커서 — 페이지 색과 상관없음)와 탭·화면 끌기 덮개(검정 35%).
 - 왼쪽 목록은 폴더(git 저장소)별로 묶고, 저장소의 작업 트리(worktree)를 아래에 펼친다(claude 가 만든 `.claude/worktrees/` 는 주황 아이콘).
   화면의 폴더는 claude 가 돌면 claude 프로세스의, 아니면 셸의 지금 폴더를 따른다(작업 트리로 옮겨 가면 그 아래로 옮겨진다).
   git 을 실행하지 않고 `.git` 파일만 읽는다. 폴더·작업 트리 줄의 `+`·오른쪽 클릭으로 그 자리에서 claude·셸을 새 탭으로 연다.
@@ -535,7 +586,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   종료 시험 명령: `quit`(⌘Q 와 같은 길 — 데몬·화면이 앱과 따로 남는지 볼 때).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
-  `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호)·`settings-snap <png>`·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
+  `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호·탭)·`settings-tab <connections|browser|sessions|screen>`(설정 창 탭 고르기)·`float-corner <top|bottom>`·`settings-snap <png>`·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
   `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
   `location`(데이터 위치·모드 standard/legacy/custom·연결·화면 수·꺼진 화면 수; 옮기기는 `alert-answer 0` 뒤 `action relocate-data`). `AGENTDECK_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
   `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을, `AGENTDECK_CODEX_SKILLS_DIR=<폴더>` 로 Codex 스킬 폴더를 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex`·`~/.agents` 를 건드리지 않게 — 앱은 시작할 때 자기가 넣은 스킬을 새 판으로 바꾼다).

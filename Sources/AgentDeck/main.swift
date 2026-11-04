@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     var snapshotTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        AppearanceSetting.shared.apply() // 화면 모드(기본 자동): 창을 만들기 전에 앱 모양을 정한다
         buildMenu()
         model.openSettings = { [weak self] in self?.perform("settings") }
         let host = TerminalHostController(model: model)
@@ -49,7 +50,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let window = NSWindow(contentViewController: tools.split)
         window.title = "AgentDeck"
-        window.appearance = NSAppearance(named: .darkAqua)
         window.titlebarAppearsTransparent = true
         window.backgroundColor = TermAppearance.chrome
         window.setContentSize(NSSize(width: 1200, height: 760))
@@ -96,6 +96,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // 세션 창 안 브라우저에 포커스: 뒤 터미널·편집기에 하는 메뉴는 끈다 — 단축키(⌘K·⌘F·⌘D…)가 브라우저로 간다
         if dockedBrowserFocused, let action = menuItem.representedObject as? String,
            Self.paneOnlyActions.contains(action) { return false }
+        if toolWindows?.scratchHasFocus == true, let action = menuItem.representedObject as? String,
+           Self.paneOnlyActions.contains(action) {
+            switch action {
+            case "clear-screen", "pane-find": return true
+            case "pane-find-next", "pane-find-previous":
+                // 작은 터미널의 찾기 막대가 열려 있으면(performOnScratch 가 그 막대로 찾는다)
+                return model.scratch.current?.findBar.superview != nil
+            default: return false
+            }
+        }
         switch menuItem.representedObject as? String {
         case "pane-find", "pane-find-next", "pane-find-previous":
             guard NSApp.keyWindow === window else { return false }
@@ -265,6 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(view, "files 도구 보이기/숨기기", "tool-toggle:files", "e", [.command, .shift])
         addAction(view, "spaces 도구 보이기/숨기기", "tool-toggle:spaces", "s", [.command, .shift])
         addAction(view, "browser 도구 보이기/숨기기", "tool-toggle:browser", "")
+        addAction(view, "작은 터미널 보이기/숨기기", "scratch-toggle", "`", [.control])
         for (tool, label) in [("files", "files"), ("spaces", "spaces"), ("browser", "browser")] {
             let place = NSMenu(title: "\(label) 위치")
             if tool == "browser" {
@@ -298,6 +309,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ShortcutKey(2, .command): "split-right",
             ShortcutKey(2, [.command, .shift]): "split-down",
             ShortcutKey(11, [.command, .shift]): "browser",
+            // 작은 터미널(⌃`) — 세션 창 안에 떠 있는 임시 셸 켜고 끄기
+            ShortcutKey(50, .control): "scratch-toggle",
             ShortcutKey(13, .command): "close",
             ShortcutKey(13, [.command, .option]): "close-tab",
             ShortcutKey(33, .command): "previous-split",
@@ -357,6 +370,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 self.perform(action)
                 return nil
             }
+            // 작은 터미널에 포커스: 뒤 세션 화면을 바꾸는 단축키(나누기·저장·이동 등)는 막고, 지우기·찾기는 이 터미널에 한다
+            if self.toolWindows?.scratchHasFocus == true,
+               let action = Self.shortcuts[ShortcutKey(event.keyCode, event.modifierFlags)], Self.paneOnlyActions.contains(action) {
+                self.performOnScratch(action)
+                return nil
+            }
+            // 작은 터미널에 포커스면 아래 편집기 전용 단축키(⌘S 저장·⌘B/⌥F7/⌘[ ⌘] 이동·⇧⌘V 미리보기)는 뒤 편집기에 하지 않는다
+            let scratchFocused = self.toolWindows?.scratchHasFocus == true
             if [36, 76].contains(event.keyCode),
                event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
                let pane = self.model.host?.focusedTerminal, pane.findBar.superview != nil,
@@ -375,17 +396,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 return nil
             }
             // ⌘S = 편집기 저장(키 위치로 — 한글 입력 중에도). 편집기 화면이 아니면 그대로 보낸다(⌘⇧S 는 spaces).
-            if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(1, .command), self.model.focusedIsEditor {
+            if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(1, .command), !scratchFocused, self.model.focusedIsEditor {
                 self.model.saveFocused()
                 return nil
             }
             // 이동: ⌘B·⌥F7(⌥⌘F7)·⌘O. 편집기 화면이면 ⌘[ ⌘] 는 뒤로·앞으로(기록이 없으면 아무것도 안 함 — 화면 이동으로 넘기지 않는다)
-            if let action = self.navigationAction(for: event) {
+            if let action = self.navigationAction(for: event), !scratchFocused || action == "goto-symbol" {
                 if action != "none" { self.perform(action) }
                 return nil
             }
             // ⇧⌘V = Markdown 편집 ↔ 미리보기. Markdown 편집기가 아니면 그대로 보낸다.
-            if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(9, [.command, .shift]),
+            if ShortcutKey(event.keyCode, event.modifierFlags) == ShortcutKey(9, [.command, .shift]), !scratchFocused,
                self.model.host?.focusedEditor?.canPreview == true {
                 self.model.perform("markdown-preview")
                 return nil
@@ -424,8 +445,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
     }
 
+    /// 작은 터미널에 포커스가 있을 때의 "화면에만 하는 동작": 지우기·찾기만 이 터미널에, 나머지는 받아 두고 아무것도 안 한다
+    private func performOnScratch(_ action: String) {
+        guard let pane = model.scratch.current else { return }
+        switch action {
+        case "clear-screen": pane.clearScreen()
+        case "pane-find": pane.findBar.show()
+        case "pane-find-next", "pane-find-previous":
+            if pane.findBar.superview != nil { pane.findBar.search(backwards: action == "pane-find-previous") }
+        default: break
+        }
+    }
+
     /// 메뉴·단축키·시험 명령: 도구 창 동작(tool-…)은 도구 창 관리자가, 나머지는 모델이 맡는다
     private func perform(_ action: String) {
+        if action == "scratch-toggle" {
+            toolWindows?.toggleScratch()
+            return
+        }
+        // 작은 터미널에 키보드가 있으면 ⌘W 는 그 창만 숨긴다(어느 탭도 닫지 않는다 — 셸은 계속 돈다)
+        if action == "close" || action == "close-tab", toolWindows?.scratchHasFocus == true {
+            toolWindows?.hideScratch()
+            return
+        }
         // 브라우저 창이 앞에 있으면 ⌘W 는 그 창만 닫는다(메인 창의 터미널을 닫지 않게)
         if action == "close" || action == "close-tab", let browser = model.browserWindows.keyController {
             browser.close()
@@ -488,6 +530,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         guard let action = sender.representedObject as? String else { return }
         if action.hasPrefix("pane-find"), NSApp.keyWindow !== window { return }
         if dockedBrowserFocused, Self.paneOnlyActions.contains(action) { return }
+        if toolWindows?.scratchHasFocus == true, Self.paneOnlyActions.contains(action) {
+            performOnScratch(action)
+            return
+        }
         // 설정 창 같은 다른 창이 앞에 있으면 ⌘W 는 그 창을 닫는다(터미널 화면을 닫지 않게)
         if ["close", "close-tab"].contains(action), let key = NSApp.keyWindow, key !== window {
             key.performClose(nil)
@@ -502,6 +548,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// 둘 중 하나라도 있으면 분산 알림 "dev.agentdeck.debug" 로 받은 명령을 실행한다.
     ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
     ///   도구 창: tool <files|spaces>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
+    ///   작은 터미널: scratch <show|hide|toggle|end> | scratch-state (type·keys·chord 는 키보드가 있는 터미널로 간다)
+    ///   화면 모드: appearance <auto|light|dark>(설정 → 화면) | 작은 창 구석: float-corner <top|bottom>(설정 → 화면) | 설정 창 탭: settings-tab <connections|browser|sessions|screen>
     ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
     ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
     ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
@@ -546,6 +594,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "uilayout":
             if let data = toolWindows?.layout.data() { print("uilayout " + (String(data: data, encoding: .utf8) ?? "")) }
             if let text = toolWindows?.debugFloat { print(text) }
+            if let text = toolWindows?.debugScratch { print(text) }
+            fflush(stdout)
+        case "scratch":
+            // scratch <show|hide|toggle|end>: 작은 터미널(⌃`). 결과는 scratch-state 로
+            switch argument {
+            case "show": toolWindows?.showScratch()
+            case "hide": toolWindows?.hideScratch()
+            case "toggle": toolWindows?.toggleScratch()
+            case "end": toolWindows?.endScratch()
+            default: print("scratch 사용법: show | hide | toggle | end")
+            }
+            fflush(stdout)
+        case "scratch-state":
+            // 주인 세션·임시 셸 화면 ID·보임·자리·버튼 자리(창 좌표)
+            print(toolWindows?.debugScratch ?? "scratch-state -")
             fflush(stdout)
         case "filesroot":
             print(toolWindows?.files.debugSummary ?? "filesroot -")
@@ -613,8 +676,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "settings":
             settingsWindow.show()
             if argument == "key" { NSApp.windows.first { $0.windowNumber == settingsWindow.windowNumber }?.makeKey() }
-            print("settings window=\(settingsWindow.windowNumber ?? -1)")
+            print("settings window=\(settingsWindow.windowNumber ?? -1) tab=\(settingsWindow.selectedTab?.rawValue ?? "-") "
+                  + AppearanceSetting.shared.debugSummary)
             fflush(stdout)
+        case "appearance":
+            // appearance <auto|light|dark>: 화면 모드(설정 → 화면). 인자가 없거나 모르면 지금 값만. 바꾼 뒤 한 런루프 지나 결과를 본다
+            if let mode = AppearanceMode(argument: argument) { AppearanceSetting.shared.mode = mode }
+            else if !argument.isEmpty { print("appearance 사용법: auto | light | dark") }
+            DispatchQueue.main.async {
+                print("appearance " + AppearanceSetting.shared.debugSummary + " window=\(self.window?.effectiveAppearance.isDark == true ? "dark" : "light")")
+                fflush(stdout)
+            }
+        case "settings-tab":
+            // settings-tab <connections|browser|sessions|screen 또는 연결|브라우저|새 세션|화면>: 설정 창을 열고 그 탭을 고른다
+            if let tab = SettingsTab(name: argument) {
+                settingsWindow.show(tab: tab)
+                print("settings-tab \(tab.rawValue) window=\(settingsWindow.windowNumber ?? -1)")
+            } else {
+                print("settings-tab 사용법: " + SettingsTab.allCases.map(\.rawValue).joined(separator: " | "))
+            }
+            fflush(stdout)
+        case "float-corner":
+            // float-corner <top|bottom>: 작은 창 버튼·처음 자리의 구석(설정 → 화면). 인자가 없으면 지금 값만
+            switch argument {
+            case "top": FloatCornerSetting.shared.corner = .topRight
+            case "bottom": FloatCornerSetting.shared.corner = .bottomRight
+            default: break
+            }
+            // 값이 바뀌면 도구 창 관리자가 다음 런루프에 받는다 — 그 뒤 결과를 본다
+            DispatchQueue.main.async { [weak self] in
+                print("float-corner \(self?.toolWindows?.floatCorner.rawValue ?? "-")")
+                fflush(stdout)
+            }
         case "footer-settings":
             // 도크 상태 줄 "설정" 버튼을 누른 것과 같음
             print("footer-settings")
@@ -1016,7 +1109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             guard v.count == 2, let browserWindow = model.browserWindows.target?.window else { return }
             browserWindow.setContentSize(NSSize(width: v[0], height: v[1]))
         case "browser-display":
-            // browser-display <window|dock> [normal|whileActive|always]: 맨 앞(또는 마지막) 브라우저의 보는 곳·창 높이 고르기("표시 ▾" 와 같음)
+            // browser-display <window|dock> [normal|whileActive|always]: 맨 앞(또는 마지막) 브라우저의 보는 곳·창 높이 고르기(별도 창 머리 줄 "⋯" 메뉴와 같음)
             let parts = argument.split(separator: " ").map(String.init)
             guard let owner = model.browserWindows.targetPane?.owner ?? model.browserWindows.lastOpened,
                   let placement = parts.first.flatMap(BrowserDisplay.Placement.init(rawValue:)) else { return }
@@ -1061,7 +1154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "browsers":
             // 브라우저: 화면마다 칩 상태, 열린 창마다 주인·창 보임·스트림·받은 프레임 수·제어·페이지 크기
             for (id, status) in model.browserStates.sorted(by: { $0.key < $1.key }) {
-                print("browser-state \(id.prefix(4)) \(BrowserIndicator(status).map { "\($0)" } ?? "-")")
+                print("browser-state \(id.prefix(4)) \(BrowserIndicator(status).map { "\($0)" } ?? "-") badge=\(model.browserAuto.badge(id) ? "결과 있음" : "-")")
+            }
+            // 상태가 없는 화면(에이전트가 끝낸 뒤 떠 있는 브라우저 없음)의 "결과 있음"도
+            for (id, state) in model.browserAuto.states.sorted(by: { $0.key < $1.key }) where model.browserStates[id] == nil && model.browserAuto.badge(id) {
+                print("browser-state \(id.prefix(4)) - badge=결과 있음 doneAt=\(state.lastDoneAt.map(String.init) ?? "-")")
             }
             for controller in model.browserWindows.visible {
                 print("browser-window \(controller.paneId.prefix(4)) \(controller.pane.debugState) key=\(controller.window?.isKeyWindow == true) level=\(controller.window?.level.rawValue ?? -1) shown=\(model.browserWindows.isShown(controller.paneId)) occluded=\(controller.window?.occlusionState.contains(.visible) != true)")
@@ -1071,6 +1168,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             }
             if let text = toolWindows?.debugFloat { print(text) }
             print("browsers end")
+            fflush(stdout)
+        case "browser-autostate":
+            // 세션마다 작은 창 자동 열기·닫기 기록: autoOpened·dismissed(이번 작업 중 사람이 닫음)·lastDoneAt·badge(결과 있음)·interacted…
+            print(model.browserAuto.debugSummary)
+            print("browser-autostate end")
             fflush(stdout)
         case "tabs":
             // 탭 순서·분할 나무(화면 ID 앞 4자 — 편집기는 파일 이름, ~ = 미리보기, browser(주인) = 브라우저, * = 포커스, > = 고른 탭)

@@ -8,6 +8,10 @@ final class BrowserToggleButton: NSView {
     var indicator: BrowserIndicator? {
         didSet { if indicator != oldValue { invalidateIntrinsicContentSize(); needsDisplay = true; updateTip() } }
     }
+    /// 에이전트가 사용자에게 남긴 결과(abx done --keep)가 있다: "결과 있음" 알약(초록). 기다림·내가 조작 중이면 그 상태가 먼저다.
+    var resultBadge = false {
+        didSet { if resultBadge != oldValue { invalidateIntrinsicContentSize(); needsDisplay = true; updateTip() } }
+    }
     /// 브라우저 칸이 열려 있음(버튼을 눌린 모양으로)
     var isOn = false { didSet { if isOn != oldValue { needsDisplay = true; updateTip() } } }
     var onClick: (() -> Void)?
@@ -25,7 +29,16 @@ final class BrowserToggleButton: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     /// 알약에 적는 상태 글자(nil = 동그라미만): 읽을 만한 상태일 때만. 기다림은 느낌표를 붙인다(색만으로 구분하지 않게).
+    private var showsBadge: Bool {
+        guard resultBadge else { return false }
+        switch indicator {
+        case .waiting, .user: return false
+        default: return true
+        }
+    }
+
     private var statusText: String? {
+        if showsBadge { return Self.badgeLabel }
         switch indicator {
         case .agent, .user, .switching: return indicator?.label
         case .waiting: return (indicator?.label ?? "") + " !"
@@ -49,7 +62,9 @@ final class BrowserToggleButton: NSView {
     /// 글꼴 크기 배율이 바뀜: 크기를 다시
     func scaleChanged() { invalidateIntrinsicContentSize(); needsDisplay = true }
 
-    private var color: NSColor { indicator?.color ?? TermAppearance.textSecondary }
+    static let badgeLabel = "결과 있음"
+
+    private var color: NSColor { showsBadge ? TermAppearance.green : (indicator?.color ?? TermAppearance.textSecondary) }
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
@@ -88,7 +103,7 @@ final class BrowserToggleButton: NSView {
     }
 
     private func updateTip() {
-        let state = indicator?.label ?? "떠 있는 브라우저 없음"
+        let state = showsBadge ? Self.badgeLabel : (indicator?.label ?? "떠 있는 브라우저 없음")
         toolTip = "\(isOn ? "브라우저 칸 닫기" : "브라우저 칸 열기") (⌘⇧B) — \(state)"
     }
 

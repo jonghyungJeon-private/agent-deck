@@ -104,7 +104,9 @@ final class TermModel: ObservableObject {
             for id in Set(oldValue.allPanes).subtracting(workspace.allPanes) where !LocalPane.isLocal(id) { stopBrowser(of: id) }
         }
     }
-    @Published var connected = false
+    @Published var connected = false {
+        didSet { if !connected { scratch.connectionLost() } } // 작은 터미널 뷰도 세션 화면들처럼 버린다
+    }
     @Published var daemonFootprint: UInt64 = 0
     @Published var appFootprint: UInt64 = 0
     @Published var lastError: String?
@@ -112,6 +114,8 @@ final class TermModel: ObservableObject {
     @Published private(set) var browserStates: [String: AbxStatus] = [:]
     let browserStore = BrowserStatusStore()
     let browserWindows = BrowserWindows()
+    /// 에이전트가 브라우저를 쓰면 작은 창 자동으로 열고, 결과 없이 끝나면 닫는다(세션마다 상태, ToolWindowsController 가 화면 쪽을 단다)
+    let browserAuto = BrowserAutoController()
     /// 이미 알린 브라우저 넘김(화면 → 넘김 글)
     private var browserNotified: [String: String] = [:]
     /// 쉬게 하는 중인 화면(abx rest 가 도는 동안 다시 부르지 않게)
@@ -152,6 +156,14 @@ final class TermModel: ObservableObject {
     var paneRecent: [String: Date] = [:]
 
     let client = DaemonClient()
+    /// 작은 터미널 창의 임시 셸(세션 목록·탭에는 들어가지 않는다 — 데몬 목록을 읽을 때 떼어 낸다, `apply`)
+    private(set) lazy var scratch = ScratchTerminals(model: self)
+    /// 데몬에 떠 있는 임시 셸(화면 ID → 정보). 앱을 다시 켜도 주인이 있으면 이어 쓴다.
+    private(set) var scratchPanes: [String: PaneInfo] = [:]
+    /// 끝내라고 보냈지만 아직 목록에 남은 임시 셸(같은 신호를 되풀이하지 않게)
+    private var scratchKilled: Set<String> = []
+    /// 임시 셸 목록이 바뀜(앞에서 도는 프로그램 등) — 작은 터미널 버튼의 점
+    var onScratchChanged: (() -> Void)?
     /// 편집기 문서(편집기 화면은 데몬과 상관없이 앱 안에만 있다)
     let editors = EditorManager()
     /// 오른쪽 터미널이 붙을 곳(TerminalHostController)
@@ -469,6 +481,8 @@ final class TermModel: ObservableObject {
             (self?.rows ?? []).filter { !$0.dormant }.map(\.id)
         }
         browserStore.onChange = { [weak self] states in self?.browserChanged(states) }
+        browserStore.onDone = { [weak self] dones in self?.browserAuto.doneChanged(dones) }
+        browserAuto.discovered = { [weak self] in self?.browserStore.snapshotHadPanes ?? false }
         browserStore.start()
         // 쓰지 않는 브라우저 쉬게 하기(설정 → 브라우저): 1분마다 본다(시험: AGENTDECK_IDLE_REST_SECONDS 면 그 시간·5초마다)
         Timer.scheduledTimer(withTimeInterval: Self.idleRestOverride == nil ? 60 : 5, repeats: true) { [weak self] _ in self?.restIdleBrowsers() }
@@ -481,8 +495,14 @@ final class TermModel: ObservableObject {
         }
         names.onChange = { [weak self] in self?.client.list() }
         client.onState = { [weak self] state in self?.apply(state) }
-        client.onOutput = { [weak self] id, bytes, replay in self?.host?.receive(id: id, bytes: bytes, replay: replay) }
-        client.onExited = { [weak self] id in self?.host?.paneExited(id) }
+        // 임시 셸의 출력·종료는 작은 터미널 창으로, 나머지는 세션 화면으로
+        client.onOutput = { [weak self] id, bytes, replay in
+            if ScratchPane.isScratch(id) { self?.scratch.receive(id: id, bytes: bytes, replay: replay) }
+            else { self?.host?.receive(id: id, bytes: bytes, replay: replay) }
+        }
+        client.onExited = { [weak self] id in
+            if ScratchPane.isScratch(id) { self?.scratch.exited(id: id) } else { self?.host?.paneExited(id) }
+        }
         client.onError = { [weak self] message in self?.lastError = message }
         client.onDisconnect = { [weak self] in
             self?.connected = false
@@ -639,14 +659,33 @@ final class TermModel: ObservableObject {
         let dormant = workspace.allPanes.filter { workspace.dormant.contains($0) }.compactMap { id in
             workspace.recipes[id].map { (id, $0) }
         }
+        // 임시 셸(작은 터미널)은 여기서 떼어 낸다 — 이 아래의 목록·탭 맞추기·알림·배지·상태 추적·되살리기에는 보통 화면만 들어간다
+        let (regularPanes, scratchInfos) = ScratchPane.split(state.panes) { $0.id }
         worker.async { [weak self] in
             guard let self else { return }
-            var newRows = self.makeRows(state.panes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
+            var newRows = self.makeRows(regularPanes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
             let agents = self.scanAgents(newRows)
             newRows = Self.applyCodexOrchestration(newRows, agents: agents)
             let newGroups = Self.makeGroups(newRows, agents: agents)
-            DispatchQueue.main.async { self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance) }
+            DispatchQueue.main.async {
+                self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance)
+                self.updateScratch(scratchInfos, liveOwners: Set(newRows.map(\.id)))
+            }
         }
+    }
+
+    /// 임시 셸 목록을 받아 둔다. 주인 화면이 없어진(닫힌) 임시 셸은 끝낸다.
+    private func updateScratch(_ panes: [PaneInfo], liveOwners: Set<String>) {
+        let orphans = ScratchPane.orphans(panes.map(\.id), liveOwners: liveOwners)
+        for id in orphans where !scratchKilled.contains(id) {
+            scratchKilled.insert(id)
+            client.kill(id)
+        }
+        scratchKilled.formIntersection(panes.map(\.id))
+        let next = Dictionary(panes.filter { !orphans.contains($0.id) }.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        scratchPanes = next
+        scratch.stateChanged()
+        onScratchChanged?() // 작은 터미널 버튼의 점·제목의 폴더(2초마다, 가볍다)
     }
 
     /// worker 에서만 부른다(titles 도 worker 에서만 쓴다)
@@ -781,6 +820,8 @@ final class TermModel: ObservableObject {
             rows = newRows
             host?.refreshTitles()
         }
+        // 세션 목록을 처음 받음: 브라우저 상태를 한 번 더 내보내게 해서 자동 열기의 "처음 본 것" 기준을 이 목록으로 잡는다
+        if !browserAuto.isPrimed, connected, newRows.contains(where: { !$0.dormant }) { browserStore.publishNext() }
         notifyAttention(newRows)
         markSeen()
         updateDockBadge()
@@ -1184,6 +1225,7 @@ final class TermModel: ObservableObject {
 
     private func browserChanged(_ states: [String: AbxStatus]) {
         browserStates = states
+        browserAuto.statusChanged(states) // 에이전트 작업의 시작·끝(작은 창 자동 열기 — 🌐 버튼을 고치기 전에)
         browserWindows.onDockOwnerOrState?()
         browserWindows.retitle { [weak self] owner in self?.row(owner)?.title }
         host?.refreshTitles()
@@ -1257,6 +1299,7 @@ final class TermModel: ObservableObject {
     /// 상태를 아직 못 읽었을 수도 있어(막 띄움) 엔진 소켓·실행 기록이 있으면 끈다. 여러 번 불려도 된다.
     private func stopBrowser(of id: String) {
         browserWindows.close(owner: id)
+        browserAuto.forget(id)
         notifier.clear(paneId: "browser:" + id)
         browserNotified[id] = nil
         let session = abxSession(id)
@@ -1412,6 +1455,7 @@ final class TermModel: ObservableObject {
         }
         closing.insert(id)
         client.kill(id)
+        if scratchPanes[ScratchPane.id(owner: id)] != nil { client.kill(ScratchPane.id(owner: id)) } // 그 세션의 작은 터미널도 함께
         var next = workspace
         next.forget(pane: id)
         setWorkspace(next, render: true)

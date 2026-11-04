@@ -28,7 +28,7 @@ final class PaneTerminal: NSObject, TerminalViewDelegate {
         self.client = client
         let options = TerminalOptions(scrollback: Self.scrollback, kittyImageCacheLimitBytes: Self.imageCacheLimit,
                                       ansi256PaletteStrategy: .xterm)
-        view = TerminalView(frame: frame, font: TermAppearance.font, options: options)
+        view = ThemedTerminalView(frame: frame, font: TermAppearance.font, options: options)
         super.init()
         view.terminalDelegate = self
         view.optionAsMetaKey = false // ⌥ 로 특수 문자 입력(맥 기본)

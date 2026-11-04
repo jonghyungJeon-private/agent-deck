@@ -55,16 +55,16 @@ final class FileNode {
     var loadedCount: Int { 1 + (children ?? []).reduce(0) { $0 + $1.loadedCount } }
 }
 
-/// git 상태 색(IntelliJ Darcula 계열, 이 앱의 어두운 바탕 #21252b 에서 읽히게 밝기를 맞춤)
+/// git 상태 색(다크: IntelliJ Darcula 계열, 어두운 바탕 #21252b 에서 읽히게 밝기를 맞춤 / 라이트: 같은 색상의 진한 짝 — PaletteColor)
 enum FileStatusColors {
-    static let modified = NSColor(srgbHex: 0x6ca0dc)
-    static let added = NSColor(srgbHex: 0x8cc47a)
-    static let untracked = NSColor(srgbHex: 0xd2826a)
-    static let ignored = NSColor(srgbHex: 0x8b8b64)
-    static let conflicted = NSColor(srgbHex: 0xf0605a)
+    static let modified = NSColor.palette(.gitModified)
+    static let added = NSColor.palette(.gitAdded)
+    static let untracked = NSColor.palette(.gitUntracked)
+    static let ignored = NSColor.palette(.gitIgnored)
+    static let conflicted = NSColor.palette(.gitConflicted)
     /// 안에 바뀐 것이 있는 폴더(접혀 있어도 보이게, 은은한 파랑)
-    static let changedFolder = NSColor(srgbHex: 0xa9c3e3)
-    static let folderIcon = NSColor(srgbHex: 0x8a9bb0)
+    static let changedFolder = NSColor.palette(.gitChangedFolder)
+    static let folderIcon = NSColor.palette(.folderIcon)
 
     static func color(_ status: GitFileStatus?) -> NSColor? {
         switch status {

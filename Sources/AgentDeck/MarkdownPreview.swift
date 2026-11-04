@@ -1,6 +1,7 @@
 import AppKit
 import CryptoKit
 import EditorCore
+import TermLayout
 import TermWire
 import WebKit
 
@@ -52,20 +53,29 @@ final class MarkdownPreviewView: NSView, WKNavigationDelegate {
         webView = WKWebView(frame: NSRect(origin: .zero, size: frame.size), configuration: configuration)
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = EditorStyle.background.cgColor
+        refreshColors()
         webView.navigationDelegate = self
         webView.allowsLinkPreview = false
         webView.allowsBackForwardNavigationGestures = false
         webView.allowsMagnification = true
         webView.setValue(false, forKey: "drawsBackground") // 처음 그리기 전 흰 화면이 번쩍이지 않게
-        webView.underPageBackgroundColor = EditorStyle.background
-        webView.appearance = NSAppearance(named: .darkAqua)
         webView.isHidden = true // 첫 그림·스크롤 맞춘 뒤 보인다
         webView.autoresizingMask = [.width, .height]
         addSubview(webView)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 바탕은 값으로 굳는 색이라 모양(라이트·다크)이 바뀔 때마다 다시 정한다. 문서의 색은 CSS(prefers-color-scheme)가 웹 화면의 모양을 따라간다.
+    private func refreshColors() {
+        layer?.backgroundColor = EditorStyle.background.cg(in: self)
+        webView.underPageBackgroundColor = EditorStyle.background.resolved(effectiveAppearance)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshColors()
+    }
 
     override var isFlipped: Bool { true }
 
@@ -397,7 +407,7 @@ enum MarkdownPage {
     static func document(body: String) -> String {
         "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">"
             + "<meta http-equiv=\"Content-Security-Policy\" content=\"\(metaPolicy)\">"
-            + "<meta name=\"color-scheme\" content=\"dark\"><meta name=\"referrer\" content=\"no-referrer\">"
+            + "<meta name=\"color-scheme\" content=\"light dark\"><meta name=\"referrer\" content=\"no-referrer\">"
             + "<style>\(css)</style></head><body><main>\(body)</main></body></html>"
     }
 
@@ -411,34 +421,44 @@ enum MarkdownPage {
         "sha256-" + Data(SHA256.hash(data: Data(css.utf8))).base64EncodedString()
     }()
 
-    private static func hex(_ color: NSColor) -> String {
-        guard let c = color.usingColorSpace(.sRGB) else { return "#000000" }
-        return String(format: "#%02x%02x%02x", Int(round(c.redComponent * 255)), Int(round(c.greenComponent * 255)),
-                      Int(round(c.blueComponent * 255)))
-    }
-
+    /// 라이트(기본)와 `@media (prefers-color-scheme: dark)` 두 벌 — 웹 화면의 모양은 이 뷰의 effectiveAppearance 를 따르므로
+    /// 화면 모드를 바꿔도 문서를 다시 읽지 않고 바로 바뀐다. 해시(CSP)는 두 벌 전체에 대해 한 번 정한다.
     static let css: String = {
-        let bg = hex(TermAppearance.background)
-        let text = hex(EditorStyle.text)
-        let strong = hex(TermAppearance.textPrimary)
-        let dim = hex(TermAppearance.textDim)
-        let border = hex(TermAppearance.border)
-        let chrome = hex(TermAppearance.chrome)
-        let raised = hex(TermAppearance.chromeRaised)
-        let accent = hex(TermAppearance.accent)
-        let selection = hex(EditorStyle.selection)
-        // 웹 화면은 다른 프로세스라 앱에 등록한 글꼴을 못 본다 → 앱에 넣은 D2Coding 을 한글이 있을 때만 받아 쓴다
         let hangulRange = "unicode-range:U+1100-11FF,U+3130-318F,U+AC00-D7AF"
-        let mono = "\"CT Mono\", \"CT Hangul\", \"D2Coding\", \"NanumGothicCoding\", ui-monospace, Menlo, monospace"
-        let check = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l3 3 6-7' "
-            + "fill='none' stroke='%23\(bg.dropFirst())' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
-        return """
+        let fonts = """
         @font-face{font-family:"CT Mono";src:url("ctmd://app/fonts/JetBrainsMono-Regular.ttf");font-weight:400;font-style:normal}
         @font-face{font-family:"CT Mono";src:url("ctmd://app/fonts/JetBrainsMono-Bold.ttf");font-weight:700;font-style:normal}
         @font-face{font-family:"CT Mono";src:url("ctmd://app/fonts/JetBrainsMono-Italic.ttf");font-weight:400;font-style:italic}
         @font-face{font-family:"CT Hangul";src:url("ctmd://app/fonts/D2Coding-Ver1.3.2-20180524.ttf");font-weight:400;\(hangulRange)}
         @font-face{font-family:"CT Hangul";src:url("ctmd://app/fonts/D2CodingBold-Ver1.3.2-20180524.ttf");font-weight:700;\(hangulRange)}
-        :root{color-scheme:dark}
+        :root{color-scheme:light dark}
+        """
+        return fonts + rules(dark: false) + "@media (prefers-color-scheme: dark){" + rules(dark: true) + "}"
+    }()
+
+    private static func hex(_ token: PaletteColor, dark: Bool) -> String {
+        String(format: "#%06x", token.hex(dark: dark))
+    }
+
+    /// 모드 하나의 색 규칙(글꼴 등록은 빼고)
+    private static func rules(dark: Bool) -> String {
+        let bg = hex(.background, dark: dark)
+        let text = hex(.editorText, dark: dark)
+        let strong = hex(.textPrimary, dark: dark)
+        let dim = hex(.textDim, dark: dark)
+        let border = hex(.border, dark: dark)
+        let chrome = hex(.chrome, dark: dark)
+        let raised = hex(.chromeRaised, dark: dark)
+        let accent = hex(.accent, dark: dark)
+        let selection = hex(.editorSelection, dark: dark)
+        let quote = dark ? "#a7adb8" : "#5a606c"
+        let stripe = dark ? "#2b3038" : "#f1f2f5"
+        let mark = dark ? "#e5c07b40" : "#f2c94c55"
+        // 웹 화면은 다른 프로세스라 앱에 등록한 글꼴을 못 본다 → 앱에 넣은 D2Coding 을 한글이 있을 때만 받아 쓴다(위 @font-face)
+        let mono = "\"CT Mono\", \"CT Hangul\", \"D2Coding\", \"NanumGothicCoding\", ui-monospace, Menlo, monospace"
+        let check = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l3 3 6-7' "
+            + "fill='none' stroke='%23\(bg.dropFirst())' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+        return """
         html{background:\(bg)}
         body{margin:0;background:\(bg);color:\(text);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Helvetica Neue",sans-serif;
         -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;word-break:keep-all;overflow-wrap:break-word}
@@ -459,7 +479,7 @@ enum MarkdownPage {
         :not(pre)>code{font-size:.86em;background:\(raised);border:1px solid \(border);border-radius:5px;padding:.1em .38em;color:\(strong)}
         pre{background:\(chrome);border:1px solid \(border);border-radius:8px;padding:14px 16px;overflow:auto;line-height:1.55}
         pre code{font-size:13px;color:\(text);white-space:pre;word-break:normal}
-        blockquote{margin-left:0;padding:2px 0 2px 16px;border-left:3px solid \(accent)80;color:#a7adb8}
+        blockquote{margin-left:0;padding:2px 0 2px 16px;border-left:3px solid \(accent)80;color:\(quote)}
         blockquote>:last-child,li>:last-child,details>:last-child{margin-bottom:0}
         ul,ol{padding-left:1.7em}li+li{margin-top:.28em}li>ul,li>ol{margin:.28em 0 0}li>p{margin:0 0 8px}
         li::marker{color:\(dim)}
@@ -470,7 +490,7 @@ enum MarkdownPage {
         table{border-collapse:collapse;display:block;width:max-content;max-width:100%;overflow:auto;font-size:.94em;line-height:1.55}
         th,td{border:1px solid \(border);padding:7px 13px}
         th{background:\(raised);color:\(strong);font-weight:600}
-        tr:nth-child(2n) td{background:#2b3038}
+        tr:nth-child(2n) td{background:\(stripe)}
         img{max-width:100%;border-radius:4px}
         .remote-image{display:inline-block;font-size:.84em;line-height:1.6;color:\(dim);border:1px dashed \(border);border-radius:5px;padding:0 .5em}
         .remote-image::before{content:"🖼 "}
@@ -479,9 +499,9 @@ enum MarkdownPage {
         details{border:1px solid \(border);border-radius:8px;padding:8px 14px}
         summary{cursor:pointer;color:\(strong);font-weight:600}
         details[open]>summary{margin-bottom:8px}
-        mark{background:#e5c07b40;color:\(strong);border-radius:3px;padding:0 .15em}
+        mark{background:\(mark);color:\(strong);border-radius:3px;padding:0 .15em}
         .notice{color:\(dim)}
         ::selection{background:\(selection)}
         """
-    }()
+    }
 }

@@ -1,4 +1,6 @@
 import AppKit
+import Combine
+import SessionCore
 import SwiftUI
 import TermLayout
 import TermWire
@@ -6,6 +8,21 @@ import TermWire
 /// IntelliJ 식 도구 창: 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구(spaces·files)는 왼쪽·오른쪽·숨김 중 한 곳에 붙고,
 /// 도구가 둘 붙은 도크는 위에 도구 버튼 줄이 생긴다. 보이는 도구가 없는 도크는 접힌다.
 /// 배치·도크 폭은 `term/ui.json` 에 저장한다.
+/// 설정 창 "화면" 탭의 작은 창 구석 — 설정 창(SwiftUI)과 도구 창 관리자가 함께 보는 값. 바뀌면 도구 창 관리자가 버튼·작은 창을 다시 놓는다.
+final class FloatCornerSetting: ObservableObject {
+    static let shared = FloatCornerSetting()
+    @Published var corner: FloatCorner = .topRight
+    private init() {}
+}
+
+/// 설정 창 "브라우저" 탭의 "에이전트가 브라우저를 쓰면 작은 창 자동으로 열기"(기본 켬) — `ui.json` 의 `autoOpenBrowser`.
+/// 설정 창(SwiftUI)과 도구 창 관리자가 함께 보는 값이고, 바뀌면 도구 창 관리자가 저장한다.
+final class BrowserAutoOpenSetting: ObservableObject {
+    static let shared = BrowserAutoOpenSetting()
+    @Published var enabled = true
+    private init() {}
+}
+
 final class ToolWindowsController: NSObject {
     let split = NSSplitViewController()
     private(set) var layout: ToolLayout
@@ -14,8 +31,21 @@ final class ToolWindowsController: NSObject {
     private let sidebar: NSHostingController<SidebarView>
     private let docks: [DockSide: DockViewController]
     private let browserButton = BrowserToggleButton()
-    /// 세션 창 안에 떠 있는 작은 브라우저 창(host.view 위, 🌐 버튼 아래)
-    private let floatPanel = BrowserFloatPanel()
+    /// 🌐 버튼 왼쪽의 ⌨ 버튼(작은 터미널 켜고 끄기)
+    private let scratchButton = ScratchToggleButton()
+    /// 세션 창 안에 떠 있는 작은 브라우저 창(host.view 위, 버튼 아래)
+    private let floatPanel = FloatPanel(spec: .browser, closeTip: "작은 창 닫기 (⌘⇧B 로 다시)")
+    /// 세션 창 안에 떠 있는 작은 터미널 창(세션마다 임시 셸 하나)
+    private let scratchPanel = FloatPanel(spec: .terminal, closeTip: "작은 터미널 숨기기 (⌃`) — 셸은 계속 돌아요")
+    private var cornerObserver: AnyCancellable?
+    private var autoOpenObserver: AnyCancellable?
+    /// 작은 창을 끄는 동안의 자동 배치 보류(창마다) — 끝나면 한 번 돌린다
+    private var floatGate = FloatLayoutGate<FloatKind>()
+    /// 에이전트 활동에 따른 자동 열기·닫기 중(그 열림·닫힘은 사람이 한 것이 아니다)
+    private var autoChanging = false
+    private var appearanceObserver: AnyCancellable?
+    private var rowsObserver: AnyCancellable?
+    private var connectedObserver: AnyCancellable?
     /// 작은 창을 끄는 동안 그 칸(끝에서 같은 칸에 알린다 — 그사이 도크가 다른 세션으로 바뀌어도)
     private var gesturePane: BrowserPaneView?
     private let host: TerminalHostController
@@ -71,36 +101,87 @@ final class ToolWindowsController: NSObject {
         split.addSplitViewItem(left)
         split.addSplitViewItem(content)
         split.addSplitViewItem(right)
-        // 세션 창 오른쪽 아래 🌐: 세션 창 안 브라우저 칸 켜고 끄기 + 브라우저 상태(터미널 위에 떠 있다 — 터미널 칸 자식들은 그대로라 맨 위에 남는다).
-        // 크기는 버튼이 정한다(동그라미 ↔ 상태 알약, 오른쪽 아래 고정)
+        // 세션 창 구석(기본 오른쪽 위, 설정에서 오른쪽 아래) 🌐: 세션 창 안 브라우저 칸 켜고 끄기 + 브라우저 상태(터미널 위에 떠 있다 — 터미널 칸 자식들은 그대로라 맨 위에 남는다).
+        // 크기는 버튼이 정한다(동그라미 ↔ 상태 알약, 오른쪽 가장자리 고정 — 알약은 왼쪽으로 늘어난다)
         browserButton.translatesAutoresizingMaskIntoConstraints = false
         host.view.addSubview(browserButton)
-        NSLayoutConstraint.activate([
-            browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -14),
-            browserButton.bottomAnchor.constraint(equalTo: host.view.bottomAnchor, constant: -12),
-        ])
         browserButton.onClick = { [weak self] in self?.toggleBrowserFromButton() }
+        // ⌨ 는 🌐 왼쪽(8pt) — 🌐 가 알약으로 늘어나 왼쪽 끝이 움직여도 따라간다
+        scratchButton.translatesAutoresizingMaskIntoConstraints = false
+        host.view.addSubview(scratchButton)
+        anchorButtons()
+        FloatCornerSetting.shared.corner = layout.floatCorner
+        cornerObserver = FloatCornerSetting.shared.$corner.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] corner in self?.setFloatCorner(corner) }
+        // 에이전트가 브라우저를 쓰면 작은 창 자동으로 열기(설정 → 브라우저): 바뀌면 ui.json 에 저장
+        BrowserAutoOpenSetting.shared.enabled = layout.autoOpenBrowser
+        autoOpenObserver = BrowserAutoOpenSetting.shared.$enabled.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] enabled in
+                self?.layout.autoOpenBrowser = enabled
+                self?.save()
+            }
+        wireBrowserAuto()
+        // 화면 모드(설정 → 화면): 바뀌면 ui.json 에 저장(적용은 AppearanceSetting 이 NSApp.appearance 로 바로 한다)
+        layout.appearance = AppearanceSetting.shared.mode
+        appearanceObserver = AppearanceSetting.shared.$mode.dropFirst().removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] mode in
+                self?.layout.appearance = mode
+                self?.save()
+            }
+        host.onTabBarHeightChanged = { [weak self] in self?.layoutFloat() }
+        scratchButton.onClick = { [weak self] in self?.toggleScratch() }
+        scratchPanel.addTitleButton(symbol: "power", tip: "끝내기 — 이 작은 터미널의 셸을 끝냅니다(다음에 열면 새 셸)") { [weak self] in self?.endScratch() }
+        floatPanel.addTitleButton(symbol: "rectangle.portrait.and.arrow.right", tip: "별도 창으로 떼기") { [weak self] in self?.popOutBrowser() }
+        scratchPanel.onClose = { [weak self] in self?.hideScratch() }
+        scratchPanel.onToggleSize = { [weak self] in self?.toggleFloatSize(.terminal) }
+        scratchPanel.onFrameChanged = { [weak self] frame in self?.floatFrameChanged(.terminal, frame) }
+        // 끄는 동안은 자동 배치(목록 갱신·호스트 크기·브라우저 열림에 따른 기본 자리…)가 자리를 되돌리지 않는다. 끝나면 미룬 것을 한 번.
+        scratchPanel.onGestureBegan = { [weak self] in self?.floatGate.begin(.terminal) }
+        scratchPanel.onGestureEnded = { [weak self] in self?.floatGestureEnded(.terminal) }
+        model.scratch.onShellEnded = { [weak self] owner, hadFocus in
+            guard let self, self.model.browserWindows.dock.owner == owner else { return }
+            self.hideScratch(hadFocus: hadFocus)
+        }
+        model.onScratchChanged = { [weak self] in
+            guard let self else { return }
+            // 끊겼다 다시 붙은 뒤 첫 목록: 그동안 못 붙인 작은 터미널을 붙인다
+            if self.layout.terminalFloat.shown, self.model.scratch.current == nil { self.applyScratch() }
+            self.refreshScratch()
+        }
+        // 연결이 끊기면 작은 터미널 뷰를 떼고(ScratchTerminals.connectionLost), 창은 열림 기록대로 다시 붙을 때 되살린다
+        connectedObserver = model.$connected.removeDuplicates().receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applyScratch() }
+        // 세션 목록이 바뀜: 없어진 세션의 열림 기록을 지우고, 목록이 늦게 와 못 열었던 작은 터미널을 연다
+        rowsObserver = model.$rows.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.rowsChanged() }
         floatPanel.onClose = { [weak self] in self?.move(.browser, to: .hidden) }
-        floatPanel.onToggleSize = { [weak self] in self?.toggleFloatSize() }
-        floatPanel.onFrameChanged = { [weak self] frame in self?.floatFrameChanged(frame) }
+        floatPanel.onToggleSize = { [weak self] in self?.toggleFloatSize(.browser) }
+        floatPanel.onFrameChanged = { [weak self] frame in self?.floatFrameChanged(.browser, frame) }
         // 끌어 옮기거나 크기를 바꾸는 동안은 브라우저 페이지 크기를 맞추지 않고(그림만 줄이고 늘림) 끝나면 한 번 맞춘다
         floatPanel.onGestureBegan = { [weak self] in
-            self?.gesturePane = self?.model.browserWindows.dock.hosted
-            self?.gesturePane?.beginResizeGesture()
+            guard let self else { return }
+            self.floatGate.begin(.browser)
+            self.gesturePane = self.model.browserWindows.dock.hosted
+            self.gesturePane?.beginResizeGesture()
+            self.browserPanelTouched() // 작은 창을 끌었다 = 사람이 건드렸다(자동으로 닫지 않는다)
         }
         floatPanel.onGestureEnded = { [weak self] in
-            self?.gesturePane?.endResizeGesture()
-            self?.gesturePane = nil
+            guard let self else { return }
+            self.floatGestureEnded(.browser) // 미룬 자동 배치를 먼저(그 크기 변화가 끝난 뒤 한 번만 페이지에 맞춘다)
+            self.gesturePane?.endResizeGesture()
+            self.gesturePane = nil
         }
         host.view.postsFrameChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(hostResized), name: NSView.frameDidChangeNotification,
                                                object: host.view)
         // 세션·상태가 바뀜: 🌐 버튼과 작은 창 제목(세션 이름)
+        // 고른 세션이 바뀜: 두 작은 창을 그 세션이 열어 둔 것만 보이게(도크가 새 세션 칸을 달기 전에 — 안 보일 칸을 잠깐 붙이지 않게)
+        model.browserWindows.dock.onOwnerWillRefresh = { [weak self] owner in self?.sessionChanged(owner) }
         model.browserWindows.onDockOwnerOrState = { [weak self] in
             guard let self else { return }
             self.refreshBrowserButton()
             // 제목만 — 자리는 건드리지 않는다(끄는 도중 상태가 바뀌어도 저장된 자리로 튀지 않게)
             self.floatPanel.setTitle(self.floatTitle())
+            self.refreshScratch()
         }
         items = [.left: left, .right: right]
         apply()
@@ -150,13 +231,73 @@ final class ToolWindowsController: NSObject {
         files.setToolVisible(layout.isVisible(.files))
         // 작은 창은 도크 쪽 정리(위 반복문이 browser 를 도크에서 뗀 뒤)에 내용을 달고, 도크로 돌아갈 때는 도크가 먼저 가져간다
         applyFloat()
+        applyScratch()
         model.browserWindows.dock.setToolVisible(layout.isBrowserShown)
     }
 
-    // MARK: - 작은 창(세션 창 안에 떠 있는 브라우저)
+    // MARK: - 작은 창(세션 창 안에 떠 있는 브라우저·작은 터미널)
 
-    /// 🌐 버튼 윗선 + 14pt (작은 창의 기본 아래 위치)
-    private var floatBottomInset: Double { 12 + Double(BrowserToggleButton.size) + BrowserFloatFrame.margin }
+    private enum FloatKind: Hashable { case browser, terminal }
+
+    private func panel(_ kind: FloatKind) -> FloatPanel { kind == .browser ? floatPanel : scratchPanel }
+    private func spec(_ kind: FloatKind) -> FloatSpec { kind == .browser ? .browser : .terminal }
+    private func state(_ kind: FloatKind) -> FloatState { kind == .browser ? layout.browserFloat : layout.terminalFloat }
+    private func setFrame(_ kind: FloatKind, _ frame: FloatFrame?) {
+        if kind == .browser { layout.browserFloat.frame = frame } else { layout.terminalFloat.frame = frame }
+    }
+
+    // MARK: 버튼 구석
+
+    private var buttonConstraints: [NSLayoutConstraint] = []
+
+    /// 🌐·⌨ 를 설정한 구석에 붙인다(바꾸면 다시 붙인다). 오른쪽 위는 탭 줄 아래 10pt, 터미널 스크롤바(약 15pt)를 피해 오른쪽에서 22pt.
+    private func anchorButtons() {
+        NSLayoutConstraint.deactivate(buttonConstraints)
+        switch layout.floatCorner {
+        case .topRight:
+            buttonConstraints = [
+                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.topRightSideInset),
+                browserButton.topAnchor.constraint(equalTo: host.belowTabBarAnchor, constant: Self.topInset),
+                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -8),
+                scratchButton.topAnchor.constraint(equalTo: browserButton.topAnchor),
+            ]
+        case .bottomRight:
+            buttonConstraints = [
+                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -14),
+                browserButton.bottomAnchor.constraint(equalTo: host.view.bottomAnchor, constant: -12),
+                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -8),
+                scratchButton.bottomAnchor.constraint(equalTo: browserButton.bottomAnchor),
+            ]
+        }
+        NSLayoutConstraint.activate(buttonConstraints)
+    }
+
+    private static let topInset: CGFloat = 10
+    private static let topRightSideInset: CGFloat = 22
+
+    /// 설정에서 구석을 바꿈: 버튼을 다시 붙이고, 두 작은 창의 저장된 자리는 지워 새 구석의 처음 자리로 다시 연다(열림은 그대로)
+    func setFloatCorner(_ corner: FloatCorner) {
+        guard corner != layout.floatCorner else { return }
+        layout.setFloatCorner(corner)
+        anchorButtons()
+        host.view.layoutSubtreeIfNeeded()
+        layoutFloat()
+        save()
+    }
+
+    /// 시험 명령 `float-corner <top|bottom>`
+    var floatCorner: FloatCorner { layout.floatCorner }
+
+    /// 구석 쪽 세로 가장자리에서 띄울 거리. 오른쪽 아래: 브라우저는 🌐 버튼 윗선 + 14pt, 작은 터미널은 아래 가장자리 + 14pt.
+    /// 오른쪽 위: 둘 다 탭 줄 + 버튼 줄(10pt + 버튼 높이) 아래 + 14pt — 버튼이 가려지지 않게.
+    private func edgeInset(_ kind: FloatKind) -> Double {
+        switch layout.floatCorner {
+        case .topRight:
+            return Double(host.tabBarInset + Self.topInset + BrowserToggleButton.size) + FloatSpec.margin
+        case .bottomRight:
+            return kind == .browser ? 12 + Double(BrowserToggleButton.size) + FloatSpec.margin : FloatSpec.margin
+        }
+    }
 
     /// host.view 좌표(위·아래가 뒤집혔을 수 있다)와 아래-왼쪽 원점 사각형을 오간다
     private func flipped(_ rect: NSRect) -> NSRect {
@@ -165,18 +306,22 @@ final class ToolWindowsController: NSObject {
     }
 
     /// 지금 있어야 할 작은 창 자리(저장된 자리 또는 기본, 호스트 안으로 맞춘 것)
-    private func floatRect() -> NSRect {
+    private func floatRect(_ kind: FloatKind) -> NSRect {
         let size = host.view.bounds.size
-        let rect = layout.browserFloat.frame?.rect(in: size)
-            ?? BrowserFloatFrame.defaultRect(in: size, bottomInset: floatBottomInset)
+        // 작은 터미널의 기본 자리는 브라우저가 보이는지에 따라 다르다(혼자면 구석, 함께면 브라우저 옆). 저장된 자리는 그대로.
+        let rect = kind == .terminal
+            ? layout.terminalRect(in: size, browserEdgeInset: edgeInset(.browser), terminalEdgeInset: edgeInset(.terminal))
+            : state(kind).frame?.rect(in: size, spec: spec(kind))
+                ?? spec(kind).defaultRect(in: size, corner: layout.floatCorner, edgeInset: edgeInset(kind))
         return flipped(rect)
     }
 
+    /// 고른 세션의 브라우저 작은 창을 켜고 끈다
     private func applyFloat() {
         let shown = layout.browserFloat.shown
         if shown {
             if floatPanel.superview !== host.view {
-                host.view.addSubview(floatPanel, positioned: .below, relativeTo: browserButton)
+                host.view.addSubview(floatPanel, positioned: .below, relativeTo: scratchButton)
             }
             floatPanel.setContent(model.browserWindows.dock.view)
             layoutFloat()
@@ -187,11 +332,34 @@ final class ToolWindowsController: NSObject {
     }
 
     private func layoutFloat() {
-        guard layout.browserFloat.shown, floatPanel.superview === host.view else { return }
-        let rect = floatRect()
-        if floatPanel.frame != rect { floatPanel.frame = rect }
-        floatPanel.setLarge(isFloatLarge())
-        floatPanel.setTitle(floatTitle())
+        layoutFloat(.browser)
+        layoutFloat(.terminal)
+    }
+
+    /// animated: 브라우저가 열리고 닫혀 작은 터미널의 기본 자리가 바뀔 때 — 크기가 같고 자리만 옮겨질 때만 부드럽게
+    /// (크기가 바뀌는 동안 터미널이 다시 줄바꿈하지 않게. 끌기·창 크기 바꾸기 중에는 쓰지 않는다)
+    /// userInitiated: 사람이 끌기를 마치거나 "크게/작게"를 눌러 저장한 자리를 반영할 때. 그 밖의 모든 자동 배치(세션 목록 갱신·호스트 크기·
+    /// 탭 줄 높이·브라우저 열림에 따른 터미널 기본 자리…)는 그 창을 끄는 동안 미뤄 두었다가 끝나면 한 번 돌린다(`floatGate`) —
+    /// 끄는 도중 저장된·기본 자리로 되돌아가 튀거나 엉뚱한 자리가 저장되지 않게.
+    private func layoutFloat(_ kind: FloatKind, animated: Bool = false, userInitiated: Bool = false) {
+        let panel = panel(kind)
+        guard state(kind).shown, panel.superview === host.view else { return }
+        if !userInitiated, !floatGate.allowsAutoLayout(kind) { return }
+        let rect = floatRect(kind)
+        if panel.frame != rect {
+            if animated, panel.window != nil, abs(panel.frame.width - rect.width) < 1, abs(panel.frame.height - rect.height) < 1,
+               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.18
+                    context.allowsImplicitAnimation = true
+                    panel.animator().frame = rect
+                }
+            } else {
+                panel.frame = rect
+            }
+        }
+        panel.setLarge(isFloatLarge(kind))
+        panel.setTitle(kind == .browser ? floatTitle() : scratchTitle())
     }
 
     private func floatTitle() -> String {
@@ -201,30 +369,49 @@ final class ToolWindowsController: NSObject {
 
     @objc private func hostResized() { layoutFloat() }
 
-    /// 사람이 끌어 옮기거나 크기를 바꿈: 호스트 대비 비율로 저장
-    private func floatFrameChanged(_ frame: NSRect) {
-        let rect = BrowserFloatFrame.clamp(flipped(frame), in: host.view.bounds.size)
-        layout.browserFloat.frame = BrowserFloatFrame(rect: rect, in: host.view.bounds.size)
-        layoutFloat()
+    /// 사람이 끌어 옮기거나 크기를 바꿈: 호스트 대비 비율로 저장(자리는 창 종류마다 하나를 함께 쓴다)
+    private func floatFrameChanged(_ kind: FloatKind, _ frame: NSRect) {
+        let size = host.view.bounds.size
+        let rect = spec(kind).clamp(flipped(frame), in: size)
+        setFrame(kind, FloatFrame(rect: rect, in: size))
+        layoutFloat(kind, userInitiated: true)
         save()
     }
 
+    /// 끌기 끝(또는 끌던 창이 사라짐): 끄는 동안 미룬 자동 배치가 있었으면 한 번
+    private func floatGestureEnded(_ kind: FloatKind) {
+        if floatGate.end(kind) { layoutFloat(kind) }
+    }
+
+    /// 사람이 브라우저 작은 창의 제목 줄·가장자리·버튼을 눌렀다
+    private func browserPanelTouched() {
+        if let owner = model.browserWindows.dock.owner { model.browserAuto.userInteracted(owner) }
+    }
+
     /// 지금 "크게" 크기인가: 비율로 짐작하지 않고 크게 자리와 견준다(좁은 창에서는 기본 자리도 최소 폭에 걸려 넓어 보여서)
-    private func isFloatLarge() -> Bool {
-        let large = BrowserFloatFrame.clamp(BrowserFloatFrame.largeRect(in: host.view.bounds.size, bottomInset: floatBottomInset),
-                                            in: host.view.bounds.size)
-        let now = floatRect()
+    private func isFloatLarge(_ kind: FloatKind) -> Bool {
+        let size = host.view.bounds.size
+        let large = spec(kind).clamp(spec(kind).largeRect(in: size, corner: layout.floatCorner, edgeInset: edgeInset(kind)), in: size)
+        let now = floatRect(kind)
         return abs(now.width - large.width) < 2 && abs(now.height - large.height) < 2
     }
 
     /// "크게"/"작게": 크게 ↔ 기본 자리
-    private func toggleFloatSize() {
+    private func toggleFloatSize(_ kind: FloatKind) {
         let size = host.view.bounds.size
-        let large = isFloatLarge()
-        let rect = large ? nil : BrowserFloatFrame(rect: BrowserFloatFrame.largeRect(in: size, bottomInset: floatBottomInset), in: size)
-        layout.browserFloat.frame = rect
-        layoutFloat()
+        let large = isFloatLarge(kind)
+        setFrame(kind, large ? nil : FloatFrame(rect: spec(kind).largeRect(in: size, corner: layout.floatCorner, edgeInset: edgeInset(kind)), in: size))
+        layoutFloat(kind, userInitiated: true)
         save()
+        if kind == .browser { browserPanelTouched() }
+    }
+
+    /// "별도 창으로 떼기": 이 세션의 브라우저를 별도 창으로 보도록 바꾼다(작은 창은 닫힌다 — 한 세션의 브라우저는 한 곳에만)
+    private func popOutBrowser() {
+        guard let owner = model.browserWindows.dock.owner else { return }
+        var next = model.browserWindows.display(owner)
+        next.placement = .window
+        model.browserWindows.choose(next, for: owner)
     }
 
     /// 작은 창으로 보이기(메뉴 "작은 창으로"·`dock browser float`): 도크에 있었으면 내리고, 이미 작은 창이면 그대로
@@ -233,13 +420,153 @@ final class ToolWindowsController: NSObject {
         change { $0.showBrowserFloat() }
     }
 
+    // MARK: - 세션마다 열림·닫힘
+
+    /// 세션 창에서 고른 세션이 바뀜(도크가 따라가는 세션과 같다): 브라우저·작은 터미널 창 각각 그 세션이 열어 둔 것만 보인다
+    private func sessionChanged(_ owner: String?) {
+        var next = layout
+        next.follow(session: owner.map { BrowserBinding.sessionName(pane: $0) })
+        guard next != layout else { return }
+        let hadScratchFocus = model.scratch.hasFocus
+        layout = next // 열림 기록은 그대로라 저장할 것이 없다
+        applyFloat()
+        applyScratch(keepFocus: hadScratchFocus)
+        model.browserWindows.dock.setToolVisible(layout.isBrowserShown)
+        model.browserAuto.sessionShown(owner) // 열려 있는 창을 보게 됐다: "결과 있음" 알림을 거둔다
+        refreshBrowserButton()
+    }
+
+    /// 목록이 바뀜: 없어진 세션의 열림 기록을 지우고, 목록이 늦게 와 못 열었던 작은 터미널을 연다
+    private func rowsChanged() {
+        if model.connected, !model.rows.isEmpty {
+            let live = Set((model.rows.map(\.id) + model.workspace.allPanes).filter { !LocalPane.isLocal($0) }
+                .map { BrowserBinding.sessionName(pane: $0) })
+            var next = layout
+            next.prune(sessions: live)
+            if next != layout {
+                layout = next
+                save()
+            }
+        }
+        applyScratch(keepFocus: model.scratch.hasFocus)
+        refreshScratch()
+    }
+
+    // MARK: - 작은 터미널
+
+    /// 작은 터미널이 따라가는 세션: 도크와 같다(편집기 화면은 마지막 에이전트 세션 그대로)
+    private var scratchOwner: String? { model.browserWindows.dock.owner }
+
+    /// 그 세션이 데몬에 있거나 꺼진 채 목록에 있는지 + 연결됨(없는 세션에는 셸을 만들지 않는다)
+    private func scratchOwnerReady(_ owner: String) -> Bool {
+        model.connected && !model.scratch.awaitingState && model.row(owner) != nil
+    }
+
+    /// 지금 상태(고른 세션이 열어 둠)에 맞춰 창을 달거나 뗀다. 같은 상태면 자리만 맞춘다.
+    private func applyScratch(keepFocus: Bool = false) {
+        guard layout.terminalFloat.shown, let owner = scratchOwner, scratchOwnerReady(owner) else {
+            if scratchPanel.superview != nil || model.scratch.current != nil {
+                scratchPanel.setContent(nil)
+                scratchPanel.removeFromSuperview()
+                model.scratch.releaseAll()
+            }
+            refreshScratch()
+            return
+        }
+        if scratchPanel.superview !== host.view {
+            host.view.addSubview(scratchPanel, positioned: .below, relativeTo: scratchButton)
+        }
+        layoutFloat(.terminal, animated: true) // 브라우저가 열리고 닫히면 기본 자리가 바뀐다(저장된 자리는 그대로)
+        let rect = floatRect(.terminal)
+        if model.scratch.currentOwner != owner {
+            let size = CGSize(width: rect.width, height: max(rect.height - FloatPanel.stripHeight, 40))
+            scratchPanel.setContent(model.scratch.acquire(owner: owner, size: size).surface)
+            if keepFocus { focusScratch() }
+        }
+        refreshScratch()
+    }
+
+    private func scratchTitle() -> String {
+        guard let owner = scratchOwner else { return "⌨ 터미널" }
+        var title = "⌨ 터미널"
+        let name = model.row(owner)?.title
+        if let name { title += " · \(name)" }
+        let info = model.scratchPanes[ScratchPane.id(owner: owner)]
+        let cwd = info.flatMap { ProcessUtil.cwd($0.pid) } ?? info?.cwd ?? model.row(owner)?.cwd
+        // 폴더 이름이 세션 이름과 같으면(홈 폴더 세션 등) 한 번만 쓴다
+        if let folder = cwd.map({ ($0 as NSString).lastPathComponent }), folder != name { title += " · \(folder)" }
+        return title
+    }
+
+    /// ⌨ 버튼 모양·창 제목
+    private func refreshScratch() {
+        scratchButton.isOn = layout.terminalFloat.shown
+        scratchButton.busy = !layout.terminalFloat.shown && (scratchOwner.map(model.scratch.isBusy(owner:)) ?? false)
+        if layout.terminalFloat.shown, scratchPanel.superview === host.view { scratchPanel.setTitle(scratchTitle()) }
+    }
+
+    private func focusScratch() {
+        if let view = model.scratch.current?.view { host.view.window?.makeFirstResponder(view) }
+    }
+
+    /// ⌨ 버튼·⌃`: 고른 세션의 작은 터미널을 켜고 끈다(켜면 키보드가 거기로)
+    func toggleScratch() {
+        if layout.terminalFloat.shown { hideScratch(); return }
+        showScratch()
+    }
+
+    func showScratch() {
+        guard !layout.terminalFloat.shown else { focusScratch(); return }
+        guard let owner = scratchOwner, scratchOwnerReady(owner) else { NSSound.beep(); return }
+        change { $0.toggleTerminalFloat() }
+        focusScratch()
+    }
+
+    /// ✕·⌃`·⌘W: 창만 닫는다(셸은 계속 돈다). 키보드가 거기 있었으면 세션 화면으로 돌려준다.
+    func hideScratch(hadFocus focused: Bool? = nil) {
+        guard layout.terminalFloat.shown else { return }
+        let hadFocus = focused ?? model.scratch.hasFocus
+        change { $0.toggleTerminalFloat() }
+        if hadFocus { focusTerminal() }
+    }
+
+    /// "끝내기": 이 세션의 임시 셸을 끝내고 창을 닫는다(다음에 열면 새 셸)
+    func endScratch() {
+        guard let owner = scratchOwner else { return }
+        let hadFocus = model.scratch.hasFocus
+        model.scratch.end(owner: owner)
+        if layout.terminalFloat.shown { change { $0.toggleTerminalFloat() } }
+        if hadFocus { focusTerminal() }
+    }
+
+    /// 작은 터미널에 키보드가 있는지(⌘W 는 이 창만 숨긴다)
+    var scratchHasFocus: Bool { model.scratch.hasFocus }
+
+    /// 시험 명령 `scratch-state`: 주인 세션·화면 ID·보임·자리·버튼 자리(창 좌표, 원점 왼쪽 아래 — `mouse down x y` 에 그대로 쓴다)
+    var debugScratch: String {
+        let f = layout.terminalFloat
+        var text = "scratch-state \(model.scratch.debugSummary(owner: scratchOwner)) corner=\(layout.floatCorner.rawValue) shown=\(f.shown) "
+        text += "saved=" + (f.frame.map { String(format: "right=%.3f bottom=%.3f w=%.3f h=%.3f", $0.right, $0.bottom, $0.width, $0.height) } ?? "default")
+        text += " rect=\(layout.terminalRectKind.rawValue) session=\(f.session ?? "-")"
+        text += " open-sessions=\(f.openSessions.count) host=\(Int(host.view.bounds.width))x\(Int(host.view.bounds.height))"
+        if f.shown, scratchPanel.superview === host.view {
+            let r = scratchPanel.convert(scratchPanel.bounds, to: nil)
+            text += String(format: " panel(window)=x=%.0f y=%.0f w=%.0f h=%.0f content=%@", r.minX, r.minY, r.width, r.height,
+                           scratchPanel.hasContent ? "yes" : "no")
+        }
+        let b = scratchButton.convert(scratchButton.bounds, to: nil)
+        text += String(format: " button(window)=x=%.0f y=%.0f w=%.0f h=%.0f on=%@ busy=%@", b.minX, b.minY, b.width, b.height,
+                       scratchButton.isOn ? "yes" : "no", scratchButton.busy ? "yes" : "no")
+        return text
+    }
+
     /// 시험 명령 `browsers`·`uilayout`: 작은 창 상태와 실제 자리(창 좌표, 원점 왼쪽 아래 — `mouse down x y` 에 그대로 쓴다)
     var debugFloat: String {
         let f = layout.browserFloat
         let place = f.shown ? "float" : (layout.side(of: .browser) == .hidden ? "hidden" : layout.side(of: .browser).rawValue)
-        var text = "browser-float presentation=\(place) shown=\(f.shown) "
+        var text = "browser-float presentation=\(place) corner=\(layout.floatCorner.rawValue) shown=\(f.shown) "
         text += "saved=" + (f.frame.map { String(format: "right=%.3f bottom=%.3f w=%.3f h=%.3f", $0.right, $0.bottom, $0.width, $0.height) } ?? "default")
-        text += " host=\(Int(host.view.bounds.width))x\(Int(host.view.bounds.height))"
+        text += " session=\(f.session ?? "-") open-sessions=\(f.openSessions.count) host=\(Int(host.view.bounds.width))x\(Int(host.view.bounds.height))"
         if f.shown, floatPanel.superview === host.view {
             let r = floatPanel.convert(floatPanel.bounds, to: nil)
             text += String(format: " panel(window)=x=%.0f y=%.0f w=%.0f h=%.0f content=%@", r.minX, r.minY, r.width, r.height,
@@ -292,6 +619,11 @@ final class ToolWindowsController: NSObject {
         // 도구 창도 배율을 따른다(spaces·상태 줄은 SwiftUI 라 UIScaleModel 로 스스로 다시 그린다)
         docks.values.forEach { $0.scaleChanged() }
         browserButton.scaleChanged()
+        scratchButton.scaleChanged()
+        floatPanel.scaleChanged()
+        scratchPanel.scaleChanged()
+        model.scratch.applyFont()
+        model.browserWindows.scaleChanged()
         layoutFloat()
         files.scaleChanged()
     }
@@ -322,6 +654,79 @@ final class ToolWindowsController: NSObject {
             }
         }
         save()
+        // 사람이 작은 창을 열거나 닫음(자동 열기·닫기는 제외): 자동 열기 기록에 알린다 — 닫으면 같은 작업에서는 다시 열지 않는다
+        if !autoChanging, old.browserFloat.session == next.browserFloat.session, old.browserFloat.shown != next.browserFloat.shown,
+           let owner = model.browserWindows.dock.owner {
+            model.browserAuto.userToggled(owner, open: next.browserFloat.shown)
+        }
+    }
+
+    // MARK: - 에이전트 활동에 따른 자동 열기·닫기
+
+    private func wireBrowserAuto() {
+        let auto = model.browserAuto
+        auto.setting = { BrowserAutoOpenSetting.shared.enabled }
+        // 세션 창 안 작은 창으로 보는 세션만(별도 창이 기본이므로 처음엔 🌐 로 한 번 세션 안으로 열어 본 세션부터)
+        auto.floatPresentation = { [weak self] id in self?.model.browserWindows.display(id).placement == .dock }
+        auto.panelOpen = { [weak self] id in self?.layout.browserFloat.isOpen(session: BrowserBinding.sessionName(pane: id)) ?? false }
+        auto.setPanel = { [weak self] id, open in self?.autoSetBrowserFloat(pane: id, open: open) }
+        auto.showTab = { [weak self] id, tab in self?.model.browserWindows.pane(id).showTab(tab) }
+        auto.onBadgeChanged = { [weak self] in self?.refreshBrowserButton() }
+        model.browserWindows.onPaneInteraction = { [weak self] id in self?.model.browserAuto.userInteracted(id) }
+    }
+
+    /// 그 세션의 브라우저 작은 창을 자동으로 열거나 닫는다. 키보드는 가져가지 않는다(🌐 버튼·⌘⇧B 와 달리 포커스를 옮기지 않음).
+    /// 지금 보이는 세션이면 부드럽게(옅게 나타나고 사라짐), 다른 세션이면 그 세션의 열림 기록만 바꿔 그 세션으로 갔을 때 보이게 한다.
+    private func autoSetBrowserFloat(pane id: String, open: Bool) {
+        let key = BrowserBinding.sessionName(pane: id)
+        guard layout.browserFloat.isOpen(session: key) != open else { return }
+        let visible = model.browserWindows.dock.owner == id && host.view.window != nil
+        let animate = visible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if open {
+            commitAutoBrowserFloat(id, key: key, open: true)
+            if animate, floatPanel.superview === host.view {
+                floatPanel.alphaValue = 0
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = 0.2
+                    floatPanel.animator().alphaValue = 1
+                }
+            }
+        } else if animate, floatPanel.superview === host.view {
+            let run = model.browserAuto.states[id]?.runStartedAt
+            NSAnimationContext.runAnimationGroup({ context in
+                context.duration = 0.18
+                floatPanel.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self else { return }
+                // 사라지는 사이 사람이 건드렸거나(눌러서 자기 것이 됨) 이미 닫혔으면 그대로 둔다
+                // 사라지는 사이 새 작업이 시작됐으면(작업 시작 시각이 바뀜) 그 작업의 창이니 닫지 않는다.
+                // agentActive 로 보면 안 된다 — done.json 이 잠금이 풀린 상태보다 먼저 읽혀 끝난 작업도 아직 일하는 것으로 보인다
+                let touched = self.model.browserAuto.states[id]?.userInteracted == true
+                    || self.model.browserAuto.states[id]?.runStartedAt != run
+                    || !self.layout.browserFloat.isOpen(session: key)
+                if touched { self.floatPanel.alphaValue = 1; return }
+                self.commitAutoBrowserFloat(id, key: key, open: false)
+            })
+        } else {
+            commitAutoBrowserFloat(id, key: key, open: false)
+        }
+    }
+
+    private func commitAutoBrowserFloat(_ id: String, key: String, open: Bool) {
+        autoChanging = true
+        defer { autoChanging = false; floatPanel.alphaValue = 1 }
+        guard model.browserWindows.dock.owner == id else {
+            // 보이는 세션이 아니다: 그 세션의 열림 기록만(화면은 그대로)
+            var next = layout
+            next.setBrowserFloat(open: open, session: key)
+            guard next != layout else { return }
+            layout = next
+            save()
+            return
+        }
+        let hadFocus = !open && ownsFirstResponder(.browser)
+        change { $0.setBrowserFloat(open: open, session: key) }
+        if hadFocus { focusTerminal() }
     }
 
     /// 브라우저를 처음 꺼낸 도크(기본 폭 640 그대로)는 창 폭의 45% 까지 넓힌다: 넓은 창에서 640pt 칸은 페이지를 작게 줄여 보여서.
@@ -350,6 +755,7 @@ final class ToolWindowsController: NSObject {
         let owner = model.browserWindows.dock.owner
         browserButton.indicator = owner.flatMap { model.browserStates[$0] }.flatMap(BrowserIndicator.init)
         browserButton.isOn = layout.isBrowserShown
+        browserButton.resultBadge = model.browserAuto.badge(owner)
         if layout.browserFloat.shown { floatPanel.setTitle(floatTitle()) }
     }
 

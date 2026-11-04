@@ -61,6 +61,9 @@ enum BrowserIndicator: Equatable {
 final class BrowserStatusStore {
     /// 메인 스레드에서 부른다: 브라우저가 있는 화면만(화면 ID → 상태)
     var onChange: (([String: AbxStatus]) -> Void)?
+    /// 메인 스레드에서 부른다: `abx done` 이 남긴 `<세션>.done.json` 이 있는 화면만(화면 ID → 내용). 바뀔 때만(파일이 없다 생기거나 내용이 바뀌거나 지워질 때).
+    /// 상태와 같은 감시(abx 폴더 쓰기 이벤트 → 0.15초 모아 읽기, 그 밖에는 2초마다)로 읽는다.
+    var onDone: (([String: AbxDone]) -> Void)?
     /// 읽을 화면들(메인 스레드에서 묻는다)
     var panes: () -> [String] = { [] }
 
@@ -70,8 +73,11 @@ final class BrowserStatusStore {
     private var timer: DispatchSourceTimer?
     private var pending = false
     private var last: [String: AbxStatus] = [:]
+    private var lastDone: [String: AbxDone] = [:]
     /// 첫 결과는 비어 있어도 알린다(앱을 켠 첫 상태로 기억하게 — 그 뒤 처음 보는 넘김은 새 요청으로 알린다)
     private var published = false
+    /// 마지막으로 내보낸 결과가 화면이 있을 때 읽은 것인지(메인 스레드)
+    private(set) var snapshotHadPanes = false
 
     func start() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -79,6 +85,14 @@ final class BrowserStatusStore {
         timer.setEventHandler { [weak self] in self?.refresh() }
         timer.resume()
         self.timer = timer
+    }
+
+    /// 바뀐 것이 없어도 다음 읽기 결과를 한 번 내보낸다(세션 목록을 처음 받았을 때 — 자동 열기의 기준 잡기)
+    func publishNext() {
+        queue.async { [weak self] in
+            self?.published = false
+            self?.schedule()
+        }
     }
 
     /// 지금 바로 다시 읽기(제어 가져오기·돌려주기 직후 등)
@@ -123,17 +137,28 @@ final class BrowserStatusStore {
         watch()
         let ids = DispatchQueue.main.sync { panes() }
         var next: [String: AbxStatus] = [:]
+        var nextDone: [String: AbxDone] = [:]
         for id in ids {
             let env = BrowserBinding.environment(pane: id, browser: nil)
             let session = AbxSession(name: env["ABX_SESSION"]!, socketDir: env["ABX_SOCKET_DIR"]!,
                                      stateDir: env["ABX_STATE_DIR"]!, profileDir: env["ABX_PROFILE_DIR"]!)
             let status = reader.status(session)
             if BrowserIndicator(status) != nil { next[id] = status }
+            if let done = reader.done(session) { nextDone[id] = done }
+        }
+        if nextDone != lastDone {
+            lastDone = nextDone
+            DispatchQueue.main.async { [weak self] in self?.onDone?(nextDone) }
         }
         guard next != last || !published else { return }
         last = next
         published = true
-        DispatchQueue.main.async { [weak self] in self?.onChange?(next) }
+        let hadPanes = !ids.isEmpty
+        DispatchQueue.main.async { [weak self] in
+            // 이 결과가 세션 목록을 받은 뒤 읽은 것인지(자동 열기의 기준은 그런 결과로만 잡는다) — 메인에서만 읽고 쓴다
+            self?.snapshotHadPanes = hadPanes
+            self?.onChange?(next)
+        }
     }
 }
 
@@ -203,7 +228,6 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 420, height: 320)
         window.backgroundColor = TermAppearance.chrome
-        window.appearance = NSAppearance(named: .darkAqua)
         super.init(window: window)
         window.delegate = self
         // 세션마다 따로 기억(같은 화면 ID 면 다시 열어도 그 자리)
@@ -255,10 +279,13 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate {
 }
 
 /// 세션별 브라우저 칸과 보는 곳(별도 창 / 세션 창 안 도크)을 맡는다. 칸은 세션마다 하나이고 한 번에 한 곳에만 보인다.
-/// 보는 곳·창 높이는 머리 줄 "표시 ▾" 에서 고르고 `term/browser-display.json` 에 둔다(고르면 그 세션 값 + 새 세션의 기본값).
+/// 보는 곳·창 높이는 별도 창 머리 줄 "⋯" 메뉴·작은 창 제목 줄 버튼에서 고르고 `term/browser-display.json` 에 둔다(고르면 그 세션 값 + 새 세션의 기본값).
 final class BrowserWindows {
     private(set) var controllers: [String: BrowserWindowController] = [:]
     private var panes: [String: BrowserPaneView] = [:]
+
+    /// 글꼴 크기 배율이 바뀜: 별도 창 머리 줄의 "⋯" 버튼
+    func scaleChanged() { panes.values.forEach { $0.scaleChanged() } }
     /// 세션 창 안 browser 도구(지금 고른 세션의 브라우저)
     let dock = BrowserDockController()
     /// browser 도구를 보이게(숨김이면 마지막 쪽에, 다른 도구가 보이면 이것으로) — ToolWindowsController 가 단다
@@ -272,6 +299,8 @@ final class BrowserWindows {
     var floatDock: (() -> Void)?
     /// 세션 이름(창 제목·도크 안내)
     var titleFor: ((String) -> String?)?
+    /// 사람이 그 세션의 칸 안을 눌렀거나 제어를 가져왔다
+    var onPaneInteraction: ((String) -> Void)?
     private var prefs: BrowserDisplayPrefs
     private var observers: [NSObjectProtocol] = []
 
@@ -311,6 +340,7 @@ final class BrowserWindows {
         if let pane = panes[owner] { return pane }
         let pane = BrowserPaneView(owner: owner, frame: NSRect(x: 0, y: 0, width: 1024, height: 760))
         pane.displayMenu = { [weak self] in self?.menu(for: owner) ?? NSMenu() }
+        pane.onUserInteraction = { [weak self] in self?.onPaneInteraction?(owner) }
         panes[owner] = pane
         return pane
     }
@@ -355,7 +385,7 @@ final class BrowserWindows {
     /// 도크가 따라가는 세션이나 브라우저 상태가 바뀜(세션 창 오른쪽 아래 🌐 버튼을 고친다)
     var onDockOwnerOrState: (() -> Void)?
 
-    /// "표시 ▾" 에서 고름
+    /// "⋯" 메뉴·작은 창 "별도 창으로 떼기"에서 고름
     func choose(_ display: BrowserDisplay, for owner: String) {
         let old = self.display(owner)
         freezeOthers(except: owner)
@@ -395,7 +425,7 @@ final class BrowserWindows {
         try? data.write(to: Self.url, options: .atomic)
     }
 
-    /// 머리 줄 "표시 ▾"
+    /// 별도 창 머리 줄 "⋯" 메뉴: 세션 창 안으로 보기 + 창 높이
     func menu(for owner: String) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -405,19 +435,13 @@ final class BrowserWindows {
             item.isEnabled = false
             return item
         }
-        menu.addItem(header("보는 곳"))
-        for (placement, title) in [(BrowserDisplay.Placement.window, "별도 창"), (.dock, "세션 창 안 (작은 창)")] {
-            let item = ClosureMenuItem(title: title) { [weak self] in
-                var next = current
-                next.placement = placement
-                self?.choose(next, for: owner)
-            }
-            item.state = current.placement == placement ? .on : .off
-            item.indentationLevel = 1
-            menu.addItem(item)
-        }
+        menu.addItem(ClosureMenuItem(title: "세션 안으로 보기") { [weak self] in
+            var next = current
+            next.placement = .dock
+            self?.choose(next, for: owner)
+        })
         menu.addItem(.separator())
-        menu.addItem(header(current.placement == .window ? "창" : "창 (별도 창일 때)"))
+        menu.addItem(header("창 높이"))
         let levels: [(BrowserDisplay.Level, String)] = [(.normal, "일반 창"), (.whileActive, "AgentDeck 쓸 때만 위"),
                                                         (.always, "항상 위 (다른 앱 위에도)")]
         for (level, title) in levels {
@@ -427,25 +451,11 @@ final class BrowserWindows {
                 self?.choose(next, for: owner)
             }
             item.state = current.level == level ? .on : .off
-            item.isEnabled = current.placement == .window
             item.indentationLevel = 1
             menu.addItem(item)
         }
-        if current.placement == .dock {
-            // 작은 창에는 위 도구 버튼 줄이 없어, 작은 창 선택·숨기기를 여기에도 둔다
-            menu.addItem(.separator())
-            menu.addItem(header("세션 창 안"))
-            let float = ClosureMenuItem(title: "작은 창") { [weak self] in self?.floatDock?() }
-            float.state = dockFloating?() == true ? .on : .off
-            float.indentationLevel = 1
-            menu.addItem(float)
-            let hide = ClosureMenuItem(title: "숨기기 (⌘⇧B 로 다시)") { [weak self] in self?.moveDock?(.hidden) }
-            hide.indentationLevel = 1
-            menu.addItem(hide)
-        }
         menu.addItem(.separator())
-        let note = header("고른 방식은 새 세션의 기본값도 돼요")
-        menu.addItem(note)
+        menu.addItem(header("고른 방식은 새 세션의 기본값도 돼요"))
         return menu
     }
 

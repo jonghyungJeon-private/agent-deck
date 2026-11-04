@@ -6,7 +6,10 @@ import TermWire
 
 /// 터미널 모양. Ghostty 기본값과 맞춘다(사용자가 Ghostty 와 나란히 쓰므로 같은 느낌이 나게).
 /// - 글꼴: JetBrains Mono 13pt(Ghostty 내장 글꼴) + Nerd Font 아이콘. 앱에 넣어 두고 이 앱 안에서만 등록한다.
-/// - 색: 배경 #282c34, 글자 #ffffff, 16색은 Tomorrow Night(Ghostty 기본 팔레트).
+/// - 색: 다크는 배경 #282c34, 글자 #ffffff, 16색 Tomorrow Night(Ghostty 기본 팔레트). 라이트는 Atom One Light 계열(`TerminalTheme.light`).
+/// - 화면 모드(자동·라이트·다크, `AppearanceSetting`): 앱 테두리 색은 `NSColor(name:dynamicProvider:)` 라 창의 effectiveAppearance 를 따라
+///   저절로 바뀐다. CGColor 로 한 번 받아 두는 곳은 `viewDidChangeEffectiveAppearance` 에서 다시 받는다(`NSColor.cg(in:)`).
+///   터미널은 색을 직접 넣으므로 모양이 바뀔 때마다 `apply(to:)` 를 다시 부른다(`ThemedTerminalView`).
 enum TermAppearance {
     static let defaultFontSize: CGFloat = 13
     static let fontSizeRange: ClosedRange<CGFloat> = 8...32
@@ -40,15 +43,14 @@ enum TermAppearance {
         }
     }
 
-    static let background = NSColor(srgbHex: 0x282c34)
-    static let foreground = NSColor(srgbHex: 0xffffff)
-    static let selection = NSColor(srgbHex: 0x3e4451)
+    /// 모드(어두운지)에 맞는 터미널 색 한 벌
+    static func theme(dark: Bool) -> TerminalTheme { TerminalTheme.theme(dark: dark) }
 
-    /// Ghostty 기본 palette 0~15
-    static let palette: [UInt32] = [
-        0x1d1f21, 0xcc6666, 0xb5bd68, 0xf0c674, 0x81a2be, 0xb294bb, 0x8abeb7, 0xc5c8c6,
-        0x666666, 0xd54e53, 0xb9ca4a, 0xe7c547, 0x7aa6da, 0xc397d8, 0x70c0b1, 0xeaeaea,
-    ]
+    /// 지금 앱 모양(NSApp.effectiveAppearance)의 터미널 색 — 뷰가 아직 창에 없을 때
+    static var currentTheme: TerminalTheme { theme(dark: NSApp?.effectiveAppearance.isDark ?? true) }
+
+    static let background = NSColor.palette(.background)
+    static let selection = NSColor.palette(.selection)
 
     /// 앱에 넣은 글꼴(Resources/Fonts — JetBrains Mono, Nerd Font 아이콘, D2Coding)을 이 프로세스에만 등록한다(사용자 글꼴 폴더는 건드리지 않음).
     static func registerBundledFonts() {
@@ -101,30 +103,30 @@ enum TermAppearance {
 
     // MARK: - 앱 테두리(사이드바·탭 줄·분할 테두리). herdr 처럼 어둡고 차분하게, 상태·포커스만 색으로 드러낸다.
 
-    /// 사이드바·탭 줄 바탕(터미널보다 한 단계 어둡게)
-    static let chrome = NSColor(srgbHex: 0x21252b)
+    /// 사이드바·탭 줄 바탕(터미널보다 한 단계 어둡게 — 라이트는 한 단계 진하게)
+    static let chrome = NSColor.palette(.chrome)
     /// 고른 줄 바탕
-    static let chromeRaised = NSColor(srgbHex: 0x2c313a)
-    static let textPrimary = NSColor(srgbHex: 0xdcdfe4)
-    static let textDim = NSColor(srgbHex: 0x7f848e)
+    static let chromeRaised = NSColor.palette(.chromeRaised)
+    static let textPrimary = NSColor.palette(.textPrimary)
+    static let textDim = NSColor.palette(.textDim)
     /// 포커스·지금 탭
-    static let accent = NSColor(srgbHex: 0xc099ff)
+    static let accent = NSColor.palette(.accent)
     /// 포커스 없는 화면 테두리
-    static let border = NSColor(srgbHex: 0x3e4451)
-    static let codexColor = NSColor(srgbHex: 0x56b6c2)
-    static let claudeColor = NSColor(srgbHex: 0xd7875f)
-    static let green = NSColor(srgbHex: 0x98c379)
-    static let yellow = NSColor(srgbHex: 0xe5c07b)
-    static let red = NSColor(srgbHex: 0xe06c75)
-    static let cyan = NSColor(srgbHex: 0x56b6c2)
+    static let border = NSColor.palette(.border)
+    static let codexColor = NSColor.palette(.codex)
+    static let claudeColor = NSColor.palette(.claude)
+    static let green = NSColor.palette(.green)
+    static let yellow = NSColor.palette(.yellow)
+    static let red = NSColor.palette(.red)
+    static let cyan = NSColor.palette(.cyan)
     /// 오케스트레이션 중(포커스 테두리 강조색보다 붉은 보라 — 둘이 섞여 보이지 않게)
-    static let purple = NSColor(srgbHex: 0xc678dd)
-    /// AI 표시(브라우저 탭 칩의 ●, AI 커서 이름표) — 어두운 바탕에서 또렷한 초록
+    static let purple = NSColor.palette(.purple)
+    /// AI 표시(브라우저 탭 칩의 ●, AI 커서 이름표) — 바탕에서 또렷한 초록
     static let agentColor = green
     /// 사람이 조작 중(브라우저 "내가 조작 중")
-    static let userColor = NSColor(srgbHex: 0x61afef)
-    /// 보조 글자(브라우저 창): textDim(#7f848e, 바탕 대비 3.7:1)보다 밝게 — 바탕 대비 5.8:1
-    static let textSecondary = NSColor(srgbHex: 0xa0a7b3)
+    static let userColor = NSColor.palette(.user)
+    /// 보조 글자(브라우저 창): textDim(다크 #7f848e, 바탕 대비 3.7:1)보다 진하게 — 두 모드 모두 바탕 대비 5.8:1 이상
+    static let textSecondary = NSColor.palette(.textSecondary)
 
     /// 사이드바·탭 줄 글꼴(터미널과 같은 JetBrains Mono). 크기를 그대로 쓴다 — 글꼴 크기를 따라가려면 `scaledUIFont`.
     static func uiFont(_ size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {
@@ -146,21 +148,61 @@ enum TermAppearance {
         uiFont(uiScale(size), bold: bold, italic: italic)
     }
 
+    /// 터미널 뷰에 색을 넣는다. 모양은 뷰의 effectiveAppearance(창에 없으면 앱)를 따른다. 모양이 바뀔 때마다 다시 부른다.
     static func apply(to view: TerminalView) {
-        view.nativeBackgroundColor = background
-        view.nativeForegroundColor = foreground
-        view.selectedTextBackgroundColor = selection
-        view.caretColor = NSColor(srgbHex: 0xc5c8c6)
+        let dark = (view.window != nil ? view.effectiveAppearance : NSApp?.effectiveAppearance ?? view.effectiveAppearance).isDark
+        let theme = theme(dark: dark)
+        view.nativeBackgroundColor = NSColor(srgbHex: theme.background)
+        view.nativeForegroundColor = NSColor(srgbHex: theme.foreground)
+        view.selectedTextBackgroundColor = NSColor(srgbHex: theme.selection)
+        view.caretColor = NSColor(srgbHex: theme.caret)
+        // 256색·트루컬러는 어두운 바탕용으로 고른 색이 많아(claude 상태줄의 117 하늘, 221 노랑 …) 밝은 바탕에서 안 읽힌다.
+        // 라이트는 글자·바탕 대비가 이 값보다 낮으면 엔진이 색조를 두고 명도만 옮긴다. 다크는 1.0(끔) — 모양 그대로.
+        view.minimumContrast = theme.minimumContrast
         view.useBrightColors = false // Ghostty 기본(bold-is-bright = false)
         // 256색은 표준 xterm 값으로. 엔진 기본값은 테마 16색에서 다시 만들어(base16Lab) claude 상태줄의
         // 256색(초록 114, 노랑 221, 하늘 117 …)이 Ghostty 와 다른 색으로 보인다.
         view.getTerminal().ansi256PaletteStrategy = .xterm
-        view.installColors(palette.map { rgb in
+        view.installColors(theme.palette.map { rgb in
             SwiftTerm.Color(red8: UInt16(rgb >> 16 & 0xff), green8: UInt16(rgb >> 8 & 0xff), blue8: UInt16(rgb & 0xff))
         })
-        // 어두운 배경에 맞는 스크롤 막대, 늘 보이게(겹쳐 보이는 기본 막대는 위치가 안 보인다)
-        view.appearance = NSAppearance(named: .darkAqua)
+        // 스크롤 막대는 늘 보이게(겹쳐 보이는 기본 막대는 위치가 안 보인다). 막대 모양(밝음·어두움)은 뷰의 모양을 따라간다.
         view.scrollerStyle = .legacy
+        view.needsDisplay = true
+    }
+}
+
+/// 모양(라이트·다크)이 바뀌면 스스로 색을 다시 넣는 터미널 뷰 — 세션 화면·작은 터미널 모두 이것을 쓴다.
+final class ThemedTerminalView: TerminalView {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        TermAppearance.apply(to: self)
+    }
+}
+
+extension NSAppearance {
+    /// 어두운 모양인가(다크 계열 모두)
+    var isDark: Bool { bestMatch(from: [.darkAqua, .aqua]) == .darkAqua }
+}
+
+extension NSColor {
+    /// 앱 색 이름표(PaletteColor) → 모양에 따라 바뀌는 색. 그릴 때·`cg(in:)` 로 풀 때 그 뷰의 모양으로 정해진다.
+    static func palette(_ color: PaletteColor) -> NSColor {
+        NSColor(name: nil) { appearance in NSColor(srgbHex: color.hex(dark: appearance.isDark)) }
+    }
+
+    /// 이 뷰의 모양으로 푼 CGColor. 레이어 색(layer.backgroundColor 등)은 값으로 굳으므로 모양이 바뀔 때마다 다시 받는다.
+    func cg(in view: NSView) -> CGColor {
+        var result = cgColor
+        view.effectiveAppearance.performAsCurrentDrawingAppearance { result = self.cgColor }
+        return result
+    }
+
+    /// 지정한 모양으로 푼 sRGB 색(웹 CSS 같은 곳에 값으로 적을 때)
+    func resolved(_ appearance: NSAppearance) -> NSColor {
+        var result = self
+        appearance.performAsCurrentDrawingAppearance { result = self.usingColorSpace(.sRGB) ?? self }
+        return result
     }
 }
 

@@ -1044,6 +1044,22 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
         }
     }
 
+    /// AgentDeck patch: minimum WCAG contrast ratio between a cell's foreground and background (like Ghostty's
+    /// `minimum-contrast` / iTerm's "Minimum contrast"). 1.0 = off (default). Foregrounds below it have their
+    /// lightness moved (hue kept) until they reach it; see MinimumContrast.swift. Applies to every color source
+    /// (16 ANSI, 256 palette, truecolor, default), after inverse video and dim. Selection colors are not touched.
+    public var minimumContrast: Double = 1.0 {
+        didSet {
+            guard minimumContrast != oldValue else { return }
+            minimumContrastCache.removeAll()
+            resetCaches()
+            terminal.updateFullScreen()
+            queuePendingDisplay()
+        }
+    }
+
+    let minimumContrastCache = MinimumContrastCache()
+
     /// Controls whether this view applies the terminal's BiDi presentation state.
     public var bidiHostPolicy: BidiHostPolicy = .respectTerminal {
         didSet {

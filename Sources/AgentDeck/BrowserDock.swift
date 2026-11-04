@@ -71,10 +71,13 @@ final class BrowserDockController: NSViewController, ToolContent {
     func follow(_ owner: String?, force: Bool) {
         guard force || owner != self.owner else { return }
         self.owner = owner
+        onOwnerWillRefresh?(owner) // 새 세션의 작은 창 열림 여부를 먼저 맞춘다(안 보일 칸을 잠깐 붙이지 않게)
         refresh()
         onOwnerChange?()
     }
 
+    /// 따라가는 세션이 정해진 직후, 칸을 달기 전
+    var onOwnerWillRefresh: ((String?) -> Void)?
     /// 따라가는 세션이 바뀜(어느 길로든 — 세션 고르기·알림·목록 아이콘): 🌐 버튼·작은 창 제목을 고친다
     var onOwnerChange: (() -> Void)?
 

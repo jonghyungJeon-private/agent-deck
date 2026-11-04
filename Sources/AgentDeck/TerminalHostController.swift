@@ -20,6 +20,12 @@ final class TerminalHostController: NSViewController {
     /// 탭·화면을 끄는 동안 놓일 곳을 보이는 덮개
     private let dropOverlay = DropOverlayView()
     private var tabBarHeight: NSLayoutConstraint!
+    /// 탭 줄 아래(탭 줄이 없으면 맨 위) — 떠 있는 버튼을 이 아래에 붙인다
+    var belowTabBarAnchor: NSLayoutYAxisAnchor { tabBar.bottomAnchor }
+    /// 탭 줄 높이(없으면 0)
+    var tabBarInset: CGFloat { tabBarHeight?.constant ?? 0 }
+    /// 탭 줄 높이가 바뀜(작은 창 자리를 다시 맞춘다)
+    var onTabBarHeightChanged: (() -> Void)?
     private var monitors: [Any] = []
     /// 편집기 이동(⌘B·⌥F7·⌘O·뒤로·앞으로)
     private(set) lazy var navigator = CodeNavigator(host: self)
@@ -34,8 +40,10 @@ final class TerminalHostController: NSViewController {
         // Shift+Enter = 줄바꿈. claude 는 이 터미널에서 확장 키 입력(kitty)을 켜지 않으므로
         // ⌥+Enter 와 같은 ESC CR 을 보낸다(claude 는 이를 줄바꿈으로 받는다).
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, let pane = self.focusedTerminal, event.window === pane.view.window,
-                  event.window?.firstResponder === pane.view,
+            // 세션 화면이든 작은 터미널 창이든 키보드를 받고 있는 터미널
+            guard let self, let pane = [self.focusedTerminal, self.model.scratch.current].lazy
+                    .compactMap({ $0 }).first(where: { $0.view.window?.firstResponder === $0.view }),
+                  event.window === pane.view.window,
                   event.keyCode == 36 || event.keyCode == 76,
                   event.modifierFlags.intersection([.shift, .command, .control, .option]) == .shift,
                   !pane.view.hasMarkedText(),
@@ -46,6 +54,14 @@ final class TerminalHostController: NSViewController {
         } as Any)
         // 화면을 누르면 그 화면으로 포커스(목록 선택·탭 제목도 따라온다)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            // 작은 터미널 창을 누르면 그 터미널로 키보드(세션 화면의 포커스는 그대로)
+            if let scratch = self?.model.scratch.current, event.window === scratch.view.window,
+               let content = event.window?.contentView,
+               let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
+               hit === scratch.view || hit.isDescendant(of: scratch.view) {
+                event.window?.makeFirstResponder(scratch.view)
+                return event
+            }
             // 화면 위에 떠 있는 것(작은 브라우저 창·🌐 버튼)을 누른 것은 아래 화면으로 포커스를 옮기지 않는다
             // (옮기면 브라우저가 그 화면의 세션으로 바뀐다)
             guard let self, event.window === self.view.window, let content = event.window?.contentView,
@@ -92,7 +108,7 @@ final class TerminalHostController: NSViewController {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
-        placeholder.textColor = NSColor(white: 0.7, alpha: 1)
+        placeholder.textColor = TermAppearance.textSecondary
         placeholder.alignment = .center
         tabBarHeight = tabBar.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -177,6 +193,7 @@ final class TerminalHostController: NSViewController {
         created.forEach { $0.attach() }
 
         tabBarHeight.constant = tab == nil ? 0 : Self.tabBarHeight
+        onTabBarHeightChanged?()
         updateTabBar()
         placeholder.isHidden = tab != nil
         placeholder.stringValue = model.connectionStatusText ?? "왼쪽 위 버튼이나 ⌘T 로 새 화면을 여세요"
@@ -221,6 +238,8 @@ final class TerminalHostController: NSViewController {
     private func focusTerminal() {
         // 이동 목록 창이 키보드를 쥐고 있으면 그대로
         if navigator.popupHasFocus || sessionSwitcher.popup != nil { return }
+        // 작은 터미널 창에 키보드가 있으면 그대로(세션을 바꿔도 거기 남는다)
+        if model.scratch.hasFocus { return }
         if let editor = focusedEditor {
             // 편집기 안(찾기 막대 등)에 이미 포커스가 있으면 그대로
             if let responder = editor.window?.firstResponder as? NSView, responder.isDescendant(of: editor) { return }
@@ -260,7 +279,7 @@ final class TerminalHostController: NSViewController {
     @objc private func fontSizeChanged() {
         for terminal in terminals.values { terminal.applyFont() }
         guard isViewLoaded else { return }
-        if tabBarHeight.constant > 0 { tabBarHeight.constant = Self.tabBarHeight }
+        if tabBarHeight.constant > 0 { tabBarHeight.constant = Self.tabBarHeight; onTabBarHeightChanged?() }
         sessionSwitcher.scaleChanged()
         tabBar.scaleChanged()
         container.scaleChanged()
@@ -405,7 +424,7 @@ final class TerminalHostController: NSViewController {
                                     bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return }
         let rect = CGRect(x: 0, y: 0, width: content.width, height: content.height)
-        final.setFillColor(TermAppearance.background.cgColor)
+        final.setFillColor(TermAppearance.background.cg(in: view))
         final.fill(rect)
         final.draw(content, in: rect)
         guard let image = final.makeImage() else { return }
@@ -420,7 +439,7 @@ final class TerminalHostController: NSViewController {
             guard let context = CGContext(data: nil, width: Int(size.width * 2), height: Int(size.height * 2),
                                           bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                           bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { continue }
-            context.setFillColor(TermAppearance.background.cgColor)
+            context.setFillColor(TermAppearance.background.cg(in: terminal.view))
             context.fill(CGRect(x: 0, y: 0, width: size.width * 2, height: size.height * 2))
             context.scaleBy(x: 2, y: 2)
             layer.render(in: context)
@@ -438,7 +457,8 @@ final class TerminalHostController: NSViewController {
     }
 
     func typeText(_ text: String) {
-        guard let id = focusedTerminal?.id else { return }
+        // 작은 터미널에 키보드가 있으면 거기로
+        guard let id = (model.scratch.hasFocus ? model.scratch.current : focusedTerminal)?.id else { return }
         model.client.input(id, Array(text.utf8))
     }
 }

@@ -97,3 +97,22 @@ caret clip·minimumDisplayInterval/비포커스 제한 변경은 효과가 작�
   시험 하위 클래스는 `setNeedsDisplay(_:)` 와 `needsDisplay = true` 를 모두 기록한다.
 
 추가 순서 시험: feed → offscreen draw → updateDisplay 에서 실제 창 무효화가 남는지, 옵션 변경 뒤 캡처가 먼저 일어나도 다시 그리는지 확인한다.
+
+## 최소 대비 (minimumContrast) — AgentDeck patch
+
+claude 상태줄처럼 프로그램이 직접 고르는 256색(117 하늘, 221 노랑, 228, 159 …)·트루컬러는 어두운 바탕용이라
+밝은 바탕(#fafafa)에서는 대비가 1.0~1.5 로 거의 안 보인다. 16색 테마만으로는 해결되지 않아 Ghostty `minimum-contrast`·
+iTerm "Minimum contrast" 와 같은 옵션을 넣었다.
+
+- `Mac/MacTerminalView.swift` `TerminalView.minimumContrast: Double`(공개, 기본 1.0 = 끔). 바꾸면 색 캐시·줄 캐시를 비우고 다시 그린다.
+- `Apple/AppleTerminalView.swift` `contrastAdjusted(_:against:)`, `getAttributes`: 반전(inverse) 교환과 dim 섞기가 끝난 뒤의
+  글자색을 그 칸의 실제 바탕색과 견줘 맞춘다(밑줄 색도). 16색·256색·트루컬러·기본 글자색 모두 같은 경로를 지난다.
+  바탕색, 선택 강조색(`selectedTextBackgroundColor`·`selectedTextForegroundColor`), 커서 색은 건드리지 않는다.
+  결과는 `attributes` 캐시에 함께 담기므로 글자·프레임마다 계산하지 않는다.
+- `MinimumContrast.swift`(새 파일, UI 의존 없음): WCAG 대비 비율을 구해 임계값 미만이면 OKLab 명도(L)만 옮긴다. 밝은 바탕은
+  어둡게, 어두운 바탕은 밝게, 원래 L 에서 임계값을 만족하는 가장 가까운 L 을 이분 탐색으로 찾는다(색조·채도 유지,
+  sRGB 범위를 벗어나면 채도만 줄인다). 그 방향으로 닿지 않으면 반대 방향, 둘 다 안 되면 검정·흰색.
+  `MinimumContrastCache` 는 (글자색, 바탕색, 임계값)별 결과를 4096개까지 담는 뷰별 캐시(넘치면 비움).
+- 1.0 이하이면 입력 그대로 돌려준다(원본 동작). 앱은 라이트에서 3.0, 다크에서 1.0 으로 둔다(`TerminalTheme.minimumContrast`).
+- 시험: `Tests/SwiftTermPatchTests/MinimumContrastTests.swift`(비율·임계값 충족·색조 유지·이미 읽히는 색 불변·1.0 끔·캐시 상한·
+  `getAttributes` 경로의 117/트루컬러/반전/dim/밑줄).

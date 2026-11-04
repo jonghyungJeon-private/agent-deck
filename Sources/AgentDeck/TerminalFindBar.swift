@@ -56,10 +56,8 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
     init(terminal: TerminalView) {
         self.terminal = terminal
         super.init(frame: .zero)
-        appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
-        layer?.backgroundColor = TermAppearance.chrome.cgColor
-        layer?.borderColor = TermAppearance.border.cgColor
+        refreshLayerColors()
         layer?.borderWidth = 1
         field.placeholderString = "터미널에서 찾기"
         field.delegate = self
@@ -87,6 +85,17 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
         controls.forEach { addSubview($0) }
     }
     required init?(coder: NSCoder) { fatalError() }
+
+
+    private func refreshLayerColors() {
+        layer?.backgroundColor = TermAppearance.chrome.cg(in: self)
+        layer?.borderColor = TermAppearance.border.cg(in: self)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshLayerColors()
+    }
     override var isFlipped: Bool { true }
 
     func show(query: String? = nil) {

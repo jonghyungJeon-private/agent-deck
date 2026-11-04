@@ -15,15 +15,37 @@ final class BrowserPaneView: NSView {
     private var headerAfterPill: NSLayoutConstraint!
     private var headerAtEdge: NSLayoutConstraint!
     private let controlButton = PillButton(title: "", target: nil, action: nil)
-    /// "표시 ▾": 어디서 볼지(별도 창·세션 창 안)와 창 높이(일반·AgentDeck 쓸 때만 위·항상 위) — 메뉴는 BrowserWindows 가 만든다
-    private let displayButton = NSButton(title: "표시 ▾", target: nil, action: nil)
+    /// 별도 창 머리 줄의 "⋯" 메뉴 버튼: 세션 창 안으로 보기와 창 높이(일반·AgentDeck 쓸 때만 위·항상 위) — 메뉴는 BrowserWindows 가 만든다.
+    /// 세션 창 안 작은 창에서는 같은 일을 작은 창 제목 줄 버튼(별도 창으로 떼기·크게·✕)이 하므로 숨긴다.
+    private let displayButton = FloatIconButton(symbol: "ellipsis.circle", tip: "보기 설정 — 세션 창 안으로 보기, 창 높이")
     var displayMenu: (() -> NSMenu)? {
-        didSet { displayButton.isHidden = displayMenu == nil }
+        didSet { updateDisplayButton() }
     }
     /// 세션 창 안(도크)에 놓였는지 — "칸에 맞춤"이면 페이지를 고정 크기로(도크 폭이 바뀔 때마다 페이지가 흔들리지 않게)
     var docked = false {
-        didSet { if docked != oldValue { feed?.setDocked(docked) } }
+        didSet {
+            guard docked != oldValue else { return }
+            feed?.setDocked(docked)
+            updateDisplayButton()
+        }
     }
+
+    /// 글꼴 크기 배율이 바뀜: "⋯" 버튼 크기·그림
+    func scaleChanged() { displayButton.scaleChanged() }
+
+    /// 사람이 이 칸 안을 눌렀거나 제어를 가져왔다(작은 창 자동 닫기를 막는다 — 보기만 한 것은 아님)
+    var onUserInteraction: (() -> Void)?
+
+    /// 탭 하나를 보인다(탭 칩을 누른 것과 같은 길 — 그 탭을 계속 보여 준다). 스트림이 아직 없으면 시작할 때.
+    func showTab(_ targetId: String) {
+        guard let feed else { pendingTab = targetId; return }
+        pendingTab = nil
+        screen.hideCursor()
+        feed.watch(targetId)
+    }
+    private var pendingTab: String?
+
+    private func updateDisplayButton() { displayButton.isHidden = displayMenu == nil || docked }
     private let screen = BrowserScreenView()
     /// 탭 칩 줄: 브라우저의 탭들(AI 작업 공간마다 묶음, 사람 탭은 뒤). 누르면 그 탭을 계속 보여 준다.
     private let tabBar = NSStackView()
@@ -64,12 +86,11 @@ final class BrowserPaneView: NSView {
         self.owner = owner
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = TermAppearance.background.cgColor
+        refreshLayerColors()
 
         header.font = .systemFont(ofSize: TermAppearance.scaled(12))
         header.textColor = TermAppearance.textPrimary
         statusBar.wantsLayer = true
-        statusBar.layer?.backgroundColor = TermAppearance.chrome.cgColor
         statusLine.font = .systemFont(ofSize: TermAppearance.scaled(12), weight: .medium)
         statusLine.lineBreakMode = .byTruncatingTail
         statusLine.textColor = TermAppearance.textSecondary
@@ -84,13 +105,9 @@ final class BrowserPaneView: NSView {
         controlButton.target = self
         controlButton.action = #selector(toggleControl)
         controlButton.isHidden = true
-        displayButton.bezelStyle = .inline
-        displayButton.controlSize = .small
-        displayButton.font = .systemFont(ofSize: TermAppearance.scaled(11))
         displayButton.target = self
         displayButton.action = #selector(showDisplayMenu)
         displayButton.isHidden = true
-        displayButton.toolTip = "어디서 볼지(별도 창·세션 창 안)와 창을 다른 창 위에 둘지"
         screen.pane = self
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textSecondary
@@ -124,7 +141,7 @@ final class BrowserPaneView: NSView {
             headerAtEdge,
             header.trailingAnchor.constraint(lessThanOrEqualTo: displayButton.leadingAnchor, constant: -8),
             displayButton.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
-            displayButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -6),
+            displayButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -4),
             controlButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
             controlButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             tabScroll.topAnchor.constraint(equalTo: controlButton.bottomAnchor, constant: 3),
@@ -155,6 +172,17 @@ final class BrowserPaneView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 레이어 색은 값으로 굳으므로 모양(라이트·다크)이 바뀔 때마다 다시 받는다(칸 바탕·상태 줄)
+    private func refreshLayerColors() {
+        layer?.backgroundColor = TermAppearance.background.cg(in: self)
+        statusBar.layer?.backgroundColor = TermAppearance.chrome.cg(in: self)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshLayerColors()
+    }
 
     /// 키보드를 받을 뷰(TerminalHostController 가 포커스를 줄 곳)
     var focusTarget: NSView { screen }
@@ -255,6 +283,7 @@ final class BrowserPaneView: NSView {
         feed.setDocked(docked)
         feed.start()
         feed.fit(to: screen.bounds.size)
+        if let tab = pendingTab { pendingTab = nil; feed.watch(tab) }
     }
 
     /// 브라우저 크기를 칸에 맞춘다(크기가 바뀌면 0.3초 모았다가 한 번).
@@ -582,6 +611,7 @@ final class BrowserPaneView: NSView {
     }
 
     @objc private func chipClicked(_ sender: NSButton) {
+        onUserInteraction?()
         guard chips.indices.contains(sender.tag) else { return }
         screen.hideCursor() // 다른 탭으로 가면 그 커서는 이제 보이지 않는 탭의 것
         feed?.watch(chips[sender.tag].targetId)
@@ -623,6 +653,7 @@ final class BrowserPaneView: NSView {
 
     @objc private func toggleControl() {
         guard let feed, !requesting else { return }
+        if control != .user { onUserInteraction?() } // 제어를 가져온다
         requesting = true
         givingBack = control == .user
         setControl(control)
@@ -681,6 +712,15 @@ final class BrowserPaneView: NSView {
     /// 정리용 입력(누르던 버튼 떼기·조합 취소): 제어가 막 넘어간 뒤에도 보낸다 — 남겨 두면 다음 조작에 섞인다
     func sendCleanup(_ method: String, _ params: [String: Any]) {
         feed?.cleanup(method, params)
+    }
+
+    /// 마우스 밑 요소가 정한 커서를 페이지에 묻는다(입력이 아니라 읽기라 제어와 상관없이 — 스트림이 없으면 nil)
+    func pageCursor(at css: CGPoint, completion: @escaping (PageCursor?) -> Void) {
+        guard let feed else { completion(nil); return }
+        feed.evaluate(PageCursor.queryScript(x: Double(css.x), y: Double(css.y))) { [weak self] value in
+            guard let self, self.feed === feed else { return }
+            completion(PageCursor.parse(value as? String))
+        }
     }
 
     /// 화면 뷰의 점(위가 0) → 페이지 CSS 좌표
@@ -762,7 +802,7 @@ final class PillButton: NSButton {
         pill.fill()
         // 흐린 바탕(기다리는 중) 위에서는 흰 글자가 더 잘 보인다
         let attributes: [NSAttributedString.Key: Any] = [.font: font ?? .systemFont(ofSize: 11),
-                                                         .foregroundColor: isEnabled ? TermAppearance.chrome : NSColor.white]
+                                                         .foregroundColor: isEnabled ? TermAppearance.chrome : TermAppearance.textPrimary]
         let size = (title as NSString).size(withAttributes: attributes)
         (title as NSString).draw(at: NSPoint(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2), withAttributes: attributes)
     }
@@ -825,17 +865,13 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             self?.refreshBreathing()
         }
-        agentFrame.borderColor = TermAppearance.agentColor.cgColor
         agentFrame.borderWidth = 3
         agentFrame.zPosition = 5
         agentFrame.isHidden = true
-        agentOutline.borderColor = TermAppearance.chrome.cgColor
         agentOutline.borderWidth = 1
         agentOutline.zPosition = 5
         agentOutline.isHidden = true
-        let green = TermAppearance.agentColor
         for edge in glowEdges {
-            edge.colors = [green.withAlphaComponent(0.8).cgColor, green.withAlphaComponent(0.3).cgColor, green.withAlphaComponent(0).cgColor]
             edge.locations = [0, 0.3, 1]
             agentGlow.addSublayer(edge)
         }
@@ -846,7 +882,6 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         glowEdges[3].startPoint = CGPoint(x: 1, y: 0.5); glowEdges[3].endPoint = CGPoint(x: 0, y: 0.5)
         agentGlow.zPosition = 4
         agentGlow.isHidden = true
-        agentPill.backgroundColor = green.cgColor
         agentPill.shadowColor = NSColor.black.cgColor
         agentPill.shadowOpacity = 0.35
         agentPill.shadowRadius = 6
@@ -859,6 +894,35 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         layer?.addSublayer(agentOutline)
         layer?.addSublayer(agentFrame)
         layer?.addSublayer(agentPill)
+        refreshAgentColors()
+    }
+
+    /// AI 표시(테두리·빛·알약·커서 이름표)의 색: 레이어 색은 값으로 굳으므로 모양(라이트·다크)이 바뀔 때마다 다시 받는다
+    private func refreshAgentColors() {
+        let green = TermAppearance.agentColor
+        agentFrame.borderColor = green.cg(in: self)
+        agentOutline.borderColor = TermAppearance.chrome.cg(in: self)
+        let solid = green.cg(in: self)
+        let clear = green.withAlphaComponent(0).cg(in: self)
+        for edge in glowEdges {
+            edge.colors = [green.withAlphaComponent(0.8).cg(in: self), green.withAlphaComponent(0.3).cg(in: self), clear]
+        }
+        agentPill.backgroundColor = solid
+        labelBack.backgroundColor = solid
+        labelText.foregroundColor = TermAppearance.chrome.cg(in: self)
+        // 글자 레이어의 색은 문자열 속성에 값으로 들어 있다 — 새 모양의 색으로 다시 칠한다
+        let text = TermAppearance.chrome.resolved(effectiveAppearance)
+        for layer in [labelText, agentPillText] {
+            guard let current = layer.string as? NSAttributedString else { continue }
+            let recolored = NSMutableAttributedString(attributedString: current)
+            recolored.addAttribute(.foregroundColor, value: text, range: NSRange(location: 0, length: recolored.length))
+            layer.string = recolored
+        }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshAgentColors()
     }
 
     /// AI 가 쥐고 있는지(칸이 정한다 — setControl)
@@ -913,7 +977,7 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         let scale = window?.backingScaleFactor ?? 2
         let font = NSFont.systemFont(ofSize: TermAppearance.scaled(13.5), weight: .bold)
         let text = NSAttributedString(string: "●  AI 가 조작 중 · 보기만 돼요",
-                                      attributes: [.font: font, .foregroundColor: TermAppearance.chrome])
+                                      attributes: [.font: font, .foregroundColor: TermAppearance.chrome.resolved(effectiveAppearance)])
         let size = text.size()
         let pillHeight = ceil(size.height) + TermAppearance.scaled(14)
         let pillWidth = min(ceil(size.width) + TermAppearance.scaled(36), w - 16)
@@ -947,11 +1011,9 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         arrowLayer.shadowOpacity = 0.35
         arrowLayer.shadowRadius = 2
         arrowLayer.shadowOffset = CGSize(width: 0, height: -1)
-        labelBack.backgroundColor = TermAppearance.agentColor.cgColor
         labelBack.cornerRadius = 5
         labelBack.shadowOpacity = 0.3
         labelBack.shadowRadius = 2
-        labelText.foregroundColor = TermAppearance.chrome.cgColor
         labelText.alignmentMode = .left
         labelText.truncationMode = .end
         labelBack.addSublayer(labelText)
@@ -980,7 +1042,8 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         let labelY: CGFloat = point.y + 22 + labelHeight + 8 > bounds.maxY ? -labelHeight - 6 : 22
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        labelText.string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: TermAppearance.chrome])
+        labelText.string = NSAttributedString(string: text, attributes: [.font: font,
+                                                                         .foregroundColor: TermAppearance.chrome.resolved(effectiveAppearance)])
         labelText.contentsScale = scale
         labelText.frame = CGRect(x: 8, y: 4, width: ceil(size.width), height: ceil(size.height))
         labelBack.frame = CGRect(x: labelX, y: labelY, width: labelWidth, height: labelHeight)
@@ -1005,8 +1068,8 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     private func pulse(after delay: CFTimeInterval) {
         let ring = CAShapeLayer()
         ring.path = CGPath(ellipseIn: CGRect(x: -14, y: -14, width: 28, height: 28), transform: nil)
-        ring.fillColor = TermAppearance.agentColor.withAlphaComponent(0.25).cgColor
-        ring.strokeColor = TermAppearance.agentColor.cgColor
+        ring.fillColor = TermAppearance.agentColor.withAlphaComponent(0.25).cg(in: self)
+        ring.strokeColor = TermAppearance.agentColor.cg(in: self)
         ring.lineWidth = 2
         ring.opacity = 0
         cursorLayer.insertSublayer(ring, below: arrowLayer)
@@ -1091,10 +1154,55 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let tracking { removeTrackingArea(tracking) }
-        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self)
+        let area = NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self)
         addTrackingArea(area)
         tracking = area
     }
+
+    // MARK: 커서 — 화면은 그림이라 페이지가 정한 커서(손가락·I빔…)가 안 보인다. 마우스 밑 요소를 페이지에 물어 맥 커서로 보인다.
+
+    private var pageCursor: PageCursor = .arrow
+    private var cursorQueryAt = Date.distantPast
+    private var cursorQuerying = false
+
+    private func macCursor(_ cursor: PageCursor) -> NSCursor {
+        switch cursor {
+        case .arrow: return .arrow
+        case .pointer: return .pointingHand
+        case .text: return .iBeam
+        case .notAllowed: return .operationNotAllowed
+        case .openHand: return .openHand
+        case .closedHand: return .closedHand
+        case .crosshair: return .crosshair
+        case .resizeHorizontal: return .resizeLeftRight
+        case .resizeVertical: return .resizeUpDown
+        }
+    }
+
+    private func setPageCursor(_ cursor: PageCursor) {
+        guard cursor != pageCursor else { return }
+        pageCursor = cursor
+        window?.invalidateCursorRects(for: self)
+        // 답이 늦게 와 마우스가 이미 나갔으면 지금 커서를 건드리지 않는다
+        if let window, bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) { macCursor(cursor).set() }
+    }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: macCursor(pageCursor)) }
+
+    /// 마우스를 올려 둔 동안 80ms 에 한 번(앞선 물음이 끝나기 전에는 묻지 않는다 — 입력을 막지 않는다). 못 읽으면 화살표.
+    private func queryPageCursor(_ event: NSEvent) {
+        guard let pane, let css = pane.cssPoint(convert(event.locationInWindow, from: nil)) else { setPageCursor(.arrow); return }
+        let now = Date()
+        guard now.timeIntervalSince(cursorQueryAt) > 0.08, !cursorQuerying || now.timeIntervalSince(cursorQueryAt) > 1 else { return }
+        cursorQueryAt = now
+        cursorQuerying = true
+        pane.pageCursor(at: css) { [weak self] cursor in
+            self?.cursorQuerying = false
+            self?.setPageCursor(cursor ?? .arrow)
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) { setPageCursor(.arrow) }
 
     /// 누르던 버튼을 떼고 조합 중 글자를 지운다(제어를 돌려줄 때·스트림을 멈출 때). 제어 확인 없이 보낸다.
     func releaseInput() {
@@ -1135,6 +1243,7 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     }
 
     override func mouseDown(with event: NSEvent) {
+        pane?.onUserInteraction?()
         window?.makeFirstResponder(self)
         lastClick = convert(event.locationInWindow, from: nil)
         pressedButton = .left
@@ -1142,13 +1251,14 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     }
     override func mouseUp(with event: NSEvent) { mouse(event, .released, .left); pressedButton = .none }
     override func mouseDragged(with event: NSEvent) { mouse(event, .moved, .left) }
-    override func rightMouseDown(with event: NSEvent) { pressedButton = .right; mouse(event, .pressed, .right) }
+    override func rightMouseDown(with event: NSEvent) { pane?.onUserInteraction?(); pressedButton = .right; mouse(event, .pressed, .right) }
     override func rightMouseUp(with event: NSEvent) { mouse(event, .released, .right); pressedButton = .none }
     override func rightMouseDragged(with event: NSEvent) { mouse(event, .moved, .right) }
-    override func otherMouseDown(with event: NSEvent) { pressedButton = .middle; mouse(event, .pressed, .middle) }
+    override func otherMouseDown(with event: NSEvent) { pane?.onUserInteraction?(); pressedButton = .middle; mouse(event, .pressed, .middle) }
     override func otherMouseUp(with event: NSEvent) { mouse(event, .released, .middle); pressedButton = .none }
 
     override func mouseMoved(with event: NSEvent) {
+        queryPageCursor(event)
         // 마우스를 올리기만 한 움직임(hover)은 초당 30번까지
         guard Date().timeIntervalSince(lastMove) > 1.0 / 30 else { return }
         lastMove = Date()

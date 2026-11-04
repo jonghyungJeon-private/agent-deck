@@ -71,7 +71,6 @@ struct SidebarView: View {
         }
         .frame(minWidth: 220, maxHeight: .infinity)
         .background(Color(TermAppearance.chrome))
-        .environment(\.colorScheme, .dark)
         .environment(\.uiScale, ui)
     }
 
@@ -1006,7 +1005,6 @@ struct StatusFooterView: View {
         .padding(.vertical, ui(10))
         .background(Color(TermAppearance.chrome))
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
-        .environment(\.colorScheme, .dark)
         .environment(\.uiScale, ui)
     }
 

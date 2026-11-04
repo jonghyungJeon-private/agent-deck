@@ -370,7 +370,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             tabLayer.contents = images[i]
             if i == index {
                 tabLayer.zPosition = 1
-                tabLayer.borderColor = TermAppearance.accent.cgColor
+                tabLayer.borderColor = TermAppearance.accent.cg(in: self)
                 tabLayer.borderWidth = 1
                 tabLayer.shadowOpacity = 0.5
                 tabLayer.shadowRadius = 6

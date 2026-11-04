@@ -38,7 +38,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         self.document = document
         super.init(frame: frame)
         wantsLayer = true
-        layer?.backgroundColor = EditorStyle.background.cgColor
+        refreshLayerColors()
 
         status.font = TermAppearance.scaledUIFont(10)
         status.textColor = TermAppearance.textDim
@@ -92,6 +92,16 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 레이어 색은 값으로 굳으므로 모양(라이트·다크)이 바뀔 때마다 다시 받는다
+    private func refreshLayerColors() {
+        layer?.backgroundColor = EditorStyle.background.cg(in: self)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshLayerColors()
+    }
 
     override var isFlipped: Bool { true }
 
@@ -162,7 +172,6 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         scroll.drawsBackground = true
         scroll.backgroundColor = EditorStyle.background
         scroll.scrollerStyle = .legacy
-        scroll.appearance = NSAppearance(named: .darkAqua)
 
         // 줄바꿈 없이(가로로 길게) — 글 상자는 끝없이 넓게
         let size = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -542,7 +551,6 @@ final class EditorTextView: NSTextView {
         selectedTextAttributes = [.backgroundColor: EditorStyle.selection]
         defaultParagraphStyle = EditorStyle.paragraph
         typingAttributes = EditorStyle.textAttributes
-        appearance = NSAppearance(named: .darkAqua)
     }
 
     /// 지금 줄(커서가 있는 줄) 사각형(글 뷰 좌표, 폭 전체)
@@ -727,10 +735,9 @@ final class EditorHintView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = TermAppearance.chromeRaised.cgColor
+        refreshLayerColors()
         layer?.cornerRadius = 6
         layer?.borderWidth = 1
-        layer?.borderColor = TermAppearance.border.cgColor
         label.font = TermAppearance.scaledUIFont(12)
         label.textColor = TermAppearance.textPrimary
         label.lineBreakMode = .byTruncatingTail
@@ -745,6 +752,16 @@ final class EditorHintView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    private func refreshLayerColors() {
+        layer?.backgroundColor = TermAppearance.chromeRaised.cg(in: self)
+        layer?.borderColor = TermAppearance.border.cg(in: self)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshLayerColors()
+    }
 
     /// 글꼴 크기 배율이 바뀜
     func refreshScale() { label.font = TermAppearance.scaledUIFont(12) }
@@ -1088,17 +1105,16 @@ final class EditorBannerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = NSColor(srgbHex: 0x4a3f24).cgColor
+        refreshLayerColors()
         clipsToBounds = true
         label.font = TermAppearance.scaledUIFont(11, bold: true)
-        label.textColor = NSColor(srgbHex: 0xf0d58a)
+        label.textColor = NSColor.palette(.editorBannerText)
         label.lineBreakMode = .byTruncatingTail
         for button in [reload, overwrite] {
             button.bezelStyle = .recessed
             button.controlSize = .small
             button.font = TermAppearance.scaledUIFont(11)
             button.target = self
-            button.appearance = NSAppearance(named: .darkAqua)
         }
         reload.action = #selector(reloadPressed)
         overwrite.action = #selector(overwritePressed)
@@ -1119,6 +1135,15 @@ final class EditorBannerView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    private func refreshLayerColors() {
+        layer?.backgroundColor = NSColor.palette(.editorBannerBackground).cg(in: self)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        refreshLayerColors()
+    }
 
     func show(_ conflict: EditorDocument.DiskConflict?) {
         isHidden = conflict == nil
@@ -1178,7 +1203,6 @@ final class EditorNoticeView: NSView {
         detailLabel.alignment = .center
         let reveal = NSButton(title: "Finder 에서 보기", target: self, action: #selector(revealInFinder))
         reveal.bezelStyle = .rounded
-        reveal.appearance = NSAppearance(named: .darkAqua)
         let stack = NSStackView(views: [icon, titleLabel, detailLabel, reveal])
         stack.orientation = .vertical
         stack.spacing = 10

@@ -41,9 +41,52 @@ final class LaunchSettings: ObservableObject {
     }
 }
 
-/// 설정 창(앱 메뉴 "설정…" ⌘,). 한 번 만들어 두고 닫아도 다시 쓴다.
+/// 설정 창의 탭(위 도구 막대 아이콘). 이름은 시험 명령 `settings-tab <이름>` 에도 쓴다.
+enum SettingsTab: String, CaseIterable {
+    /// 연결: Claude Code·Codex hook
+    case connections
+    /// 브라우저: abx 스킬·전용 브라우저·화면 설정·Chrome 로그인
+    case browser
+    /// 새 세션: claude·codex 기본 옵션
+    case sessions
+    /// 화면: 작은 창(🌐·⌨) 버튼 위치
+    case screen
+
+    var title: String {
+        switch self {
+        case .connections: return "연결"
+        case .browser: return "브라우저"
+        case .sessions: return "새 세션"
+        case .screen: return "화면"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .connections: return "link"
+        case .browser: return "globe"
+        case .sessions: return "terminal"
+        case .screen: return "macwindow"
+        }
+    }
+
+    /// 영문 이름·한글 제목 모두 받는다
+    init?(name: String) {
+        guard let tab = Self.allCases.first(where: { $0.rawValue == name || $0.title == name }) else { return nil }
+        self = tab
+    }
+
+    static let savedKey = "AgentDeckSettingsTab"
+    static var saved: SettingsTab {
+        UserDefaults.standard.string(forKey: savedKey).flatMap(SettingsTab.init(name:)) ?? .connections
+    }
+}
+
+/// 설정 창(앱 메뉴 "설정…" ⌘,). 한 번 만들어 두고 닫아도 다시 쓴다. 위에 탭(도구 막대 아이콘)이 있고,
+/// 탭을 바꾸면 창 높이가 그 탭 내용에 맞게 바뀐다. 마지막으로 본 탭을 기억한다.
 final class SettingsWindowController {
     private var window: NSWindow?
+    private var tabs: SettingsTabViewController?
     private let settings: LaunchSettings
     private let model: TermModel
     private let chromeImport: ChromeImportWindowController
@@ -55,28 +98,46 @@ final class SettingsWindowController {
     }
 
     var windowNumber: Int? { window?.windowNumber }
+    var selectedTab: SettingsTab? { tabs?.selectedTab }
 
-    func show() {
+    /// tab 을 주면 그 탭을 고른다(없으면 마지막에 본 탭)
+    func show(tab: SettingsTab? = nil) {
         if window == nil {
             let chromeImport = self.chromeImport
-            let view = SettingsView(settings: settings, model: model, importer: chromeImport.model, openChromeImport: { chromeImport.show() })
-            let host = NSHostingController(rootView: view.environment(\.colorScheme, .dark))
-            host.view.appearance = NSAppearance(named: .darkAqua)
-            let window = NSWindow(contentViewController: host)
-            window.title = "설정"
+            let tabs = SettingsTabViewController()
+            let settings = self.settings, model = self.model, importer = chromeImport.model
+            for tab in SettingsTab.allCases {
+                tabs.addPage(tab) {
+                    switch tab {
+                    case .connections:
+                        return AnyView(ConnectionsSection(model: model, importer: importer, part: .agents, openChromeImport: { chromeImport.show() }))
+                    case .browser:
+                        return AnyView(ConnectionsSection(model: model, importer: importer, part: .browser, openChromeImport: { chromeImport.show() }))
+                    case .sessions:
+                        return AnyView(SessionOptionsSection(settings: settings))
+                    case .screen:
+                        return AnyView(ScreenSection())
+                    }
+                }
+            }
+            tabs.select(SettingsTab.saved)
+            let window = NSWindow(contentViewController: tabs)
             window.styleMask = [.titled, .closable, .resizable]
-            window.appearance = NSAppearance(named: .darkAqua)
+            window.toolbarStyle = .preference
             window.backgroundColor = TermAppearance.chrome
             window.isReleasedWhenClosed = false
-            window.setContentSize(NSSize(width: 600, height: 840))
-            window.contentMinSize = NSSize(width: 520, height: 420)
+            window.setContentSize(NSSize(width: SettingsTabViewController.width, height: 600))
+            window.contentMinSize = NSSize(width: 520, height: 200)
             window.center()
             window.setFrameAutosaveName("AgentDeckSettings")
             self.window = window
+            self.tabs = tabs
         }
+        if let tab { tabs?.select(tab) }
         // 열 때마다 연결 상태를 다시 본다(다른 곳에서 바꿨을 수 있다)
         model.checkHooks()
         model.checkBrowserSkill()
+        tabs?.fit(animated: false)
         if AgentDeckEnv.isOn("NO_ACTIVATE") {
             window?.orderFront(nil)
         } else {
@@ -92,62 +153,176 @@ final class SettingsWindowController {
     }
 }
 
+/// 도구 막대 아이콘 탭. 탭마다 내용(SwiftUI)을 스크롤 칸에 담고, 고르면 창 높이를 그 내용에 맞춘다(화면보다 길면 화면까지, 나머지는 스크롤).
+final class SettingsTabViewController: NSTabViewController {
+    static let width: CGFloat = 600
+    private var pages: [SettingsTab] = []
+    private var contents: [SettingsTab: () -> AnyView] = [:]
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        tabStyle = .toolbar
+    }
+
+    func addPage(_ tab: SettingsTab, content: @escaping () -> AnyView) {
+        let host = NSHostingController(rootView: SettingsPage(content: content()))
+        host.sizingOptions = [] // 창 높이는 아래 fit 이 정한다(내용 크기가 창을 잡지 않게)
+        let item = NSTabViewItem(viewController: host)
+        item.label = tab.title
+        item.image = NSImage(systemSymbolName: tab.symbol, accessibilityDescription: tab.title)
+        pages.append(tab)
+        contents[tab] = content
+        addTabViewItem(item)
+    }
+
+    var selectedTab: SettingsTab? { pages.indices.contains(selectedTabViewItemIndex) ? pages[selectedTabViewItemIndex] : nil }
+
+    func select(_ tab: SettingsTab) {
+        guard let index = pages.firstIndex(of: tab), index != selectedTabViewItemIndex else { return }
+        selectedTabViewItemIndex = index
+    }
+
+    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        if let tab = selectedTab { UserDefaults.standard.set(tab.rawValue, forKey: SettingsTab.savedKey) }
+        fit(animated: view.window?.isVisible == true)
+    }
+
+    /// 고른 탭의 내용 높이에 창을 맞춘다(위 모서리는 그대로)
+    func fit(animated: Bool) {
+        guard let window = view.window, let tab = selectedTab, let content = contents[tab] else { return }
+        let measure = NSHostingView(rootView: SettingsPage.framed(content()))
+        measure.frame = NSRect(x: 0, y: 0, width: Self.width, height: 10)
+        var height = ceil(measure.fittingSize.height)
+        let maxFrame = ((window.screen ?? NSScreen.main)?.visibleFrame.height ?? 900) - 40
+        var frame = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: window.contentRect(forFrameRect: window.frame).width, height: height))
+        if frame.height > maxFrame {
+            height -= frame.height - maxFrame
+            frame.size.height = maxFrame
+        }
+        var next = window.frame
+        guard abs(next.height - frame.height) > 0.5 else { return }
+        next.origin.y += next.height - frame.height
+        next.size.height = frame.height
+        window.setFrame(next, display: true, animate: animated)
+    }
+}
+
 // MARK: - 화면
 
-struct SettingsView: View {
-    @ObservedObject var settings: LaunchSettings
-    let model: TermModel
-    let importer: ChromeImportModel
-    let openChromeImport: () -> Void
+/// 탭 한 장: 내용을 스크롤 칸에(길면 스크롤)
+private struct SettingsPage: View {
+    let content: AnyView
+
+    /// 스크롤 없이 놓은 모양(높이를 재는 데에도 쓴다)
+    static func framed(_ content: AnyView) -> some View {
+        content
+            .padding(20)
+            .frame(width: SettingsTabViewController.width, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // 연결·브라우저는 따로 그린다(모델이 자주 바뀌어도 아래 옵션 칸은 다시 그리지 않게)
-                ConnectionsSection(model: model, importer: importer, openChromeImport: openChromeImport)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("새 세션 기본 옵션")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(Color(TermAppearance.textPrimary))
-                    Text("+ claude · + codex · 폴더 메뉴의 \"여기서 … 열기\"로 새로 시작하는 세션에 붙습니다.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Color(TermAppearance.textDim))
-                }
-                ClaudeCard(launch: $settings.options.claude)
-                CodexCard(launch: $settings.options.codex)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "info.circle")
-                    Text("이미 실행 중이거나 되살리는 세션은 처음 실행한 옵션을 그대로 씁니다.")
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .font(.system(size: 11.5))
-                .foregroundStyle(Color(TermAppearance.textDim))
-                .padding(.horizontal, 4)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            content
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color(TermAppearance.chrome))
         .tint(Color(TermAppearance.accent))
     }
 }
 
+/// 새 세션: claude·codex 기본 옵션
+private struct SessionOptionsSection: View {
+    @ObservedObject var settings: LaunchSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("새 세션 기본 옵션")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                Text("+ claude · + codex · 폴더 메뉴의 \"여기서 … 열기\"로 새로 시작하는 세션에 붙습니다.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(TermAppearance.textDim))
+            }
+            ClaudeCard(launch: $settings.options.claude)
+            CodexCard(launch: $settings.options.codex)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: "info.circle")
+                Text("이미 실행 중이거나 되살리는 세션은 처음 실행한 옵션을 그대로 씁니다.")
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(Color(TermAppearance.textDim))
+            .padding(.horizontal, 4)
+        }
+    }
+}
+
+/// 화면: 작은 창(🌐 브라우저·⌨ 터미널) 버튼과 작은 창의 구석
+private struct ScreenSection: View {
+    @ObservedObject var corner = FloatCornerSetting.shared
+    @ObservedObject var appearance = AppearanceSetting.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("화면")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                Text("화면 모드와 세션 창 안에 떠 있는 작은 브라우저·작은 터미널. 바꾸면 바로 적용되고, 두 작은 창은 새 구석의 처음 자리로 다시 열립니다.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color(TermAppearance.textDim))
+            }
+            SettingsCard(title: "모양", color: TermAppearance.accent) {
+                StatusRow(title: "화면 모드", detail: "자동은 macOS 의 라이트·다크를 따라갑니다. 터미널·편집기·도구 창·설정 창에 모두 바로 적용됩니다.") {
+                    Picker("", selection: $appearance.mode) {
+                        ForEach(AppearanceMode.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 200)
+                }
+            }
+            SettingsCard(title: "작은 창", color: TermAppearance.accent) {
+                StatusRow(title: "작은 창 버튼 위치", detail: "채팅 입력을 가리지 않게 브라우저·터미널 버튼과 작은 창을 둘 곳") {
+                    Picker("", selection: $corner.corner) {
+                        Text("오른쪽 위 (기본)").tag(FloatCorner.topRight)
+                        Text("오른쪽 아래").tag(FloatCorner.bottomRight)
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .frame(width: 200)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - 연결·브라우저
 
-/// 연결(Claude Code·Codex hook)과 브라우저(abx 스킬·전용 브라우저·Chrome 로그인) — 사이드바 안내와 같은 동작을 한 곳에서
+/// 연결(Claude Code·Codex hook)과 브라우저(abx 스킬·전용 브라우저·Chrome 로그인) — 사이드바 안내와 같은 동작을 한 곳에서.
+/// 두 탭(연결·브라우저)이 같은 도우미를 쓰므로 한 뷰에서 part 로 가른다.
 private struct ConnectionsSection: View {
+    enum Part { case agents, browser }
+
     @ObservedObject var model: TermModel
     @ObservedObject var importer: ChromeImportModel
     @ObservedObject var view = BrowserViewSettings.shared
+    @ObservedObject var autoOpen = BrowserAutoOpenSetting.shared
+    let part: Part
     let openChromeImport: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("연결")
+                Text(part == .agents ? "연결" : "브라우저")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Color(TermAppearance.textPrimary))
-                Text("Claude Code·Codex 와 브라우저를 이 앱에 잇습니다. 바꾼 것은 새로 시작하는 세션부터 적용됩니다.")
+                Text(part == .agents ? "Claude Code·Codex 를 이 앱에 잇습니다. 바꾼 것은 새로 시작하는 세션부터 적용됩니다."
+                     : "에이전트가 abx 로 쓰는 전용 브라우저입니다. 스킬·설치는 새로 시작하는 세션부터, 화면 설정은 열린 화면에도 바로 적용됩니다.")
                     .font(.system(size: 12))
                     .foregroundStyle(Color(TermAppearance.textDim))
             }
@@ -162,69 +337,80 @@ private struct ConnectionsSection: View {
                 .foregroundStyle(Color(TermAppearance.textDim))
                 .padding(.horizontal, 4)
             }
-            SettingsCard(title: "에이전트", color: TermAppearance.accent) {
-                hookRow(title: "Claude Code", detail: "세션 이름·되살리기·작업 상태·알림 (~/.claude/settings.json 의 hook)",
-                        state: model.hookState, connect: model.connectHooks, disconnect: model.disconnectHooks)
-                RowDivider()
-                hookRow(title: "Codex", detail: "권한 요청·완료 알림 (~/.codex/hooks.json — 연결 후 Codex /hooks 에서 신뢰)",
-                        state: model.codexHookState, connect: model.connectCodexHooks, disconnect: model.disconnectCodexHooks)
+            if part == .agents {
+                SettingsCard(title: "에이전트", color: TermAppearance.accent) {
+                    hookRow(title: "Claude Code", detail: "세션 이름·되살리기·작업 상태·알림 (~/.claude/settings.json 의 hook)",
+                            state: model.hookState, connect: model.connectHooks, disconnect: model.disconnectHooks)
+                    RowDivider()
+                    hookRow(title: "Codex", detail: "권한 요청·완료 알림 (~/.codex/hooks.json — 연결 후 Codex /hooks 에서 신뢰)",
+                            state: model.codexHookState, connect: model.connectCodexHooks, disconnect: model.disconnectCodexHooks)
+                }
             }
-            SettingsCard(title: "브라우저", color: TermAppearance.green) {
-                if !model.daemonHasBrowser {
-                    WarningLine(text: "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜세요.")
-                }
-                skillRow
-                RowDivider()
-                chromeRow
-                RowDivider()
-                StatusRow(title: "선명도", detail: "브라우저는 화면 배율(레티나 2배)로 그리고, 화면 칸에는 이 크기까지 받아 보입니다. 열린 화면에도 바로 적용됩니다") {
-                    Picker("", selection: $view.options.sharpness) {
-                        Text("표준 · 1440까지(가벼움)").tag(BrowserViewOptions.Sharpness.standard)
-                        Text("선명 · 2560까지").tag(BrowserViewOptions.Sharpness.sharp)
-                        Text("최고 · 3840까지(무거움)").tag(BrowserViewOptions.Sharpness.max)
+            if part == .browser {
+                SettingsCard(title: "브라우저", color: TermAppearance.green) {
+                    if !model.daemonHasBrowser {
+                        WarningLine(text: "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜세요.")
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
-                }
-                RowDivider()
-                StatusRow(title: "해상도", detail: "사이트가 보는 화면 크기. 칸에 맞춤은 브라우저 창 크기 그대로(같은 크기의 Chrome 창과 같음), 정하면 그 크기로 그리고 창에 맞게 줄여 보입니다") {
-                    Picker("", selection: $view.options.resolution) {
-                        Text("칸에 맞춤").tag(BrowserViewOptions.Resolution.fit)
-                        Text("1280 × 800").tag(BrowserViewOptions.Resolution.r1280x800)
-                        Text("1440 × 900").tag(BrowserViewOptions.Resolution.r1440x900)
-                        Text("1920 × 1080").tag(BrowserViewOptions.Resolution.r1920x1080)
+                    skillRow
+                    RowDivider()
+                    chromeRow
+                    RowDivider()
+                    StatusRow(title: "에이전트가 브라우저를 쓰면 작은 창 자동으로 열기",
+                              detail: "에이전트가 abx 를 쓰기 시작하면 그 세션의 작은 브라우저 창을 (키보드를 가져가지 않고) 열고, 결과를 남기지 않고 끝내면 닫습니다. 내가 열었거나 눌러 본 창은 닫지 않고, 작은 창으로 보는 세션에만 적용됩니다") {
+                        Toggle("", isOn: $autoOpen.enabled)
+                            .labelsHidden()
+                            .toggleStyle(TintedSwitch(onColor: TermAppearance.accent))
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
-                }
-                RowDivider()
-                StatusRow(title: "데스크톱 화면 유지", detail: "칸이 좁아도 폭 1024 이상의 데스크톱 화면으로 그리고 줄여 보입니다(끄면 좁은 칸에서 사이트가 모바일 화면으로 바뀔 수 있음)") {
-                    Toggle("", isOn: $view.options.keepDesktop)
+                    RowDivider()
+                    StatusRow(title: "선명도", detail: "브라우저는 화면 배율(레티나 2배)로 그리고, 화면 칸에는 이 크기까지 받아 보입니다. 열린 화면에도 바로 적용됩니다") {
+                        Picker("", selection: $view.options.sharpness) {
+                            Text("표준 · 1440까지(가벼움)").tag(BrowserViewOptions.Sharpness.standard)
+                            Text("선명 · 2560까지").tag(BrowserViewOptions.Sharpness.sharp)
+                            Text("최고 · 3840까지(무거움)").tag(BrowserViewOptions.Sharpness.max)
+                        }
                         .labelsHidden()
-                        .toggleStyle(TintedSwitch(onColor: TermAppearance.accent))
-                        .disabled(view.options.resolution != .fit)
-                        .opacity(view.options.resolution == .fit ? 1 : 0.4)
-                }
-                RowDivider()
-                StatusRow(title: "쓰지 않으면 쉬게 하기", detail: "AI 가 이만큼 abx 를 쓰지 않고 화면에도 보이지 않으면 브라우저를 꺼서 메모리를 돌려줍니다. 탭은 남겨 두었다가 AI 가 다시 쓰거나 \"다시 켜기\"를 누르면 그대로 열립니다(로그인 유지)") {
-                    Picker("", selection: $view.options.idleRest) {
-                        Text("15분").tag(BrowserViewOptions.IdleRest.m15)
-                        Text("30분").tag(BrowserViewOptions.IdleRest.m30)
-                        Text("1시간").tag(BrowserViewOptions.IdleRest.h1)
-                        Text("2시간").tag(BrowserViewOptions.IdleRest.h2)
-                        Text("끄지 않음").tag(BrowserViewOptions.IdleRest.never)
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
-                }
-                RowDivider()
-                StatusRow(title: "Chrome 로그인 가져오기",
-                          detail: "Chrome 에서 고른 사이트의 로그인(쿠키)을 에이전트 브라우저로 — 비밀번호는 가져오지 않습니다",
-                          status: templateStatus) {
-                    Button("가져오기…", action: openChromeImport)
+                    RowDivider()
+                    StatusRow(title: "해상도", detail: "사이트가 보는 화면 크기. 칸에 맞춤은 브라우저 창 크기 그대로(같은 크기의 Chrome 창과 같음), 정하면 그 크기로 그리고 창에 맞게 줄여 보입니다") {
+                        Picker("", selection: $view.options.resolution) {
+                            Text("칸에 맞춤").tag(BrowserViewOptions.Resolution.fit)
+                            Text("1280 × 800").tag(BrowserViewOptions.Resolution.r1280x800)
+                            Text("1440 × 900").tag(BrowserViewOptions.Resolution.r1440x900)
+                            Text("1920 × 1080").tag(BrowserViewOptions.Resolution.r1920x1080)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
+                    }
+                    RowDivider()
+                    StatusRow(title: "데스크톱 화면 유지", detail: "칸이 좁아도 폭 1024 이상의 데스크톱 화면으로 그리고 줄여 보입니다(끄면 좁은 칸에서 사이트가 모바일 화면으로 바뀔 수 있음)") {
+                        Toggle("", isOn: $view.options.keepDesktop)
+                            .labelsHidden()
+                            .toggleStyle(TintedSwitch(onColor: TermAppearance.accent))
+                            .disabled(view.options.resolution != .fit)
+                            .opacity(view.options.resolution == .fit ? 1 : 0.4)
+                    }
+                    RowDivider()
+                    StatusRow(title: "쓰지 않으면 쉬게 하기", detail: "AI 가 이만큼 abx 를 쓰지 않고 화면에도 보이지 않으면 브라우저를 꺼서 메모리를 돌려줍니다. 탭은 남겨 두었다가 AI 가 다시 쓰거나 \"다시 켜기\"를 누르면 그대로 열립니다(로그인 유지)") {
+                        Picker("", selection: $view.options.idleRest) {
+                            Text("15분").tag(BrowserViewOptions.IdleRest.m15)
+                            Text("30분").tag(BrowserViewOptions.IdleRest.m30)
+                            Text("1시간").tag(BrowserViewOptions.IdleRest.h1)
+                            Text("2시간").tag(BrowserViewOptions.IdleRest.h2)
+                            Text("끄지 않음").tag(BrowserViewOptions.IdleRest.never)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
+                    }
+                    RowDivider()
+                    StatusRow(title: "Chrome 로그인 가져오기",
+                              detail: "Chrome 에서 고른 사이트의 로그인(쿠키)을 에이전트 브라우저로 — 비밀번호는 가져오지 않습니다",
+                              status: templateStatus) {
+                        Button("가져오기…", action: openChromeImport)
+                    }
                 }
             }
         }
