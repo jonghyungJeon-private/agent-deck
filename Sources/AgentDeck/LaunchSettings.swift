@@ -167,6 +167,7 @@ final class SettingsTabViewController: NSTabViewController {
     func addPage(_ tab: SettingsTab, content: @escaping () -> AnyView) {
         let host = NSHostingController(rootView: SettingsPage(content: content()))
         host.sizingOptions = [] // 창 높이는 아래 fit 이 정한다(내용 크기가 창을 잡지 않게)
+        host.title = tab.title // 창 제목 = 고른 탭 이름(없으면 "무제")
         let item = NSTabViewItem(viewController: host)
         item.label = tab.title
         item.image = NSImage(systemSymbolName: tab.symbol, accessibilityDescription: tab.title)
@@ -213,6 +214,9 @@ final class SettingsTabViewController: NSTabViewController {
 /// 탭 한 장: 내용을 스크롤 칸에(길면 스크롤)
 private struct SettingsPage: View {
     let content: AnyView
+    /// 화면 모드가 바뀌면 내용을 새로 만든다 — AppKit 선택 상자(메뉴 Picker)는 앱 모양이 바뀌어도
+    /// 직접 건드린 것만 다시 그려서, 나머지는 이전 모드(예: 다크에서 흰 상자)로 남는다.
+    @Environment(\.colorScheme) private var scheme
 
     /// 스크롤 없이 놓은 모양(높이를 재는 데에도 쓴다)
     static func framed(_ content: AnyView) -> some View {
@@ -227,6 +231,7 @@ private struct SettingsPage: View {
             content
                 .padding(20)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .id(scheme)
         }
         .background(Color(TermAppearance.chrome))
         .tint(Color(TermAppearance.accent))
@@ -278,23 +283,12 @@ private struct ScreenSection: View {
             }
             SettingsCard(title: "모양", color: TermAppearance.accent) {
                 StatusRow(title: "화면 모드", detail: "자동은 macOS 의 라이트·다크를 따라갑니다. 터미널·편집기·도구 창·설정 창에 모두 바로 적용됩니다.") {
-                    Picker("", selection: $appearance.mode) {
-                        ForEach(AppearanceMode.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
+                    ThemedMenu(selection: $appearance.mode, AppearanceMode.allCases.map { ($0, $0.title) })
                 }
             }
             SettingsCard(title: "작은 창", color: TermAppearance.accent) {
                 StatusRow(title: "작은 창 버튼 위치", detail: "채팅 입력을 가리지 않게 브라우저·터미널 버튼과 작은 창을 둘 곳") {
-                    Picker("", selection: $corner.corner) {
-                        Text("오른쪽 위 (기본)").tag(FloatCorner.topRight)
-                        Text("오른쪽 아래").tag(FloatCorner.bottomRight)
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
+                    ThemedMenu(selection: $corner.corner, [(.topRight, "오른쪽 위 (기본)"), (.bottomRight, "오른쪽 아래")])
                 }
             }
         }
@@ -363,26 +357,14 @@ private struct ConnectionsSection: View {
                     }
                     RowDivider()
                     StatusRow(title: "선명도", detail: "브라우저는 화면 배율(레티나 2배)로 그리고, 화면 칸에는 이 크기까지 받아 보입니다. 열린 화면에도 바로 적용됩니다") {
-                        Picker("", selection: $view.options.sharpness) {
-                            Text("표준 · 1440까지(가벼움)").tag(BrowserViewOptions.Sharpness.standard)
-                            Text("선명 · 2560까지").tag(BrowserViewOptions.Sharpness.sharp)
-                            Text("최고 · 3840까지(무거움)").tag(BrowserViewOptions.Sharpness.max)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
+                        ThemedMenu(selection: $view.options.sharpness, [(.standard, "표준 · 1440까지(가벼움)"),
+                                                                        (.sharp, "선명 · 2560까지"),
+                                                                        (.max, "최고 · 3840까지(무거움)")])
                     }
                     RowDivider()
                     StatusRow(title: "해상도", detail: "사이트가 보는 화면 크기. 칸에 맞춤은 브라우저 창 크기 그대로(같은 크기의 Chrome 창과 같음), 정하면 그 크기로 그리고 창에 맞게 줄여 보입니다") {
-                        Picker("", selection: $view.options.resolution) {
-                            Text("칸에 맞춤").tag(BrowserViewOptions.Resolution.fit)
-                            Text("1280 × 800").tag(BrowserViewOptions.Resolution.r1280x800)
-                            Text("1440 × 900").tag(BrowserViewOptions.Resolution.r1440x900)
-                            Text("1920 × 1080").tag(BrowserViewOptions.Resolution.r1920x1080)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
+                        ThemedMenu(selection: $view.options.resolution, [(.fit, "칸에 맞춤"), (.r1280x800, "1280 × 800"),
+                                                                         (.r1440x900, "1440 × 900"), (.r1920x1080, "1920 × 1080")])
                     }
                     RowDivider()
                     StatusRow(title: "데스크톱 화면 유지", detail: "칸이 좁아도 폭 1024 이상의 데스크톱 화면으로 그리고 줄여 보입니다(끄면 좁은 칸에서 사이트가 모바일 화면으로 바뀔 수 있음)") {
@@ -394,16 +376,8 @@ private struct ConnectionsSection: View {
                     }
                     RowDivider()
                     StatusRow(title: "쓰지 않으면 쉬게 하기", detail: "AI 가 이만큼 abx 를 쓰지 않고 화면에도 보이지 않으면 브라우저를 꺼서 메모리를 돌려줍니다. 탭은 남겨 두었다가 AI 가 다시 쓰거나 \"다시 켜기\"를 누르면 그대로 열립니다(로그인 유지)") {
-                        Picker("", selection: $view.options.idleRest) {
-                            Text("15분").tag(BrowserViewOptions.IdleRest.m15)
-                            Text("30분").tag(BrowserViewOptions.IdleRest.m30)
-                            Text("1시간").tag(BrowserViewOptions.IdleRest.h1)
-                            Text("2시간").tag(BrowserViewOptions.IdleRest.h2)
-                            Text("끄지 않음").tag(BrowserViewOptions.IdleRest.never)
-                        }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
-                        .frame(width: 200)
+                        ThemedMenu(selection: $view.options.idleRest, [(.m15, "15분"), (.m30, "30분"), (.h1, "1시간"),
+                                                                       (.h2, "2시간"), (.never, "끄지 않음")])
                     }
                     RowDivider()
                     StatusRow(title: "Chrome 로그인 가져오기",
@@ -730,15 +704,73 @@ private struct ChoicePicker: View {
     let labels: [String: String]
 
     var body: some View {
-        Picker("", selection: Binding(get: { selection ?? "" }, set: { selection = $0.isEmpty ? nil : $0 })) {
-            Text("기본 (지정 안 함)").tag("")
-            Divider()
-            ForEach(choices, id: \.self) { Text(labels[$0] ?? $0).tag($0) }
-            // 파일에 이 판이 모르는 값이 있으면 그대로 보인다
-            if let selection, !selection.isEmpty, !choices.contains(selection) { Text(selection).tag(selection) }
+        var values = choices.map { ($0, labels[$0] ?? $0) }
+        // 파일에 이 판이 모르는 값이 있으면 그대로 보인다
+        if let selection, !selection.isEmpty, !choices.contains(selection) { values.append((selection, selection)) }
+        return ThemedMenu(selection: Binding(get: { selection ?? "" }, set: { selection = $0.isEmpty ? nil : $0 }),
+                          sections: [[("", "기본 (지정 안 함)")], values], width: nil)
+    }
+}
+
+/// 설정 창 선택 상자. 시스템 메뉴 Picker 대신 앱 색(TermAppearance)으로 직접 그린다 —
+/// 시스템 상자는 화면 모드를 바꿀 때 조작한 상자만 다시 그리고 강조색(tint)도 조작한 상자에만 들어가서, 상자마다 색이 달랐다.
+struct ThemedMenu<Value: Hashable>: View {
+    @Binding var selection: Value
+    /// 구역마다 (값, 보이는 이름) — 구역 사이에 가름줄
+    let sections: [[(Value, String)]]
+    /// nil = 자리 폭만큼
+    var width: CGFloat? = 200
+    @Environment(\.isEnabled) private var enabled
+    @State private var hover = false
+
+    init(selection: Binding<Value>, _ options: [(Value, String)], width: CGFloat? = 200) {
+        self.init(selection: selection, sections: [options], width: width)
+    }
+
+    init(selection: Binding<Value>, sections: [[(Value, String)]], width: CGFloat? = 200) {
+        _selection = selection
+        self.sections = sections
+        self.width = width
+    }
+
+    private var title: String { sections.joined().first { $0.0 == selection }?.1 ?? "" }
+
+    var body: some View {
+        Menu {
+            ForEach(sections.indices, id: \.self) { section in
+                if section > 0 { Divider() }
+                ForEach(sections[section].indices, id: \.self) { index in
+                    let option = sections[section][index]
+                    // 메뉴 안 Toggle = 고른 항목에 체크 표시
+                    Toggle(option.1, isOn: Binding(get: { selection == option.0 }, set: { if $0 { selection = option.0 } }))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Color(TermAppearance.accent))
+            }
+            .font(.system(size: 12.5))
+            .padding(.horizontal, 9)
+            .frame(height: 26)
+            .frame(width: width)
+            .frame(maxWidth: width == nil ? .infinity : nil)
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color(TermAppearance.background)))
+            .overlay(RoundedRectangle(cornerRadius: 6)
+                .strokeBorder(hover && enabled ? Color(TermAppearance.accent).opacity(0.7) : Color(TermAppearance.border), lineWidth: 1))
+            .contentShape(Rectangle())
         }
-        .labelsHidden()
-        .pickerStyle(.menu)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .opacity(enabled ? 1 : 0.45)
+        .onHover { hover = $0 }
     }
 }
 
