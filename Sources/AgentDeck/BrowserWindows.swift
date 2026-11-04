@@ -3,7 +3,7 @@ import BrowserCore
 import TermLayout
 import TermWire
 
-/// 화면(에이전트 세션) 하나의 브라우저가 지금 어떤지 — 화면 제목 줄의 칩·spaces 목록·알림이 쓴다
+/// 화면(에이전트 세션) 하나의 브라우저가 지금 어떤지 — 🌐 버튼·브라우저 창 머리 줄·spaces 목록·알림이 쓴다
 enum BrowserIndicator: Equatable {
     /// 브라우저가 떠 있고 아무도 쥐지 않음
     case idle
@@ -137,7 +137,7 @@ final class BrowserStatusStore {
     }
 }
 
-/// 화면 제목 줄 오른쪽 위의 브라우저 칩(🌐 + 상태). 누르면 그 화면의 브라우저 창.
+/// 브라우저 상태 알약(🌐 + 상태). 브라우저 창 머리 줄에서는 누를 곳 없이 상태만 보인다(onClick nil).
 final class BrowserChipView: NSView {
     var indicator: BrowserIndicator = .idle { didSet { if indicator != oldValue { invalidateIntrinsicContentSize(); needsDisplay = true } } }
     var onClick: (() -> Void)?
@@ -265,9 +265,11 @@ final class BrowserWindows {
     var revealDock: (() -> Void)?
     /// browser 도구가 지금 보이는지
     var dockVisible: (() -> Bool)?
-    /// browser 도구를 왼쪽·오른쪽으로 옮기거나 숨긴다 / 지금 붙은 쪽
+    /// browser 도구를 숨긴다(작은 창 닫기 — 옆 도크는 UI 에 없다)
     var moveDock: ((DockSide) -> Void)?
-    var dockSide: (() -> DockSide)?
+    /// browser 도구가 작은 창(세션 창 안에 떠 있는 패널)으로 보이는 중 / 작은 창으로 보인다
+    var dockFloating: (() -> Bool)?
+    var floatDock: (() -> Void)?
     /// 세션 이름(창 제목·도크 안내)
     var titleFor: ((String) -> String?)?
     private var prefs: BrowserDisplayPrefs
@@ -287,6 +289,7 @@ final class BrowserWindows {
             return self.pane(owner)
         }
         dock.onShowHere = { [weak self] owner in self?.move(owner, to: .dock) }
+        dock.onOwnerChange = { [weak self] in self?.onDockOwnerOrState?() }
         dock.onShowWindow = { [weak self] owner in self?.open(owner: owner, title: nil) }
         dock.titleFor = { [weak self] owner in self?.titleFor?(owner) }
         dock.windowOpen = { [weak self] owner in self?.controllers[owner]?.window?.isVisible == true }
@@ -349,6 +352,9 @@ final class BrowserWindows {
         dock.follow(owner, force: false)
     }
 
+    /// 도크가 따라가는 세션이나 브라우저 상태가 바뀜(세션 창 오른쪽 아래 🌐 버튼을 고친다)
+    var onDockOwnerOrState: (() -> Void)?
+
     /// "표시 ▾" 에서 고름
     func choose(_ display: BrowserDisplay, for owner: String) {
         let old = self.display(owner)
@@ -400,7 +406,7 @@ final class BrowserWindows {
             return item
         }
         menu.addItem(header("보는 곳"))
-        for (placement, title) in [(BrowserDisplay.Placement.window, "별도 창"), (.dock, "세션 창 안 (도구)")] {
+        for (placement, title) in [(BrowserDisplay.Placement.window, "별도 창"), (.dock, "세션 창 안 (작은 창)")] {
             let item = ClosureMenuItem(title: title) { [weak self] in
                 var next = current
                 next.placement = placement
@@ -426,16 +432,13 @@ final class BrowserWindows {
             menu.addItem(item)
         }
         if current.placement == .dock {
-            // 도구가 혼자 붙은 도크는 위 도구 버튼 줄이 없어, 옮기기·숨기기를 여기에도 둔다
+            // 작은 창에는 위 도구 버튼 줄이 없어, 작은 창 선택·숨기기를 여기에도 둔다
             menu.addItem(.separator())
             menu.addItem(header("세션 창 안"))
-            let side = dockSide?() ?? .right
-            for (target, title) in [(DockSide.left, "왼쪽에"), (.right, "오른쪽에")] {
-                let item = ClosureMenuItem(title: title) { [weak self] in self?.moveDock?(target) }
-                item.state = side == target ? .on : .off
-                item.indentationLevel = 1
-                menu.addItem(item)
-            }
+            let float = ClosureMenuItem(title: "작은 창") { [weak self] in self?.floatDock?() }
+            float.state = dockFloating?() == true ? .on : .off
+            float.indentationLevel = 1
+            menu.addItem(float)
             let hide = ClosureMenuItem(title: "숨기기 (⌘⇧B 로 다시)") { [weak self] in self?.moveDock?(.hidden) }
             hide.indentationLevel = 1
             menu.addItem(hide)

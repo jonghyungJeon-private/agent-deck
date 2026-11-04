@@ -1184,6 +1184,7 @@ final class TermModel: ObservableObject {
 
     private func browserChanged(_ states: [String: AbxStatus]) {
         browserStates = states
+        browserWindows.onDockOwnerOrState?()
         browserWindows.retitle { [weak self] owner in self?.row(owner)?.title }
         host?.refreshTitles()
         updateDockBadge()

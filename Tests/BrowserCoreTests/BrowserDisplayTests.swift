@@ -30,14 +30,15 @@ final class BrowserDisplayTests: XCTestCase {
         XCTAssertEqual(odd.display(for: "ad-2"), BrowserDisplay())
     }
 
-    /// 도크에서 "칸에 맞춤"은 폭 1280 고정 + 높이는 칸 비율(세로로 긴 도크도 빈 띠 없이), 고른 고정 해상도·창은 그대로
+    /// 도크에서 "칸에 맞춤": 넓은 도크는 칸 그대로(1:1), 좁은 도크는 폭 1024 에 칸 비율(빈 띠 없이), 고른 고정 해상도·창은 그대로
     func testDockedPageSize() {
         var options = BrowserViewOptions()
         options.resolution = .fit
-        XCTAssertEqual(options.pageSize(for: CGSize(width: 640, height: 700), docked: true), CGSize(width: 1280, height: 1400))
-        XCTAssertEqual(options.pageSize(for: CGSize(width: 900, height: 450), docked: true), CGSize(width: 1280, height: 640))
+        XCTAssertEqual(options.pageSize(for: CGSize(width: 1500, height: 1700), docked: true), CGSize(width: 1500, height: 1700))
+        XCTAssertEqual(options.pageSize(for: CGSize(width: 640, height: 700), docked: true), CGSize(width: 1024, height: 1120))
+        XCTAssertEqual(options.pageSize(for: CGSize(width: 900, height: 450), docked: true), CGSize(width: 1024, height: 512))
         // 아주 가늘고 긴 칸은 높이에 상한
-        XCTAssertEqual(options.pageSize(for: CGSize(width: 200, height: 1000), docked: true).height, 2560)
+        XCTAssertEqual(options.pageSize(for: CGSize(width: 200, height: 1000), docked: true).height, 4096)
         XCTAssertEqual(options.pageSize(for: CGSize(width: 1100, height: 700), docked: false), CGSize(width: 1100, height: 700))
         options.resolution = .r1440x900
         XCTAssertEqual(options.pageSize(for: CGSize(width: 500, height: 700), docked: true), CGSize(width: 1440, height: 900))

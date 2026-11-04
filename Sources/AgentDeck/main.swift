@@ -267,8 +267,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(view, "browser 도구 보이기/숨기기", "tool-toggle:browser", "")
         for (tool, label) in [("files", "files"), ("spaces", "spaces"), ("browser", "browser")] {
             let place = NSMenu(title: "\(label) 위치")
-            addAction(place, "왼쪽", "tool-move:\(tool):left", "")
-            addAction(place, "오른쪽", "tool-move:\(tool):right", "")
+            if tool == "browser" {
+                addAction(place, "작은 창", "tool-move:browser:float", "") // 브라우저는 옆 도크 없이 작은 창만
+            } else {
+                addAction(place, "왼쪽", "tool-move:\(tool):left", "")
+                addAction(place, "오른쪽", "tool-move:\(tool):right", "")
+            }
             addAction(place, "숨김", "tool-move:\(tool):hidden", "")
             let item = NSMenuItem(title: "\(label) 위치", action: nil, keyEquivalent: "")
             item.submenu = place
@@ -534,13 +538,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             // tool <files|spaces> = ⌘⇧E·⌘⇧S 와 같은 토글
             toolWindows?.perform("tool-toggle:\(argument)")
         case "dock":
-            // dock <도구> <left|right|hidden>
+            // dock <도구> <left|right|hidden> (browser 는 float = 작은 창도; browser left|right 는 시험용으로만 남아 있다)
             let v = argument.split(separator: " ").map(String.init)
             if v.count == 2 { toolWindows?.perform("tool-move:\(v[0]):\(v[1])") }
         case "tool-select":
             toolWindows?.perform("tool-select:\(argument)")
         case "uilayout":
             if let data = toolWindows?.layout.data() { print("uilayout " + (String(data: data, encoding: .utf8) ?? "")) }
+            if let text = toolWindows?.debugFloat { print(text) }
             fflush(stdout)
         case "filesroot":
             print(toolWindows?.files.debugSummary ?? "filesroot -")
@@ -1064,6 +1069,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             if let pane = model.browserWindows.dock.hosted, model.browserWindows.isOpen(pane.owner) {
                 print("browser-dock \(pane.owner.prefix(4)) \(pane.debugState)")
             }
+            if let text = toolWindows?.debugFloat { print(text) }
             print("browsers end")
             fflush(stdout)
         case "tabs":
@@ -1199,6 +1205,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window?.orderFrontRegardless()
         case "window-hide":
             NSApp.hide(nil)
+        case "window-mini":
+            window?.miniaturize(nil)
+        case "window-unmini":
+            window?.deminiaturize(nil)
+        case "window-fullscreen":
+            window?.toggleFullScreen(nil)
         case "terminal-grid":
             let values = argument.split(separator: " ").compactMap { Int($0) }
             guard values.count == 2, let window, let content = window.contentView,

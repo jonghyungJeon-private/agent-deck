@@ -232,12 +232,12 @@ final class ToolLayoutTests: XCTestCase {
 }
 
 extension ToolLayoutTests {
-    /// 브라우저 도구: 처음엔 숨김, 꺼내면 오른쪽 + 읽힐 만한 폭, 예전 ui.json(브라우저 없음)도 숨김으로
+    /// 브라우저 도구: 처음엔 숨김, 옆 도크로 꺼내면(작은 창이 기본이므로 move) 오른쪽 + 읽힐 만한 폭, 예전 ui.json(브라우저 없음)도 숨김으로
     func testBrowserToolHiddenByDefaultShowsOnTheRightWide() throws {
         var layout = ToolLayout()
         XCTAssertEqual(layout.side(of: .browser), .hidden)
         XCTAssertFalse(layout.isVisible(.browser))
-        layout.toggle(.browser)
+        layout.move(.browser, to: .right)
         XCTAssertEqual(layout.side(of: .browser), .right)
         XCTAssertTrue(layout.isVisible(.browser))
         XCTAssertEqual(layout.width(.right), ToolLayout.browserWidth)
@@ -246,6 +246,10 @@ extension ToolLayoutTests {
         custom.widths[.right] = 500
         custom.move(.browser, to: .right)
         XCTAssertEqual(custom.width(.right), 500)
+        // 넓게 펼친 브라우저 도크 폭(2000pt 넘게)도 다시 켜면 그대로
+        custom.widths[.right] = 2300
+        let wide = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(custom.data()))
+        XCTAssertEqual(wide.width(.right), 2300)
         let old = try JSONDecoder().decode(ToolLayout.self, from: Data(#"{"tools":{"spaces":"left","files":"right"}}"#.utf8))
         XCTAssertEqual(old.side(of: .browser), .hidden)
         XCTAssertEqual(old.visibleTool(in: .right), .files)
@@ -342,5 +346,121 @@ final class ToolLayoutFontSizeTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ToolLayout.self, from: data).fontSize, 17)
         let bad = #"{"version":1,"fontSize":-5}"#
         XCTAssertNil(try JSONDecoder().decode(ToolLayout.self, from: Data(bad.utf8)).fontSize)
+    }
+}
+
+final class BrowserFloatTests: XCTestCase {
+    private let host = CGSize(width: 1000, height: 700)
+
+    /// 처음 꺼내면 작은 창(옆 도크가 아니라), 숨기면 도크 쪽은 그대로 숨김
+    func testFirstRevealIsFloat() {
+        var layout = ToolLayout()
+        layout.toggle(.browser)
+        XCTAssertTrue(layout.browserFloat.shown)
+        XCTAssertEqual(layout.side(of: .browser), .hidden)
+        XCTAssertFalse(layout.isVisible(.browser))
+        XCTAssertTrue(layout.isBrowserShown)
+        layout.toggle(.browser)
+        XCTAssertFalse(layout.isBrowserShown)
+        layout.toggle(.browser)
+        XCTAssertTrue(layout.browserFloat.shown)
+    }
+
+    /// 시험 명령으로 도크에 옮겼다가 숨겨도, 다시 꺼내면 작은 창(옆 도크로 가지 않는다)
+    func testToggleAlwaysFloatsEvenAfterDebugDock() {
+        var layout = ToolLayout()
+        layout.move(.browser, to: .left)
+        XCTAssertTrue(layout.isVisible(.browser))
+        XCTAssertFalse(layout.browserFloat.shown)
+        layout.toggle(.browser) // 보이지만 고르지 않았으면 고름 / 고른 상태면 숨김
+        layout.move(.browser, to: .hidden)
+        layout.toggle(.browser)
+        XCTAssertEqual(layout.side(of: .browser), .hidden)
+        XCTAssertTrue(layout.browserFloat.shown)
+        layout.move(.browser, to: .right)
+        XCTAssertFalse(layout.browserFloat.shown)
+        layout.move(.browser, to: .hidden)
+        XCTAssertFalse(layout.isBrowserShown)
+    }
+
+    func testRoundTripKeepsFloatState() throws {
+        var layout = ToolLayout()
+        layout.showBrowserFloat()
+        layout.browserFloat.frame = BrowserFloatFrame(right: 0.02, bottom: 0.1, width: 0.5, height: 0.6)
+        let back = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(layout.data()))
+        XCTAssertEqual(back.browserFloat, layout.browserFloat)
+        XCTAssertEqual(back, layout)
+    }
+
+    /// 예전에 옆 도크에 붙여 쓰던 파일: 이제 작은 창으로 나온다(보이고 있었으면 작은 창을 띄움, 숨겨 뒀으면 숨김 유지)
+    func testSavedSideDockMigratesToFloat() throws {
+        func load(_ json: String) throws -> ToolLayout { try JSONDecoder().decode(ToolLayout.self, from: Data(json.utf8)) }
+        let shown = try load(#"{"version":1,"tools":{"spaces":"left","files":"left","browser":"right"},"selected":{"left":"spaces","right":"browser"}}"#)
+        XCTAssertEqual(shown.side(of: .browser), .hidden)
+        XCTAssertTrue(shown.browserFloat.shown)
+        XCTAssertTrue(shown.isBrowserShown)
+        XCTAssertNil(shown.visibleTool(in: .right))
+        XCTAssertEqual(shown.visibleTool(in: .left), .spaces)
+        // 도크에는 붙어 있었지만 다른 도구가 앞이라 안 보이던 브라우저는 숨김 그대로
+        let behind = try load(#"{"version":1,"tools":{"spaces":"left","files":"left","browser":"left"},"selected":{"left":"files"}}"#)
+        XCTAssertEqual(behind.side(of: .browser), .hidden)
+        XCTAssertFalse(behind.browserFloat.shown)
+        XCTAssertEqual(behind.visibleTool(in: .left), .files)
+        // 저장된 작은 창 자리는 그대로, 다시 저장해 읽어도 도크로 돌아가지 않는다
+        let framed = try load(#"{"version":1,"tools":{"browser":"left"},"selected":{"left":"browser"},"browserFloat":{"frame":{"right":0.02,"bottom":0.1,"width":0.5,"height":0.6}}}"#)
+        XCTAssertTrue(framed.browserFloat.shown)
+        XCTAssertEqual(framed.browserFloat.frame, BrowserFloatFrame(right: 0.02, bottom: 0.1, width: 0.5, height: 0.6))
+        let again = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(framed.data()))
+        XCTAssertEqual(again, framed)
+    }
+
+    /// 작은 창 정보가 없는 예전 파일·망가진 값
+    func testOldAndBrokenFilesDecode() throws {
+        let hidden = try JSONDecoder().decode(ToolLayout.self, from: Data(#"{"version":1,"tools":{"spaces":"left"}}"#.utf8))
+        XCTAssertFalse(hidden.browserFloat.shown)
+        XCTAssertNil(hidden.browserFloat.frame)
+        let bad = #"{"version":1,"browserFloat":{"shown":true,"frame":{"right":-3,"bottom":0.1,"width":0.5,"height":0.5}}}"#
+        let broken = try JSONDecoder().decode(ToolLayout.self, from: Data(bad.utf8))
+        XCTAssertNil(broken.browserFloat.frame)
+        XCTAssertTrue(broken.browserFloat.shown)
+        // 도크에 붙어 있으면서 작은 창도 떠 있다고 적힌 파일: 한 곳(작은 창)만
+        let both = #"{"version":1,"tools":{"browser":"left"},"browserFloat":{"shown":true}}"#
+        let merged = try JSONDecoder().decode(ToolLayout.self, from: Data(both.utf8))
+        XCTAssertTrue(merged.browserFloat.shown)
+        XCTAssertEqual(merged.side(of: .browser), .hidden)
+    }
+
+    func testDefaultRectAnchorsAboveButton() {
+        let rect = BrowserFloatFrame.defaultRect(in: host, bottomInset: 56)
+        XCTAssertEqual(rect.width, 450, accuracy: 0.01)
+        XCTAssertEqual(rect.height, 455, accuracy: 0.01)
+        XCTAssertEqual(rect.maxX, 1000 - 14, accuracy: 0.01)
+        XCTAssertEqual(rect.minY, 56, accuracy: 0.01)
+    }
+
+    func testRectIsClampedInsideHost() {
+        // 최소 크기 이상, 호스트 안
+        let small = BrowserFloatFrame(right: 0.1, bottom: 0.1, width: 0.1, height: 0.1).rect(in: host)
+        XCTAssertEqual(small.size, BrowserFloatFrame.minSize)
+        let out = BrowserFloatFrame(right: 0, bottom: 0.95, width: 0.5, height: 0.5).rect(in: host)
+        XCTAssertLessThanOrEqual(out.maxY, host.height)
+        XCTAssertGreaterThanOrEqual(out.minY, 0)
+        // 창이 줄어도 안에 남는다
+        let narrow = CGSize(width: 500, height: 320)
+        let moved = BrowserFloatFrame(right: 0.02, bottom: 0.1, width: 0.45, height: 0.65).rect(in: narrow)
+        XCTAssertTrue(CGRect(origin: .zero, size: narrow).contains(moved))
+        // 최소 크기보다 작은 호스트는 호스트 크기까지만
+        let tiny = BrowserFloatFrame(right: 0, bottom: 0, width: 0.5, height: 0.5).rect(in: CGSize(width: 300, height: 200))
+        XCTAssertEqual(tiny.size, CGSize(width: 300, height: 200))
+    }
+
+    func testFrameRatioRoundTrip() {
+        let rect = CGRect(x: 120, y: 80, width: 500, height: 400)
+        let frame = BrowserFloatFrame(rect: rect, in: host)
+        XCTAssertEqual(frame.rect(in: host).origin.x, rect.origin.x, accuracy: 0.01)
+        XCTAssertEqual(frame.rect(in: host).origin.y, rect.origin.y, accuracy: 0.01)
+        XCTAssertEqual(frame.rect(in: host).width, rect.width, accuracy: 0.01)
+        // 호스트가 커지면 비율대로 커진다
+        XCTAssertEqual(frame.rect(in: CGSize(width: 2000, height: 700)).width, 1000, accuracy: 0.01)
     }
 }

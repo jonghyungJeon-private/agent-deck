@@ -337,6 +337,11 @@ final class AbxStateReaderTests: XCTestCase {
         XCTAssertEqual(AbxStateReader().lastUsed(session)!.timeIntervalSince1970, old.timeIntervalSince1970, accuracy: 1)
         try write("s1.used", "1", state: true) // 엔진을 부를 때마다 abx 가 쓴다
         XCTAssertLessThan(Date().timeIntervalSince(AbxStateReader().lastUsed(session)!), 5)
+        // 상태 폴더에 못 쓰는 샌드박스: 소켓 폴더의 .used 도 사용으로 본다
+        try FileManager.default.setAttributes([.modificationDate: old], ofItemAtPath: (session.stateDir as NSString).appendingPathComponent("s1.used"))
+        XCTAssertEqual(AbxStateReader().lastUsed(session)!.timeIntervalSince1970, old.timeIntervalSince1970, accuracy: 1)
+        try write("s1.used", "1")
+        XCTAssertLessThan(Date().timeIntervalSince(AbxStateReader().lastUsed(session)!), 5)
     }
 
     func testStaleFilesAreNotLife() throws {

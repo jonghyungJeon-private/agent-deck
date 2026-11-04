@@ -14,8 +14,6 @@ final class TerminalHostController: NSViewController {
     private(set) var terminals: [String: PaneTerminal] = [:]
     /// 보이는 편집기 화면(터미널처럼 보일 때만 만든다)
     private(set) var editorViews: [String: EditorPaneView] = [:]
-    /// 화면 제목 줄 오른쪽 위의 브라우저 칩(브라우저가 떠 있는 화면만)
-    private var browserChips: [String: BrowserChipView] = [:]
     private let container = SplitContainerView()
     private let placeholder = NSTextField(labelWithString: "")
     private let tabBar = TabBarView()
@@ -48,13 +46,15 @@ final class TerminalHostController: NSViewController {
         } as Any)
         // 화면을 누르면 그 화면으로 포커스(목록 선택·탭 제목도 따라온다)
         monitors.append(NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-            if let self, event.window === self.view.window, let id = self.container.paneId(at: event.locationInWindow) {
-                self.model.focus(pane: id, fromClick: true)
-                if let pane = self.terminals[id], let content = event.window?.contentView,
-                   let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
-                   hit === pane.view || hit.isDescendant(of: pane.view) {
-                    event.window?.makeFirstResponder(pane.view)
-                }
+            // 화면 위에 떠 있는 것(작은 브라우저 창·🌐 버튼)을 누른 것은 아래 화면으로 포커스를 옮기지 않는다
+            // (옮기면 브라우저가 그 화면의 세션으로 바뀐다)
+            guard let self, event.window === self.view.window, let content = event.window?.contentView,
+                  let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
+                  hit === self.container || hit.isDescendant(of: self.container),
+                  let id = self.container.paneId(at: event.locationInWindow) else { return event }
+            self.model.focus(pane: id, fromClick: true)
+            if let pane = self.terminals[id], hit === pane.view || hit.isDescendant(of: pane.view) {
+                event.window?.makeFirstResponder(pane.view)
             }
             return event
         } as Any)
@@ -173,7 +173,6 @@ final class TerminalHostController: NSViewController {
         var views: [String: NSView] = terminals.mapValues { $0.surface }
         for (id, editor) in editorViews { views[id] = editor }
         container.update(tree: visible, views: views, focused: tab?.focused, titles: paneTitles)
-        updateBrowserChips()
         // 크기가 정해진 뒤 붙어야 지난 출력이 맞는 크기로 그려진다
         created.forEach { $0.attach() }
 
@@ -194,7 +193,6 @@ final class TerminalHostController: NSViewController {
 
     /// 목록이 새로 왔을 때 테두리 제목만 고친다(포커스는 건드리지 않음)
     func refreshTitles() {
-        updateBrowserChips()
         container.setFocused(model.workspace.selectedTab?.focused, titles: paneTitles)
         updateTabBar()
     }
@@ -210,22 +208,6 @@ final class TerminalHostController: NSViewController {
                            status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }),
                            warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first)
         }, selected: workspace.selectedIndex)
-    }
-
-    /// 보이는 터미널 화면 중 브라우저가 떠 있는 것에 칩을 단다(누르면 그 화면의 브라우저 창)
-    private func updateBrowserChips() {
-        var chips: [String: BrowserChipView] = [:]
-        for id in terminals.keys {
-            guard let indicator = model.browserIndicator(id) else { continue }
-            let chip = browserChips[id] ?? BrowserChipView()
-            chip.indicator = indicator
-            chip.onClick = { [weak self] in self?.model.openBrowser(owner: id) }
-            chip.toolTip = "이 화면의 브라우저 창 열기 (⇧⌘B)"
-            chips[id] = chip
-        }
-        for (id, chip) in browserChips where chips[id] == nil { chip.removeFromSuperview() }
-        browserChips = chips
-        container.setChips(chips)
     }
 
     /// 분할 테두리에 쓰는 화면 제목과 상태

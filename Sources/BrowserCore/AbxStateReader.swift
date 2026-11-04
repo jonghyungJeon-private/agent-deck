@@ -51,7 +51,9 @@ public struct AbxStateReader {
     /// 띄운 때(`launch.json`)·탭 목록을 쓴 때 중 가장 늦은 것. 아무것도 없으면 nil
     public func lastUsed(_ session: AbxSession) -> Date? {
         let fm = FileManager.default
+        // .used 는 상태 폴더에 — 상태 폴더에 못 쓰는 샌드박스 안 에이전트는 소켓 폴더에 남긴다
         let paths = [(session.stateDir as NSString).appendingPathComponent("\(session.name).used"),
+                     (session.socketDir as NSString).appendingPathComponent("\(session.name).used"),
                      (session.socketDir as NSString).appendingPathComponent("\(session.name).launch.json"),
                      (session.stateDir as NSString).appendingPathComponent("\(session.name).tabs.json")]
         return paths.compactMap { (try? fm.attributesOfItem(atPath: $0))?[.modificationDate] as? Date }.max()

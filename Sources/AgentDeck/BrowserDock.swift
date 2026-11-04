@@ -72,7 +72,11 @@ final class BrowserDockController: NSViewController, ToolContent {
         guard force || owner != self.owner else { return }
         self.owner = owner
         refresh()
+        onOwnerChange?()
     }
+
+    /// 따라가는 세션이 바뀜(어느 길로든 — 세션 고르기·알림·목록 아이콘): 🌐 버튼·작은 창 제목을 고친다
+    var onOwnerChange: (() -> Void)?
 
     /// 지금 세션·보는 곳·보임에 맞춰 칸을 달거나 내려놓고 안내를 고친다
     func refresh() {

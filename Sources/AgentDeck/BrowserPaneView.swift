@@ -168,6 +168,8 @@ final class BrowserPaneView: NSView {
     /// 칸이 화면에서 빠졌다(창 닫기·도크 숨김·다른 곳으로 옮김). 브라우저·에이전트는 계속 돌고, 칸은 멈췄다가 다시 놓이면 이어 간다.
     func detach() {
         placed = false
+        panelGesture = false // 끄는 중에 빠졌으면 끝 알림이 없을 수 있다
+        liveResizing = false
         updateFeed()
     }
 
@@ -255,16 +257,50 @@ final class BrowserPaneView: NSView {
         feed.fit(to: screen.bounds.size)
     }
 
-    /// 브라우저 크기를 칸에 맞춘다(창을 끌어 크기를 바꾸는 동안은 모았다가 한 번)
+    /// 브라우저 크기를 칸에 맞춘다(크기가 바뀌면 0.3초 모았다가 한 번).
+    /// 끌어서 크기를 바꾸는 동안(작은 창 끌기·창 크기 조절)은 맞추지 않는다 — 그림만 칸에 맞춰 줄이고 늘리고(placeImage),
+    /// 끝나면 한 번 맞춘다. 크기가 안 바뀌는 옮기기는 맞추지 않는다.
     private var fitWork: DispatchWorkItem?
+    private var panelGesture = false
+    private var liveResizing = false
+    /// 끄는 동안 크기가 바뀌어 맞추기를 미뤘다
+    private var fitDeferred = false
+    private var resizeGestureActive: Bool { panelGesture || liveResizing }
+
     func screenResized() {
         fitWork?.cancel()
+        guard !resizeGestureActive else { fitDeferred = true; return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.feed?.fit(to: self.screen.bounds.size)
         }
         fitWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    /// 작은 창을 끌기 시작/끝(ToolWindows). 끝나면 크기가 바뀌었을 때만 바로 맞춘다.
+    func beginResizeGesture() { panelGesture = true; deferPendingFit() }
+    func endResizeGesture() { panelGesture = false; fitAfterGesture() }
+
+    /// 창 크기 조절(live resize) 시작/끝 — 화면 뷰가 알려 준다
+    func setLiveResizing(_ on: Bool) {
+        liveResizing = on
+        if on { deferPendingFit() } else { fitAfterGesture() }
+    }
+
+    /// 끌기가 시작될 때 기다리던 맞춤(0.3초 모으기)은 버리지 않고 끝난 뒤로 미룬다 — 크기만 바꾸고 곧바로 옮기면
+    /// 옮기기는 크기 변화가 없어 다시 맞출 일이 생기지 않는다
+    private func deferPendingFit() {
+        if let work = fitWork, !work.isCancelled { fitDeferred = true }
+        fitWork?.cancel()
+        fitWork = nil
+    }
+
+    private func fitAfterGesture() {
+        guard !resizeGestureActive, fitDeferred else { return }
+        fitDeferred = false
+        layoutSubtreeIfNeeded()
+        feed?.fit(to: screen.bounds.size)
     }
 
     private func stopFeed() {
@@ -1039,6 +1075,15 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         let changed = newSize != frame.size
         super.setFrameSize(newSize)
         if changed { pane?.screenResized() }
+    }
+    // 창 크기를 끄는 동안은 페이지를 다시 맞추지 않고 끝나면 한 번(BrowserPaneView.setLiveResizing)
+    override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        pane?.setLiveResizing(true)
+    }
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        pane?.setLiveResizing(false)
     }
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }

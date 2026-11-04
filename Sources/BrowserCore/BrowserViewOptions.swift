@@ -87,16 +87,18 @@ public struct BrowserViewOptions: Codable, Equatable {
 
     /// 칸 크기(점) → 브라우저 페이지 크기(CSS 픽셀). 해상도를 정했으면 그 크기, 아니면 칸 크기 — 아주 작은 칸은 최소 크기로,
     /// 데스크톱 유지면 폭 1024 까지 칸 비율 그대로 키운다(여백 없이 줄여 보이게).
-    /// 세션 창 안(도크)에서 볼 때 "칸에 맞춤"이면 폭은 데스크톱 폭(1280)으로 고정하고 높이만 칸 비율을 따른다:
-    /// 도크 폭은 터미널과 나눠 쓰며 자주 바뀌는데, 폭을 칸에 맞추면 사이트가 모바일 배치로 바뀌는 등 AI 가 쓰는 페이지가
-    /// 흔들린다. 폭이 고정이면 배치는 그대로이고, 높이를 맞춰 세로로 긴 도크에도 빈 띠 없이 채운다. 고른 고정 해상도는 그대로.
-    public static let dockedWidth: CGFloat = 1280
+    /// 세션 창 안(도크)에서 볼 때 "칸에 맞춤"이면: 도크가 데스크톱 폭(1024)보다 넓으면 칸 크기 그대로(1:1 — 글자가 창과 같은 크기로
+    /// 선명하게), 좁으면 폭 1024 로 그리고 칸 비율 그대로 줄여 보인다(사이트가 모바일 배치로 바뀌지 않게). 높이는 늘 칸 비율이라
+    /// 빈 띠가 없다. (예전에는 폭 1280 고정이라 좁은 도크에서 반 크기로 작게 보였고, 세로로 긴 도크는 높이 상한에 걸려 위아래가 비었다.)
+    /// 고른 고정 해상도는 그대로.
+    public static let dockedMaxHeight: CGFloat = 4096
 
     public func pageSize(for pane: CGSize, docked: Bool) -> CGSize {
         guard docked, resolution == .fit else { return pageSize(for: pane) }
-        guard pane.width > 0, pane.height > 0 else { return CGSize(width: Self.dockedWidth, height: 800) }
-        let height = (Self.dockedWidth * pane.height / pane.width).rounded()
-        return CGSize(width: Self.dockedWidth, height: min(max(height, Self.minimumSize.height), Self.dockedWidth * 2))
+        guard pane.width > 0, pane.height > 0 else { return CGSize(width: Self.desktopWidth, height: 800) }
+        let width = max(pane.width.rounded(), Self.desktopWidth)
+        let height = (width * pane.height / pane.width).rounded()
+        return CGSize(width: width, height: min(max(height, Self.minimumSize.height), Self.dockedMaxHeight))
     }
 
     public func pageSize(for pane: CGSize) -> CGSize {
