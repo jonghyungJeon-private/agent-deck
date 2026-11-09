@@ -50,6 +50,8 @@ public enum AppearanceMode: String, CaseIterable, Codable, Sendable {
 /// - `status*` = 상태. 색을 쓰는 건 둘뿐 — 빨강 `statusAttention`(내 조작 필요: 입력 대기·오류), 초록 `statusDone`(결과가 나옴).
 ///   작업 중·쉼·오케스트레이션·없음은 중립 모양(작업 중은 천천히 숨 쉬는 점)이라 색으로 주의를 끌지 않는다.
 /// - `warning`/`warnText` 호박색 = 경고와 사용량 70% 이상만(작업 중에는 쓰지 않는다).
+/// - `danger*` 난초색(자주) = 안전장치를 약하게 하는 설정 전용(권한 확인·승인·샌드박스 건너뛰기 같은 옵션의 스위치·경고 줄·명령 미리보기).
+///   빨강(내 조작 필요)·호박(경고)·종류 색과 겹치지 않는 빈 색상환 자리를 쓰며, 다른 뜻에는 쓰지 않는다.
 /// - `agent` 초록 = 브라우저에서 AI 가 조작 중(테두리·알약·커서). `human` = 내가 조작 중(중립).
 /// 대비 하한: 글자(12pt 이하) 4.5:1, 점·아이콘·포커스 표시 3:1 — 각 표면(chrome·chromeRaised·background)에서.
 /// 어두운·밝은 값 한 쌍은 순수 데이터라 시험한다. 화면 쪽(TermAppearance)이 이 표로 `NSColor(name:dynamicProvider:)` 를 만든다.
@@ -68,6 +70,8 @@ public enum PaletteColor: String, CaseIterable, Sendable {
     case statusWorking, statusAttention, statusDone, statusIdle, statusOrchestrating, statusNone
     // 경고(아이콘·막대 / 글자)
     case warning, warnText
+    // 위험한 설정 전용(아이콘·표시 / 글자 / 스위치 켜짐 바탕)
+    case danger, dangerText, dangerFill
     // 브라우저 조작 주체
     case agent, onAgent, human
     // 편집기
@@ -107,6 +111,9 @@ public enum PaletteColor: String, CaseIterable, Sendable {
         case .statusNone: return (0x97938b, 0x66625d)
         case .warning: return (0xedcf6f, 0x9e7b0b)
         case .warnText: return (0xedcf6f, 0x815c0a)
+        case .danger: return (0xdb8ef2, 0x731a8a)
+        case .dangerText: return (0xdb8ef2, 0x731a8a)
+        case .dangerFill: return (0xb459cf, 0x8e32a7)
         case .agent: return (0x84d17c, 0x367b30)
         case .onAgent: return (0x141312, 0xffffff)
         case .human: return (0xa8a49c, 0x585550)

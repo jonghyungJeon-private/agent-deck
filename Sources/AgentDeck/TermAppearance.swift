@@ -141,6 +141,11 @@ enum TermAppearance {
     static let warning = NSColor.palette(.warning)
     static let warnText = NSColor.palette(.warnText)
 
+    /// 위험한 설정 전용(안전장치를 약하게 하는 옵션): 아이콘·표시 / 글자 / 스위치 켜짐 바탕. 빨강·호박과 섞어 쓰지 않는다.
+    static let danger = NSColor.palette(.danger)
+    static let dangerText = NSColor.palette(.dangerText)
+    static let dangerFill = NSColor.palette(.dangerFill)
+
     /// 브라우저: AI 가 조작 중(테두리·알약·커서·AI 칩) / 그 바탕 위 글자 / 내가 조작 중(중립)
     static let agent = NSColor.palette(.agent)
     static let onAgent = NSColor.palette(.onAgent)

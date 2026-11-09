@@ -89,6 +89,7 @@ final class PaletteTests: XCTestCase {
             (.statusWorking, 0xe7e4de, 0x1c1a18), (.statusAttention, 0xe56c7f, 0xb12b4c), (.statusDone, 0xa3cb96, 0x29672e),
             (.statusIdle, 0xa8a49c, 0x585550), (.statusOrchestrating, 0xa8a49c, 0x585550), (.statusNone, 0x97938b, 0x66625d),
             (.warning, 0xedcf6f, 0x9e7b0b), (.warnText, 0xedcf6f, 0x815c0a),
+            (.danger, 0xdb8ef2, 0x731a8a), (.dangerText, 0xdb8ef2, 0x731a8a), (.dangerFill, 0xb459cf, 0x8e32a7),
             (.agent, 0x84d17c, 0x367b30), (.onAgent, 0x141312, 0xffffff), (.human, 0xa8a49c, 0x585550),
             (.editorText, 0xe4e1dc, 0x2b2925), (.syntaxKeyword, 0xcf8e6d, 0x0033b3),
             (.markdownQuote, 0xa8a49c, 0x585550), (.markdownTableStripe, 0x232120, 0xf2f0ec), (.markdownHighlight, 0x50482f, 0xe8e0c5),
@@ -128,13 +129,13 @@ final class PaletteTests: XCTestCase {
             let chrome = PaletteColor.chrome.hex(dark: dark), raised = PaletteColor.chromeRaised.hex(dark: dark)
             let background = PaletteColor.background.hex(dark: dark)
             let text: [PaletteColor] = [.textPrimary, .textSecondary, .textDim, .accentText, .typeClaude, .typeCodex, .typeShell,
-                                        .statusAttention, .warnText, .gitModified, .gitAdded, .gitUntracked, .gitConflicted, .gitChangedFolder]
+                                        .statusAttention, .warnText, .dangerText, .gitModified, .gitAdded, .gitUntracked, .gitConflicted, .gitChangedFolder]
             for token in text {
                 for surface in [chrome, raised] {
                     XCTAssertGreaterThanOrEqual(contrast(token.hex(dark: dark), surface), 4.5, "\(token) dark=\(dark)")
                 }
             }
-            let marks: [PaletteColor] = [.accent, .statusWorking, .statusDone, .statusIdle, .statusOrchestrating, .statusNone, .warning, .agent, .human]
+            let marks: [PaletteColor] = [.accent, .statusWorking, .statusDone, .statusIdle, .statusOrchestrating, .statusNone, .warning, .danger, .agent, .human]
             for token in marks {
                 for surface in [chrome, raised, background] {
                     XCTAssertGreaterThanOrEqual(contrast(token.hex(dark: dark), surface), 3.0, "\(token) dark=\(dark)")
@@ -147,6 +148,52 @@ final class PaletteTests: XCTestCase {
             for surface in [chrome, raised] {
                 let low = blend(PaletteColor.statusWorking.hex(dark: dark), over: surface, alpha: WorkingPulseSpec.minOpacity)
                 XCTAssertGreaterThanOrEqual(contrast(low, surface), 3.0, "pulse low dark=\(dark)")
+            }
+        }
+    }
+
+    private func oklab(_ hex: UInt32) -> (Double, Double, Double) {
+        func lin(_ shift: UInt32) -> Double {
+            let c = Double(hex >> shift & 0xff) / 255
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        let (r, g, b) = (lin(16), lin(8), lin(0))
+        let l = cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+        let m = cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+        let s = cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+        return (0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+                1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+                0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s)
+    }
+
+    /// OKLab 거리 ×100 (≈ ΔE; 10 아래는 한눈에 구분하기 어렵다)
+    private func deltaE(_ a: UInt32, _ b: UInt32) -> Double {
+        let (x, y) = (oklab(a), oklab(b))
+        return 100 * (pow(x.0 - y.0, 2) + pow(x.1 - y.1, 2) + pow(x.2 - y.2, 2)).squareRoot()
+    }
+
+    /// 위험한 설정 색(PALETTE.md §5 `danger*`): 글자 4.5:1·표시 3:1 을 앱 바탕과 시스템 설정 창 카드 위에서,
+    /// 스위치 켜짐 바탕은 카드와 흰 손잡이 양쪽에 3:1, 그리고 다른 역할 색과 ΔE 14 이상 떨어진다(한눈에 구분).
+    func testDangerRoleIsReadableAndDistinct() {
+        let systemCards: [Bool: [UInt32]] = [true: [0x2b2b2b, 0x1e1e1e], false: [0xffffff, 0xececec]]
+        for dark in [true, false] {
+            let surfaces = [PaletteColor.chrome, .chromeRaised, .background].map { $0.hex(dark: dark) } + systemCards[dark]!
+            for surface in surfaces {
+                XCTAssertGreaterThanOrEqual(contrast(PaletteColor.dangerText.hex(dark: dark), surface), 4.5, "dangerText dark=\(dark)")
+                XCTAssertGreaterThanOrEqual(contrast(PaletteColor.danger.hex(dark: dark), surface), 3.0, "danger dark=\(dark)")
+            }
+            let fill = PaletteColor.dangerFill.hex(dark: dark)
+            for card in systemCards[dark]! + [PaletteColor.chrome.hex(dark: dark)] {
+                XCTAssertGreaterThanOrEqual(contrast(fill, card), 3.0, "dangerFill vs surface dark=\(dark)")
+            }
+            XCTAssertGreaterThanOrEqual(contrast(0xffffff, fill), 3.0, "dangerFill vs white thumb dark=\(dark)")
+            let others: [PaletteColor] = [.statusAttention, .warning, .warnText, .typeClaude, .typeCodex, .accent, .accentText,
+                                          .agent, .statusDone, .textPrimary, .textSecondary]
+            for other in others {
+                for danger in [PaletteColor.danger, .dangerText] {
+                    XCTAssertGreaterThanOrEqual(deltaE(danger.hex(dark: dark), other.hex(dark: dark)), 14,
+                                                "\(danger) vs \(other) dark=\(dark)")
+                }
             }
         }
     }
@@ -182,7 +229,7 @@ final class PaletteTests: XCTestCase {
         XCTAssertGreaterThan(luminance(PaletteColor.chromeRaised.hex(dark: false)), 0.6)
         XCTAssertGreaterThan(contrast(PaletteColor.textPrimary.hex(dark: false), chrome), 10)
         XCTAssertGreaterThan(contrast(PaletteColor.textSecondary.hex(dark: false), chrome), 5.5)
-        for token in [PaletteColor.textDim, .accent, .typeClaude, .typeCodex, .statusDone, .statusAttention, .agent, .warnText] {
+        for token in [PaletteColor.textDim, .accent, .typeClaude, .typeCodex, .statusDone, .statusAttention, .agent, .warnText, .dangerText] {
             XCTAssertGreaterThanOrEqual(contrast(token.hex(dark: false), chrome), 4.0, "\(token)")
         }
         // 편집기: 글자·키워드·문자열·주석이 편집기 바탕에서 읽힌다

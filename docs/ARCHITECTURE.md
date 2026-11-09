@@ -563,6 +563,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   - 상태: `statusAttention`(빨강, 내 조작 필요 = 입력 대기 ◉·오류 !)과 `statusDone`(세이지 초록, 결과가 나옴 ●)만 색으로 주의를 끈다.
     `statusWorking`(주 글자색, 숨 쉬는 점)·`statusIdle`(○)·`statusOrchestrating`(점선 ◌)·`statusNone`(흐린 점)은 중립이고 모양으로 구분한다.
   - `warning`·`warnText` 호박색 = 경고와 사용량 70% 이상만(작업 중에는 쓰지 않는다).
+  - `danger`·`dangerText`·`dangerFill` 난초색(자주, OKLCH 색상 318) = 안전장치를 약하게 하는 설정 전용(권한 확인·승인·샌드박스 건너뛰기). 설정 › 새 세션의 위험 스위치 켜짐 바탕(`dangerFill`), 그 아래 ⚠ 경고 줄과 명령 미리보기의 위험한 인자(`dangerText`)에만 쓴다. 빨강(`statusAttention`, 내 조작 필요)·호박(경고)·종류 색과 뜻도 색도 섞지 않는다(ΔE 14 이상, `AppearanceTests.testDangerRoleIsReadableAndDistinct`). 빨강·주황 계열은 `statusAttention`·`typeClaude` 와 구분되지 않아 비어 있는 보라~자주 자리를 골랐다. 적록·청황 색각 이상에서는 잉크 블루와 가까워지므로 색만으로 알리지 않는다(⚠ 기호 + 문장 + 플래그 이름이 항상 함께). 사이드바 + 버튼·푸터 설정 단추의 ⚠ 는 아직 `warning`(호박) — 다음 통합에서 `danger` 로 옮긴다.
   - `agent`·`onAgent` 초록 = 브라우저에서 AI 가 조작 중(테두리·알약·커서·AI 칩, 그 위 글자). `human` = 내가 조작 중(중립).
   - 그 밖: `markdownQuote`·`markdownTableStripe`·`markdownHighlight`(미리보기, 불투명), 편집기·git·구문 색은 색조를 그대로 두고 값만 새 바탕에 맞췄다.
   - **대비 하한:** 글자(12pt 이하) 4.5:1, 점·아이콘·포커스 표시 3:1 — 사이드바(`chrome`)·고른 줄(`chromeRaised`)·터미널 바탕 위에서 두 모드 모두(`AppearanceTests` 가 확인).
