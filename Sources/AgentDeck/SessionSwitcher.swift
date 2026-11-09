@@ -99,17 +99,12 @@ final class SessionSwitcher {
             let status = row?.dormant == true ? WorkStatus.none : (row?.status ?? .none)
             let label = row?.dormant == true ? "꺼짐" : (row?.status ?? .none).label ?? (editor ? "편집기" : browser ? "브라우저" : "셸")
             // 종류: 에이전트는 종류 색, 그 밖(셸·편집기·브라우저)은 중립
-            let type: (symbol: String, color: NSColor)
-            if row?.isCodex == true { type = ("chevron.left.forwardslash.chevron.right", TermAppearance.typeCodex) }
-            else if row?.isClaude == true { type = ("asterisk", TermAppearance.typeClaude) }
-            else if editor { type = ("doc.text", TermAppearance.typeShell) }
-            else if browser { type = ("globe", TermAppearance.typeShell) }
-            else { type = ("terminal", TermAppearance.typeShell) }
+            let kind: SessionKind = row?.isCodex == true ? .codex : row?.isClaude == true ? .claude : editor ? .document : browser ? .browser : .shell
             return NavigatorRow(
                 title: NSAttributedString(string: target.name, attributes: [.font: EditorStyle.font, .foregroundColor: TermAppearance.textPrimary]),
                 detail: (target.folder as NSString).abbreviatingWithTildeInPath,
                 tag: target.tab <= 8 ? "⌘\(target.tab)" : target.tab == host.model.workspace.tabs.count ? "⌘9 · 탭 \(target.tab)" : "탭 \(target.tab)",
-                status: status, typeSymbol: type.symbol, typeColor: type.color, detailLead: label)
+                status: status, kind: kind, detailLead: label)
         }, empty: "일치하는 세션이 없습니다")
         // 거르는 중일 때만 "3 / 6"(걸러지지 않았으면 같은 말을 두 번 하지 않는다)
         popup.setStatus(query.isEmpty ? nil : "\(targets.count) / \(candidates.count)")

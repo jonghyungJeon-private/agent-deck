@@ -234,7 +234,7 @@ final class TerminalHostController: NSViewController {
         // 탭마다 화면 상태를 찾으므로 줄을 한 번만 사전으로 만든다(탭·화면 수만큼 목록을 훑지 않게)
         let statuses = Dictionary(model.rows.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
         let kinds: [String: SessionKind] = Dictionary(model.rows.map { row in
-            (row.id, row.isCodex ? SessionKind.codex : row.isClaude ? SessionKind.claude : SessionKind.shell)
+            (row.id, row.sessionKind)
         }, uniquingKeysWith: { first, _ in first })
         let warnings = Dictionary(model.rows.compactMap { row in row.launchWarning.map { (row.id, $0) } },
                                   uniquingKeysWith: { first, _ in first })

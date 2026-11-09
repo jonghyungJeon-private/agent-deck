@@ -24,8 +24,7 @@ struct UsageLineView: View {
         HStack(alignment: .center, spacing: ui(8)) {
             // 범례: 종류 아이콘 + 이름을 종류 색으로(✻ Claude · ‹› Codex) — 세션 줄·탭의 종류 색과 같은 뜻
             HStack(spacing: ui(Space.xs)) {
-                Image(systemName: kind.symbol)
-                    .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                SessionKindIcon(kind: kind, size: ui(TypeSize.caption), weight: .semibold)
                     .frame(width: ui(14), alignment: .leading)
                 Text(line.provider)
             }

@@ -267,7 +267,7 @@ final class SplitContainerView: NSView {
         guard let pane = titlePane(at: convert(event.locationInWindow, from: nil)) else { return nil }
         let menu = NSMenu()
         if titles[pane]?.preview == true {
-            menu.addItem(MenuAction(title: "고정 (미리보기 끝내기)") { [weak self] in self?.onPin?(pane) })
+            menu.addItem(MenuAction(title: "고정 (임시 끝내기)") { [weak self] in self?.onPin?(pane) })
         }
         menu.addItem(MenuAction(title: "새 탭으로 꺼내기") { [weak self] in self?.onExtract?(pane) })
         return menu

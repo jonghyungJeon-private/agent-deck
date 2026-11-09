@@ -96,45 +96,6 @@ enum SymbolDrawing {
     }
 }
 
-/// 탭·세션 종류: 앞에 아이콘 + 종류 색(claude ✻ 주황 · codex ‹› 청록 · 셸 ›_ 중립). 편집기 탭은 문서 아이콘.
-enum SessionKind: Equatable {
-    case claude, codex, shell, document
-
-    var color: NSColor {
-        switch self {
-        case .claude: return TermAppearance.typeClaude
-        case .codex: return TermAppearance.typeCodex
-        case .shell: return TermAppearance.typeShell
-        case .document: return TermAppearance.textSecondary
-        }
-    }
-
-    /// 상자 안에 아이콘을 그린다. claude 는 SF Symbol 이 없어 선으로 직접 그린 ✻(8갈래).
-    func drawIcon(size: CGFloat, in box: CGRect) {
-        switch self {
-        case .claude:
-            let radius = min(box.width, box.height) / 2
-            let width = max(1.1, radius * 0.3)
-            let path = NSBezierPath()
-            path.lineCapStyle = .round
-            path.lineWidth = width
-            for spoke in 0..<8 {
-                let angle = CGFloat(spoke) * .pi / 4
-                path.move(to: CGPoint(x: box.midX + cos(angle) * radius * 0.2, y: box.midY + sin(angle) * radius * 0.2))
-                path.line(to: CGPoint(x: box.midX + cos(angle) * (radius - width / 2), y: box.midY + sin(angle) * (radius - width / 2)))
-            }
-            color.setStroke()
-            path.stroke()
-        case .codex:
-            SymbolDrawing.draw("chevron.left.forwardslash.chevron.right", size: size, weight: .semibold, color: color, centeredIn: box)
-        case .shell:
-            SymbolDrawing.draw("terminal", size: size, weight: .semibold, color: color, centeredIn: box)
-        case .document:
-            SymbolDrawing.draw("doc.text", size: size, weight: .regular, color: color, centeredIn: box)
-        }
-    }
-}
-
 /// 터미널 위 탭 줄. AppKit 으로 직접 그린다. 지금 탭은 화면과 같은 바탕으로 이어 붙이고(위에 2pt 강조 줄), 나머지는 글자만.
 final class TabBarView: NSView, NSViewToolTipOwner {
     struct Tab: Equatable {
@@ -448,7 +409,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
         var x = rect.minX + ui(12)
         if showsDot(tab.status) {
-            drawDot(tab.status, at: CGPoint(x: x + Self.dotSize / 2, y: rect.midY), cutout: background)
+            tab.status.drawDot(in: CGRect(x: x, y: rect.midY - Self.dotSize / 2, width: Self.dotSize, height: Self.dotSize), cutout: background)
             x += Self.dotSize + Self.dotGap
         }
         tab.kind.drawIcon(size: ui(11), in: CGRect(x: x, y: rect.midY - Self.iconBox / 2, width: Self.iconBox, height: Self.iconBox))
@@ -480,54 +441,6 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         if !isSelected, index + 1 != selected {
             TermAppearance.border.setFill()
             CGRect(x: rect.maxX - 0.5, y: rect.midY - ui(7), width: 1, height: ui(14)).fill()
-        }
-    }
-
-    /// 상태 점(사이드바와 같은 약속): 작업 중 = 으뜸 글자색 찬 점이 숨 쉼, 입력 대기 = 붉은 고리 + 점(◉), 오류 = 붉은 점에 "!" 도려냄,
-    /// 끝 = 세이지 찬 점, 쉼 = 회색 고리, 오케스트레이션 = 회색 점선 고리. 색은 WorkStatus.color. cutout = 점 아래 바탕색(! 를 도려낼 때).
-    private func drawDot(_ status: WorkStatus, at center: CGPoint, cutout: NSColor) {
-        let size = Self.dotSize
-        let rect = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
-        let color = status.color
-        switch status {
-        case .idle:
-            color.setStroke()
-            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.6, dy: 0.6))
-            ring.lineWidth = 1.2
-            ring.stroke()
-        case .waiting:
-            color.setStroke()
-            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5))
-            ring.lineWidth = 1
-            ring.stroke()
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
-        case .orchestrating:
-            color.setStroke()
-            let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.6, dy: 0.6))
-            ring.lineWidth = 1.2
-            ring.setLineDash([1.8, 1.3], count: 2, phase: 0)
-            ring.stroke()
-        case .error:
-            color.setFill()
-            NSBezierPath(ovalIn: rect).fill()
-            // "!" 도려내기: 위 막대 + 아래 점
-            cutout.setFill()
-            let barWidth = max(1.2, size * 0.16)
-            NSBezierPath(roundedRect: CGRect(x: center.x - barWidth / 2, y: rect.minY + size * 0.2, width: barWidth, height: size * 0.36),
-                         xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
-            NSBezierPath(ovalIn: CGRect(x: center.x - barWidth / 2, y: rect.minY + size * 0.64, width: barWidth, height: barWidth)).fill()
-        case .working:
-            let running = WorkingPulse.shared.isRunning
-            let context = NSGraphicsContext.current?.cgContext
-            context?.saveGState()
-            context?.setAlpha(running ? CGFloat(WorkingPulseSpec.opacity(at: Date.timeIntervalSinceReferenceDate)) : 1)
-            color.setFill()
-            NSBezierPath(ovalIn: rect).fill()
-            context?.restoreGState()
-        default:
-            color.setFill()
-            NSBezierPath(ovalIn: rect).fill()
         }
     }
 

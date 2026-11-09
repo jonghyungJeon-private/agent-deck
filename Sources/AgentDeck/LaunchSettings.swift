@@ -269,21 +269,21 @@ private struct SettingStatus {
     }
 }
 
-/// 세션 종류 아이콘·색(✻ Claude 주황 · ‹› Codex 청록). 공용 `SessionKind`(WorkStatus)가 들어오면 그쪽으로 옮긴다.
-private extension AgentKind {
-    var symbol: String { self == .claude ? "asterisk" : "chevron.left.forwardslash.chevron.right" }
-    var color: NSColor { self == .claude ? TermAppearance.typeClaude : TermAppearance.typeCodex }
+extension AgentKind {
+    /// 공용 세션 종류(아이콘·색은 `SessionKind` 가 정한다)
+    var sessionKind: SessionKind { self == .claude ? .claude : .codex }
 }
 
 /// 구역 머리: 시스템 글꼴(13 굵게). 종류(Claude·Codex)는 아이콘과 종류 색으로.
 private struct SectionTitle: View {
     let title: String
     var kind: AgentKind?
+    @Environment(\.uiScale) private var ui
 
     var body: some View {
         HStack(spacing: Space.xs) {
             if let kind {
-                Image(systemName: kind.symbol).foregroundStyle(Color(kind.color)).accessibilityHidden(true)
+                SessionKindIcon(kind: kind.sessionKind, size: ui(TypeSize.emphasis), weight: .semibold).accessibilityHidden(true)
             }
             Text(title).foregroundStyle(Color(TermAppearance.textPrimary))
         }

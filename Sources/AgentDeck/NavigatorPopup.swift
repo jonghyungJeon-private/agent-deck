@@ -13,9 +13,8 @@ struct NavigatorRow {
     var tag: String?
     /// 세션 전환: 이름 앞의 맨 점(작업 상태 — 모양과 색은 WorkStatus 가 정한다). nil = 점 자리 없음
     var status: WorkStatus?
-    /// 세션 전환: 이름 앞의 종류 아이콘(SF Symbol)과 종류 색
-    var typeSymbol: String?
-    var typeColor: NSColor = TermAppearance.typeShell
+    /// 세션 전환: 이름 앞의 종류 아이콘과 종류 색(`SessionKind`)
+    var kind: SessionKind?
     /// 아래 줄 맨 앞의 말(시스템 글꼴 — "작업 중" 같은 상태 글. 뒤따르는 `detail` 은 경로라 고정폭)
     var detailLead: String?
 }
@@ -416,22 +415,17 @@ final class NavigatorCellView: NSView {
             x += size + 10
         }
         // 세션 전환: 맨 점 + 종류 아이콘. 점 자리는 상태가 없어도 비워 둔다(이름 줄이 어긋나지 않게).
-        if row.typeSymbol != nil || row.status != nil {
+        if row.kind != nil || row.status != nil {
             let dot = TermAppearance.scaled(9)
             if let status = row.status {
                 let selected = (superview as? NSTableRowView)?.isSelected == true
-                Self.drawStatusDot(status, in: NSRect(x: x, y: centerY - dot / 2, width: dot, height: dot),
-                                   cutout: selected ? TermAppearance.chromeRaised : TermAppearance.chrome)
+                status.drawDot(in: NSRect(x: x, y: centerY - dot / 2, width: dot, height: dot),
+                               cutout: selected ? TermAppearance.chromeRaised : TermAppearance.chrome, pulse: false)
             }
             x += dot + TermAppearance.scaled(8)
-            if let symbol = row.typeSymbol {
+            if let kind = row.kind {
                 let side = TermAppearance.scaled(13)
-                if let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: side, weight: .medium).applying(.init(paletteColors: [row.typeColor]))) {
-                    let size = image.size
-                    image.draw(in: NSRect(x: x + (side - size.width) / 2, y: centerY - size.height / 2, width: size.width, height: size.height),
-                               from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-                }
+                kind.drawIcon(size: side, in: CGRect(x: x, y: centerY - side / 2, width: side, height: side))
                 x += side + TermAppearance.scaled(6)
             }
         }
@@ -457,45 +451,6 @@ final class NavigatorCellView: NSView {
         detail.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: detail.length))
         detail.draw(with: NSRect(x: x, y: top + codeHeight + 2, width: max(bounds.width - x - 14, 10), height: TermAppearance.scaled(16)),
                     options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-    }
-
-    /// 맨 점(둘러싼 칸 없음): 작업 중·완료 = 채운 점, 입력 대기 = 고리 + 점 ◉, 오류 = 채운 점에 "!" 오려냄, 쉼 = 고리 ○, 오케스트레이션 = 점선 고리 ◌.
-    /// 색은 WorkStatus.color 를 그대로 읽는다. 상태가 없거나 아직 모르면 그리지 않는다.
-    static func drawStatusDot(_ status: WorkStatus, in rect: NSRect, cutout: NSColor) {
-        let color = status.color
-        let ring = rect.insetBy(dx: 0.75, dy: 0.75)
-        switch status {
-        case .none, .unknown, .codexUnknown:
-            return
-        case .working, .done:
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
-        case .waiting:
-            let path = NSBezierPath(ovalIn: ring)
-            path.lineWidth = 1.5
-            color.setStroke()
-            path.stroke()
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: rect.width * 0.3, dy: rect.height * 0.3)).fill()
-        case .error:
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 0.25, dy: 0.25)).fill()
-            cutout.setFill()
-            let bar = NSRect(x: rect.midX - 0.7, y: rect.minY + rect.height * 0.22, width: 1.4, height: rect.height * 0.34)
-            NSBezierPath(roundedRect: bar, xRadius: 0.7, yRadius: 0.7).fill()
-            NSBezierPath(ovalIn: NSRect(x: rect.midX - 0.8, y: rect.minY + rect.height * 0.64, width: 1.6, height: 1.6)).fill()
-        case .idle:
-            let path = NSBezierPath(ovalIn: ring)
-            path.lineWidth = 1.25
-            color.setStroke()
-            path.stroke()
-        case .orchestrating:
-            let path = NSBezierPath(ovalIn: ring)
-            path.lineWidth = 1.25
-            path.setLineDash([1.8, 1.6], count: 2, phase: 0)
-            color.setStroke()
-            path.stroke()
-        }
     }
 }
 

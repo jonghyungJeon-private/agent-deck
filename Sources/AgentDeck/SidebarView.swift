@@ -1014,13 +1014,8 @@ struct SessionRowView: View {
             StatusDot(status: row.status, dormant: row.dormant)
                 .frame(width: ui(SidebarItem.dotColumn), alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-            Image(systemName: row.sessionKind.symbol)
-                .font(.system(size: ui(TypeSize.caption), weight: .medium))
-                // ‹› 는 가로로 가장 넓어(종횡비 1.5) 이름에 붙어 보이므로 한 단계 작게 — 아이콘 칸 안에서 이름과 간격을 맞춘다
-                .imageScale(row.sessionKind == .codex ? .small : .medium)
-                .foregroundStyle(Color(row.sessionKind.color))
+            SessionKindIcon(kind: row.sessionKind, size: ui(TypeSize.caption))
                 .frame(width: ui(SidebarItem.iconColumn), alignment: .leading)
-                .accessibilityLabel(row.sessionKind.label)
             VStack(alignment: .leading, spacing: ui(2)) {
                 HStack(spacing: ui(Space.xs)) {
                     Text(row.title)
