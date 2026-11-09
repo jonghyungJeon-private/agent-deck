@@ -197,7 +197,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
 - **표시 방식(0.9, `BrowserCore/BrowserDisplay`, 별도 창 머리 줄 "⋯" 메뉴 · 작은 창 제목 줄 "별도 창으로 떼기"):** 보는 곳(별도 창 / 세션 창 안) + 창 동작(일반 창[기본] /
   AgentDeck 쓸 때만 위 — 앱이 앞일 때만 `.floating`, `didBecomeActive`·`didResignActive` 로 다시 적용 / 항상 위 `.floating`).
   고르면 그 세션 값이 되고 새 세션의 기본값도 된다 — 기본값이 바뀌기 전에 열려 있는 다른 세션의 지금 값을 먼저 그 세션 값으로 적어 두어
-  다른 세션이 따라 움직이지 않는다. `term/browser-display.json`(`defaults` + `sessions[세션 이름]`). 메뉴는 "세션 안으로 보기" + 창 높이
+  다른 세션이 따라 움직이지 않는다. `term/browser-display.json`(`defaults` + `sessions[세션 이름]`). 메뉴는 "세션 안으로 보기" + "다른 창 위에"(창 층)
   세 가지뿐이다(세션 창 안에서는 "표시" 버튼 없이 작은 창 제목 줄 아이콘 버튼이 같은 일을 한다) — 옆 도크 항목은 없다.
 - **칸은 세션마다 하나(`BrowserWindows` 가 가짐):** `BrowserPaneView`(스트림·고른 탭·맞춘 크기)는 창이나 도크가 빌려 단다 — 한 세션의
   브라우저는 한 곳에만 보인다. 안 보이면(숨김·가려짐·다른 세션으로 감·최소화) `BrowserFeed.pause()`(watch 파일 빼고 연결을 끊되
@@ -472,7 +472,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   claude 세션 자체의 이름(`claude --resume` 목록)은 바꾸지 않는다.
 - 도구 창(IntelliJ 식): 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구는 **spaces**(세션 목록)와 **files**(파일 트리) 둘이고,
   각각 왼쪽·오른쪽·숨김 중 한 곳에 붙는다. 한 도크에 둘이 붙으면 위에 도구 버튼 줄(고른 것은 강조색)이 생기고, 보이는 도구가 없는 도크는 접힌다.
-  도구 버튼·머리 줄 오른쪽 클릭 = 왼쪽으로/오른쪽으로 옮기기·숨기기. 보기 메뉴에도 있다.
+  도구 버튼·머리 줄 오른쪽 클릭 = "왼쪽에 두기"·"오른쪽에 두기"(지금 자리에 진짜 ✓)·숨기기 — 단축키 글자는 메뉴 막대(보기)에만 둔다. 보기 메뉴에도 있다.
   ⌘⇧E files, ⌘⇧S spaces: 숨김이면 마지막 쪽에 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김(한글 입력 중에도 키 위치로).
   ⌘⇧E 로 열면 트리에 포커스가 가고, Esc 는 터미널로 돌아간다.
   기본값은 spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 의 Project 창 자리, 터미널 폭은 그대로). 배치·고른 도구·도크 폭은 `term/ui.json`
@@ -635,12 +635,27 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   종료 시험 명령: `quit`(⌘Q 와 같은 길 — 데몬·화면이 앱과 따로 남는지 볼 때).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
   `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호·탭)·`settings-tab <connections|browser|sessions|screen>`(설정 창 탭 고르기)·`float-corner <top|bottom>`·`settings-snap <png>`·`chrome-import snap <png>`(가져오기 창 그림)·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
-  `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
+  `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`menu-dump [<메뉴 제목>]`(메뉴 막대 전체 — 단축키·✓·꺼짐·풍선 도움말, 윈도우 목록·서비스는 시스템이 채운 그대로)·`context-menu <x> <y>`(그 자리 오른쪽 클릭 메뉴, SwiftUI 것 포함)·`browser-display-menu`(별도 창 "⋯" 메뉴)·`fonts`(실제로 잡힌 글꼴 파일)·
   `location`(데이터 위치·모드 standard/legacy/custom·연결·화면 수·꺼진 화면 수; 옮기기는 `alert-answer 0` 뒤 `action relocate-data`). `AGENTDECK_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
   `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을, `AGENTDECK_CODEX_SKILLS_DIR=<폴더>` 로 Codex 스킬 폴더를 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex`·`~/.agents` 를 건드리지 않게 — 앱은 시작할 때 자기가 넣은 스킬을 새 판으로 바꾼다).
   `AGENTDECK_NO_ACTIVATE=1` 이면 켤 때 앞으로 나오지 않는다(쓰고 있는 다른 앱의 포커스를 뺏지 않게, 시험용).
   이때와 `AGENTDECK_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
+
+## 메뉴 막대
+
+- 순서: AgentDeck · 파일 · 편집 · 셸 · 이동 · 보기 · **윈도우** · **도움말**(`main.swift` `buildMenu`). macOS 표준 틀을 따른다.
+  - 앱 메뉴: 설정 아래 앱 항목들 뒤에 **서비스**(`NSApp.servicesMenu`, 시스템이 채움). "AgentDeck 종료"는 제목 그대로고 "앱을 꺼도 세션은 계속 돕니다"는 항목 풍선 도움말.
+  - 윈도우(`NSApp.windowsMenu`): 최소화 ⌘M · 확대/축소 · 모두 앞으로 가져오기, 아래에 열린 창 목록(시스템). 작은 창(FloatPanel)은 창이 아니라 뷰라 목록에 없다. ⌘M 은 다른 단축키와 겹치지 않는다(`shortcuts` 에 없음).
+  - 도움말(`NSApp.helpMenu`): "AgentDeck 도움말" 하나 → 릴리스 확인과 같은 저장소의 README(`UpdateCheck.repository`). 메뉴 검색 칸은 시스템이 붙인다.
+- 보기 메뉴의 켜고 끄는 항목은 **지금 상태를 제목에 쓴다**(`AppDelegate.refreshStateLabels`, `validateMenuItem` 에서): "files 보이기" ↔ "files 숨기기", spaces 도 같고,
+  "작은 터미널 보이기/숨기기", "화면 크게 보기" ↔ "화면 되돌리기", 브라우저는 "브라우저 보기" ↔ "브라우저 숨기기"(`tool-toggle:browser`). 브라우저의 이름은 하나다 —
+  셸 메뉴 "브라우저 보기"(⇧⌘B, 보는 곳에 열기)와 같은 말. 보기 메뉴의 "browser 위치" 하위 메뉴는 없앴다(작은 창 켜기·끄기 = 위 항목, 시험 명령 `dock browser float|hidden` 은 그대로).
+  files·spaces "위치" 하위 메뉴(왼쪽·오른쪽·숨김)는 지금 자리에 진짜 ✓(`state`)를 단다.
+- 오른쪽 클릭 메뉴(사이드바 머리 줄 `SidebarView`, 도구 버튼·머리 줄 `ToolWindows.menu(for:)`)는 제목에 ✓ 글자나 단축키 글자를 넣지 않는다 — "왼쪽에 두기"·"오른쪽에 두기"는 SwiftUI `Toggle`/`NSMenuItem.state` 로 진짜 ✓.
+- 기기 메뉴(`DeviceMenu`)는 면책 줄 대신 머리 줄 기기 버튼 풍선 도움말과 "직접 크기 입력" 창에 같은 말을 둔다. 이름에 크기가 든 기기("Laptop 1280×800")는 크기를 한 번만 적고, 이름 속 `1280x800` 의 x 도 ×로 맞춘다.
+  "최근"은 macOS 14 이상에서 시스템 구역 머리(`NSMenuItem.sectionHeader`), 13 은 꺼진 작은 글 줄.
+- 별도 창 "⋯" 메뉴(`BrowserWindows.menu(for:)`): "다른 창 위에" 머리(14+ 구역 머리) 아래 일반 창·AgentDeck 쓸 때만 위·항상 위. "고른 방식은 새 세션의 기본값도 됩니다"는 항목 풍선 도움말.
 
 ## 작업 상태 표시와 알림
 

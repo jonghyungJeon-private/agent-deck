@@ -92,7 +92,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.saveLayoutNow()
     }
 
+    /// 켰다 껐다 하는 메뉴의 제목·✓ 를 지금 상태에 맞춘다(보기 메뉴): "files 보이기" ↔ "files 숨기기", 자리 항목의 ✓
+    private func refreshStateLabels(_ menuItem: NSMenuItem) {
+        guard let action = menuItem.representedObject as? String else { return }
+        let parts = action.split(separator: ":").map(String.init)
+        switch parts[0] {
+        case "tool-toggle":
+            guard parts.count == 2, let tool = ToolID(rawValue: parts[1]), let layout = toolWindows?.layout else { return }
+            if tool == .browser {
+                menuItem.title = layout.isBrowserShown ? "브라우저 숨기기" : "브라우저 보기"
+            } else {
+                menuItem.title = "\(parts[1]) " + (layout.isVisible(tool) ? "숨기기" : "보이기")
+            }
+        case "scratch-toggle":
+            menuItem.title = toolWindows?.layout.terminalFloat.shown == true ? "작은 터미널 숨기기" : "작은 터미널 보이기"
+        case "zoom":
+            menuItem.title = model.workspace.selectedTab?.zoomed == true ? "화면 되돌리기" : "화면 크게 보기"
+        case "tool-move":
+            guard parts.count == 3, let tool = ToolID(rawValue: parts[1]), let side = DockSide(rawValue: parts[2]),
+                  let layout = toolWindows?.layout else { return }
+            menuItem.state = layout.side(of: tool) == side ? .on : .off
+        default: break
+        }
+    }
+
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        refreshStateLabels(menuItem)
         // 세션 창 안 브라우저에 포커스: 뒤 터미널·편집기에 하는 메뉴는 끈다 — 단축키(⌘K·⌘F·⌘D…)가 브라우저로 간다
         if dockedBrowserFocused, let action = menuItem.representedObject as? String,
            Self.paneOnlyActions.contains(action) { return false }
@@ -171,14 +196,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // 예전 데몬에 붙어 있을 때만 보인다(상태 줄 "지금 옮기기…"와 같음)
         addAction(appMenu, "새 데이터 위치로 지금 옮기기…", "relocate-data", "")
         appMenu.addItem(.separator())
+        // 서비스: 시스템이 항목을 채운다(다른 앱의 서비스에 선택한 글을 보내는 길)
+        let servicesItem = NSMenuItem(title: "서비스", action: nil, keyEquivalent: "")
+        let servicesMenu = NSMenu(title: "서비스")
+        servicesItem.submenu = servicesMenu
+        appMenu.addItem(servicesItem)
+        NSApp.servicesMenu = servicesMenu
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "AgentDeck 가리기", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "기타 가리기", action: #selector(NSApplication.hideOtherApplications(_:)),
                                          keyEquivalent: "h")
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(withTitle: "모두 보기", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "AgentDeck 종료(세션은 유지)", action: #selector(NSApplication.terminate(_:)),
-                        keyEquivalent: "q")
+        let quit = appMenu.addItem(withTitle: "AgentDeck 종료", action: #selector(NSApplication.terminate(_:)),
+                                   keyEquivalent: "q")
+        quit.toolTip = "앱을 꺼도 세션은 계속 돕니다"
         appItem.submenu = appMenu
 
         // 파일(편집기): 저장 ⌘S — 편집기 화면일 때만 켜진다
@@ -256,10 +289,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(view, "글자 작게", "font:smaller", "-")
         addAction(view, "기본 크기", "font:reset", "0")
         view.addItem(.separator())
-        addAction(view, "화면 크게 보기/되돌리기", "zoom", "\r", [.command, .shift])
+        addAction(view, "화면 크게 보기", "zoom", "\r", [.command, .shift])
         addAction(view, "분할 크기 같게", "equalize", "=", [.command, .control])
         for (direction, key, name) in arrows {
-            addAction(view, "나눈 선을 \(name)로", "resize:\(direction.rawValue)", key, [.command, .control])
+            // 조사: 왼쪽·오른쪽 → "으로", 위·아래 → "로"
+            addAction(view, "나눈 선을 \(name)" + (direction == .left || direction == .right ? "으로" : "로"),
+                      "resize:\(direction.rawValue)", key, [.command, .control])
         }
         view.addItem(.separator())
         addAction(view, "이전 탭", "previous-tab", "[", [.command, .shift])
@@ -271,25 +306,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             addAction(view, number == 9 ? "마지막 탭" : "탭 \(number)", "tab:\(number)", "\(number)")
         }
         // IntelliJ 식 도구 창: 숨김이면 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김
+        // 제목은 지금 상태를 따라 "보이기" ↔ "숨기기"로 바뀐다(validateMenuItem). 브라우저는 하나뿐이다 — 셸 ▸ "브라우저 보기"(⇧⌘B)와 같은 이름.
         view.addItem(.separator())
-        addAction(view, "files 도구 보이기/숨기기", "tool-toggle:files", "e", [.command, .shift])
-        addAction(view, "spaces 도구 보이기/숨기기", "tool-toggle:spaces", "s", [.command, .shift])
-        addAction(view, "browser 도구 보이기/숨기기", "tool-toggle:browser", "")
-        addAction(view, "작은 터미널 보이기/숨기기", "scratch-toggle", "`", [.control])
-        for (tool, label) in [("files", "files"), ("spaces", "spaces"), ("browser", "browser")] {
-            let place = NSMenu(title: "\(label) 위치")
-            if tool == "browser" {
-                addAction(place, "작은 창", "tool-move:browser:float", "") // 브라우저는 옆 도크 없이 작은 창만
-            } else {
-                addAction(place, "왼쪽", "tool-move:\(tool):left", "")
-                addAction(place, "오른쪽", "tool-move:\(tool):right", "")
-            }
+        addAction(view, "files 보이기", "tool-toggle:files", "e", [.command, .shift])
+        addAction(view, "spaces 보이기", "tool-toggle:spaces", "s", [.command, .shift])
+        addAction(view, "브라우저 보기", "tool-toggle:browser", "")
+        addAction(view, "작은 터미널 보이기", "scratch-toggle", "`", [.control])
+        // 도구가 놓일 자리: 지금 자리에 ✓. 브라우저는 옆 도크가 없어 따로 두지 않는다(위 항목이 작은 창 켜기·끄기)
+        for tool in ["files", "spaces"] {
+            let place = NSMenu(title: "\(tool) 위치")
+            addAction(place, "왼쪽", "tool-move:\(tool):left", "")
+            addAction(place, "오른쪽", "tool-move:\(tool):right", "")
             addAction(place, "숨김", "tool-move:\(tool):hidden", "")
-            let item = NSMenuItem(title: "\(label) 위치", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(title: "\(tool) 위치", action: nil, keyEquivalent: "")
             item.submenu = place
             view.addItem(item)
         }
         addSubmenu(main, view)
+
+        // 윈도우: 최소화(⌘M)·확대/축소·모두 앞으로 + 시스템이 붙이는 열린 창 목록(작은 창 패널은 목록에 넣지 않는다)
+        let windowMenu = NSMenu(title: "윈도우")
+        windowMenu.addItem(withTitle: "최소화", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "확대/축소", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(withTitle: "모두 앞으로 가져오기", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        addSubmenu(main, windowMenu)
+        NSApp.windowsMenu = windowMenu
+
+        // 도움말: 시스템이 메뉴 검색 칸을 붙인다
+        let helpMenu = NSMenu(title: "도움말")
+        addAction(helpMenu, "AgentDeck 도움말", "help", "")
+        addSubmenu(main, helpMenu)
+        NSApp.helpMenu = helpMenu
+
         NSApp.mainMenu = main
     }
 
@@ -506,8 +555,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             settingsWindow.show()
         } else if action == "chrome-import" {
             chromeImport.show()
+        } else if action == "help" {
+            // 사용 설명은 저장소 README(릴리스 확인과 같은 저장소)
+            if let url = URL(string: "https://github.com/\(UpdateCheck.repository)#readme") { NSWorkspace.shared.open(url) }
         } else {
             model.perform(action)
+        }
+    }
+
+    /// 시험 명령 `menu-dump`·`context-menu` 가 쓰는 글 꼴
+    private static func dump(_ menu: NSMenu, depth: Int) -> [String] {
+        menu.update()
+        let pad = String(repeating: "  ", count: depth)
+        return menu.items.flatMap { item -> [String] in
+            if item.isSeparatorItem { return [pad + "----"] }
+            let mark = item.state == .on ? "✓ " : item.state == .mixed ? "– " : "  "
+            var keys = ""
+            if let scalar = item.keyEquivalent.unicodeScalars.first {
+                let m = item.keyEquivalentModifierMask
+                let named: [Int: String] = [NSLeftArrowFunctionKey: "←", NSRightArrowFunctionKey: "→", NSUpArrowFunctionKey: "↑",
+                                            NSDownArrowFunctionKey: "↓", NSF7FunctionKey: "F7", 13: "↩"]
+                keys = "  " + (m.contains(.control) ? "⌃" : "") + (m.contains(.option) ? "⌥" : "") + (m.contains(.shift) ? "⇧" : "")
+                    + (m.contains(.command) ? "⌘" : "") + (named[Int(scalar.value)] ?? item.keyEquivalent.uppercased())
+            }
+            let flags = (item.isHidden ? " (숨김)" : "") + (item.isEnabled || item.submenu != nil ? "" : " ✗")
+            let tip = item.toolTip.map { "  ⓘ " + $0.replacingOccurrences(of: "\n", with: " / ") } ?? ""
+            return [pad + mark + item.title + keys + flags + tip] + (item.submenu.map { dump($0, depth: depth + 1) } ?? [])
         }
     }
 
@@ -552,7 +625,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ///   화면 모드: appearance <auto|light|dark>(설정 → 화면) | 작은 창 구석: float-corner <top|bottom>(설정 → 화면) | 설정 창 탭: settings-tab <connections|browser|sessions|screen>
     ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
     ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
-    ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
+    ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | menu-dump [<메뉴>] | context-menu <x> <y> | browser-display-menu | fonts
     ///   데이터 위치: location(위치·모드·데몬). 옮기기는 action relocate-data
     ///   상태 모양: fake-session-states [off](디버그 빌드 전용, 화면들의 종류·상태를 보이는 목록·묶음에만 덧씌움 — 알림·Dock 배지·"봤음"·되살리기 정보는 진짜 줄로만)
     private func startDebugHooks() {
@@ -779,6 +852,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     .joined(separator: " / "))
                 fflush(stdout)
             }
+        case "menu-dump":
+            // menu-dump [<메뉴 제목>]: 메뉴 막대를 줄마다(들여쓰기 = 하위 메뉴, ✓ 켜짐, – 일부, ✗ 꺼짐, 단축키, 풍선 도움말). 윈도우 목록·서비스는 시스템이 채운 그대로
+            for (index, top) in (NSApp.mainMenu?.items ?? []).enumerated() {
+                guard let sub = top.submenu else { continue }
+                let title = index == 0 ? "AgentDeck" : sub.title
+                if !argument.isEmpty, argument != title { continue }
+                print("== \(title)")
+                Self.dump(sub, depth: 1).forEach { print($0) }
+            }
+            fflush(stdout)
+        case "browser-display-menu":
+            // 별도 창 머리 줄 "⋯" 메뉴(보는 곳·다른 창 위에)
+            if let owner = model.browserWindows.targetPane?.owner {
+                Self.dump(model.browserWindows.menu(for: owner), depth: 1).forEach { print($0) }
+            } else { print("no browser window") }
+            fflush(stdout)
+        case "context-menu":
+            // context-menu <x> <y>: 그 자리(창 좌표, 아래가 0) 오른쪽 클릭 메뉴의 항목들(menu-pick 과 같은 길)
+            let v = argument.split(separator: " ").compactMap { Double($0) }
+            if v.count == 2, let window, let content = window.contentView,
+               let event = NSEvent.mouseEvent(
+                with: .rightMouseDown, location: NSPoint(x: v[0], y: v[1]), modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1),
+               let menu = content.hitTest(content.convert(event.locationInWindow, from: nil))?.menu(for: event) {
+                menu.update()
+                Self.dump(menu, depth: 1).forEach { print($0) }
+            } else {
+                print("no context menu there")
+            }
+            fflush(stdout)
         default:
             if debugEditor(command: parts.first ?? "", argument: argument) { return }
             if model.spaces.debug(parts.first ?? "", argument, groups: model.groups) { return }

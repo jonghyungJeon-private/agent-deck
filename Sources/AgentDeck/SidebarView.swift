@@ -261,10 +261,11 @@ struct SidebarView: View {
             collapseAllButtons
             if let onDock {
                 Divider()
-                Button((currentSide == .left ? "✓ " : "") + "왼쪽으로 옮기기") { onDock(.left) }
-                Button((currentSide == .right ? "✓ " : "") + "오른쪽으로 옮기기") { onDock(.right) }
+                // 자리는 진짜 ✓ 로(상태 켜기 항목), 단축키 글자는 메뉴 막대(보기)에만 둔다
+                Toggle("왼쪽에 두기", isOn: Binding(get: { currentSide == .left }, set: { _ in onDock(.left) }))
+                Toggle("오른쪽에 두기", isOn: Binding(get: { currentSide == .right }, set: { _ in onDock(.right) }))
                 Divider()
-                Button("숨기기 (⌘⇧S)") { onDock(.hidden) }
+                Button("숨기기") { onDock(.hidden) }
             }
         }
     }

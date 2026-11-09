@@ -439,23 +439,31 @@ final class BrowserWindows {
         try? data.write(to: Self.url, options: .atomic)
     }
 
-    /// 별도 창 머리 줄 "⋯" 메뉴: 세션 창 안으로 보기 + 창 높이
+    /// 별도 창 머리 줄 "⋯" 메뉴: 세션 안으로 보기 + 다른 창 위에 띄우기(창 층: 일반·쓸 때만 위·항상 위).
+    /// 고른 방식은 새 세션의 기본값도 되는데, 그 설명은 메뉴 줄이 아니라 항목의 풍선 도움말에 둔다.
     func menu(for owner: String) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         let current = display(owner)
-        func header(_ title: String) -> NSMenuItem {
-            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            return item
-        }
-        menu.addItem(ClosureMenuItem(title: "세션 안으로 보기") { [weak self] in
+        let remembered = "고른 방식은 새 세션의 기본값도 됩니다"
+        let inside = ClosureMenuItem(title: "세션 안으로 보기") { [weak self] in
             var next = current
             next.placement = .dock
             self?.choose(next, for: owner)
-        })
+        }
+        inside.toolTip = remembered
+        menu.addItem(inside)
         menu.addItem(.separator())
-        menu.addItem(header("창 높이"))
+        // 머리 글: 14 이상은 시스템 구역 머리, 13 은 꺼진 작은 글 줄(같은 모양을 따라 그린다)
+        if #available(macOS 14.0, *) {
+            menu.addItem(NSMenuItem.sectionHeader(title: "다른 창 위에"))
+        } else {
+            let header = NSMenuItem(title: "다른 창 위에", action: nil, keyEquivalent: "")
+            header.attributedTitle = NSAttributedString(string: header.title, attributes: [
+                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor])
+            header.isEnabled = false
+            menu.addItem(header)
+        }
         let levels: [(BrowserDisplay.Level, String)] = [(.normal, "일반 창"), (.whileActive, "AgentDeck 쓸 때만 위"),
                                                         (.always, "항상 위 (다른 앱 위에도)")]
         for (level, title) in levels {
@@ -465,11 +473,9 @@ final class BrowserWindows {
                 self?.choose(next, for: owner)
             }
             item.state = current.level == level ? .on : .off
-            item.indentationLevel = 1
+            item.toolTip = remembered
             menu.addItem(item)
         }
-        menu.addItem(.separator())
-        menu.addItem(header("고른 방식은 새 세션의 기본값도 돼요"))
         return menu
     }
 

@@ -18,9 +18,9 @@ final class BrowserPaneView: NSView {
     private var headerAfterPill: NSLayoutConstraint!
     private var headerAtEdge: NSLayoutConstraint!
     private let controlButton = PillButton(title: "", target: nil, action: nil)
-    /// 별도 창 머리 줄의 "⋯" 메뉴 버튼: 세션 창 안으로 보기와 창 높이(일반·AgentDeck 쓸 때만 위·항상 위) — 메뉴는 BrowserWindows 가 만든다.
+    /// 별도 창 머리 줄의 "⋯" 메뉴 버튼: 세션 창 안으로 보기와 다른 창 위에 띄우기(일반 창·AgentDeck 쓸 때만 위·항상 위) — 메뉴는 BrowserWindows 가 만든다.
     /// 세션 창 안 작은 창에서는 같은 일을 작은 창 제목 줄 버튼(별도 창으로 떼기·크게·✕)이 하므로 숨긴다.
-    private let displayButton = FloatIconButton(symbol: "ellipsis.circle", tip: "보기 설정 — 세션 창 안으로 보기, 창 높이")
+    private let displayButton = FloatIconButton(symbol: "ellipsis.circle", tip: "보기 설정 — 세션 창 안으로 보기, 다른 창 위에 띄우기")
     var displayMenu: (() -> NSMenu)? {
         didSet { updateDisplayButton() }
     }
