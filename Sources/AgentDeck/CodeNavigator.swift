@@ -434,6 +434,7 @@ final class CodeNavigator {
         let container = host.view
         container.addSubview(popup)
         place(popup, anchor: anchor)
+        popup.fadeIn()
         container.window?.makeFirstResponder(popup.focusTarget)
         if popup.searchable { popup.preferRomanInput(true) }
         // 바깥을 누르면 닫는다
@@ -481,7 +482,7 @@ final class CodeNavigator {
         popupTargets = []
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
-        popup.removeFromSuperview()
+        popup.dismiss()
         if restoreFocus { host.focusPane() }
     }
 

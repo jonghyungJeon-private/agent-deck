@@ -18,18 +18,25 @@ final class TerminalPaneSurface: NSView {
     }
     override func layout() {
         super.layout()
-        let height = bar.superview == nil ? 0 : min(TermAppearance.scaled(38), bounds.height)
+        let height = bar.superview == nil ? 0 : min(TerminalFindBar.height, bounds.height)
         terminal.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
         bar.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 }
 
-final class TerminalFindBar: NSView, NSTextFieldDelegate {
+final class TerminalFindBar: NSView, NSSearchFieldDelegate {
+    /// 막대 높이(글꼴 크기 배율을 따른다)
+    static var height: CGFloat { TermAppearance.scaled(32) }
     weak var surface: TerminalPaneSurface?
     unowned let terminal: TerminalView
-    let field = NSTextField()
+    /// 찾기 칸: 돋보기·지우기 단추·포커스 링이 있는 시스템 검색 칸
+    let field = NSSearchField()
     private let count = NSTextField(labelWithString: "0/0")
-    private let caseButton = NSButton(checkboxWithTitle: "Aa", target: nil, action: nil)
+    /// "Aa": 눌러 두는(recessed) 토글
+    private let caseButton = NSButton(title: "Aa", target: nil, action: nil)
+    /// ↑ ↓: 한 번 누르면 한 번 움직이는 작은 분할 버튼
+    private let stepper = NSSegmentedControl()
+    private let closeButton = NSButton()
     private var refreshWork: DispatchWorkItem?
     private var caseSensitive = false
     private var cursor = BufferSearchCursor()
@@ -57,45 +64,60 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
         self.terminal = terminal
         super.init(frame: .zero)
         wantsLayer = true
-        refreshLayerColors()
-        layer?.borderWidth = 1
-        field.placeholderString = "터미널에서 찾기"
+        field.placeholderAttributedString = NSAttributedString(string: "터미널에서 찾기", attributes: [
+            .font: TermAppearance.uiTextFont(12), .foregroundColor: TermAppearance.textSecondary,
+        ])
         field.delegate = self
-        field.isBezeled = false
-        field.drawsBackground = true
-        field.backgroundColor = TermAppearance.background
+        field.target = self
+        field.action = #selector(fieldAction)
         field.textColor = TermAppearance.textPrimary
-        field.focusRingType = .none
+        field.focusRingType = .default
         field.cell?.isScrollable = true
         field.cell?.usesSingleLineMode = true
-        count.textColor = TermAppearance.textDim
+        count.textColor = TermAppearance.textSecondary
         count.alignment = .right
+        caseButton.setButtonType(.pushOnPushOff)
+        caseButton.bezelStyle = .recessed
+        caseButton.controlSize = .small
         caseButton.target = self
         caseButton.action = #selector(toggleCase)
         caseButton.toolTip = "대소문자 구분"
-        controls = [field, count, caseButton]
-        for (title, action, help) in [("↑", #selector(previous), "이전 찾기 (⇧↩ · ⇧⌘G)"),
-                                       ("↓", #selector(next), "다음 찾기 (↩ · ⌘G)"),
-                                       ("×", #selector(close), "찾기 닫기 (esc)")] {
-            let button = NSButton(title: title, target: self, action: action)
-            button.bezelStyle = .inline
-            button.toolTip = help
-            controls.append(button)
+        caseButton.setAccessibilityLabel("대소문자 구분")
+        stepper.segmentCount = 2
+        stepper.trackingMode = .momentary
+        stepper.segmentStyle = .rounded
+        stepper.controlSize = .small
+        stepper.target = self
+        stepper.action = #selector(stepped)
+        for (index, (symbol, help)) in [("chevron.up", "이전 찾기 (⇧↩ · ⇧⌘G)"), ("chevron.down", "다음 찾기 (↩ · ⌘G)")].enumerated() {
+            stepper.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: help)?
+                .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold)), forSegment: index)
+            stepper.setImageScaling(.scaleNone, forSegment: index)
+            stepper.setToolTip(help, forSegment: index)
         }
+        closeButton.isBordered = false
+        closeButton.imagePosition = .imageOnly
+        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "찾기 닫기")?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .medium))
+        closeButton.contentTintColor = TermAppearance.textSecondary
+        closeButton.target = self
+        closeButton.action = #selector(close)
+        closeButton.toolTip = "찾기 닫기 (esc)"
+        closeButton.setAccessibilityLabel("찾기 닫기")
+        controls = [field, count, caseButton, stepper, closeButton]
         controls.forEach { addSubview($0) }
     }
     required init?(coder: NSCoder) { fatalError() }
 
 
-    private func refreshLayerColors() {
-        layer?.backgroundColor = TermAppearance.chrome.cg(in: self)
-        layer?.borderColor = TermAppearance.border.cg(in: self)
+    /// 바탕 + 아래쪽 줄 하나(위·옆 줄 없음 — 터미널 위에 얹힌 줄)
+    override func draw(_ dirtyRect: NSRect) {
+        TermAppearance.chrome.setFill()
+        bounds.fill()
+        TermAppearance.border.setFill()
+        NSRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        refreshLayerColors()
-    }
     override var isFlipped: Bool { true }
 
     func show(query: String? = nil) {
@@ -103,6 +125,7 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
             surface.addSubview(self)
             surface.needsLayout = true
             surface.layoutSubtreeIfNeeded()
+            FloatFx.fadeIn(self, duration: Motion.fast, dy: 6) // 위에서 살짝 내려오며
         }
         applyFont()
         terminal.window?.makeFirstResponder(field)
@@ -114,25 +137,37 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
 
     func applyFont() {
         surface?.needsLayout = true
-        for view in controls {
-            (view as? NSControl)?.font = TermAppearance.scaledUIFont(12)
-        }
+        field.font = TermAppearance.scaledUIFont(12)
+        count.font = TermAppearance.scaledUIFont(11)
+        caseButton.font = TermAppearance.uiTextFont(TermAppearance.scaled(11), weight: .semibold)
+        field.placeholderAttributedString = NSAttributedString(string: "터미널에서 찾기", attributes: [
+            .font: TermAppearance.uiTextFont(TermAppearance.scaled(12)), .foregroundColor: TermAppearance.textSecondary,
+        ])
         needsLayout = true
     }
 
+    /// 오른쪽부터: 닫기 · ↑↓ · Aa · 개수, 나머지 폭은 찾기 칸. 모두 세로 가운데(높이 32 × 배율).
     override func layout() {
         super.layout()
         let u = TermAppearance.uiScale
         let h = bounds.height
-        var x = bounds.width - u(8)
-        for control in controls.dropFirst(3).reversed() {
-            x -= u(26); control.frame = NSRect(x: x, y: (h - u(24)) / 2, width: u(24), height: u(24))
+        func centered(_ size: NSSize, right: CGFloat) -> NSRect {
+            NSRect(x: right - size.width, y: ((h - size.height) / 2).rounded(), width: size.width, height: size.height)
         }
-        x -= u(50); caseButton.frame = NSRect(x: x, y: (h - u(24)) / 2, width: u(48), height: u(24))
-        let counterWidth = min(u(76), max(u(42), bounds.width * 0.18))
-        x -= counterWidth
-        count.frame = NSRect(x: x, y: (h - u(18)) / 2, width: counterWidth - u(4), height: u(18))
-        field.frame = NSRect(x: u(10), y: (h - u(22)) / 2, width: max(24, x - u(18)), height: u(22))
+        var x = bounds.width - u(8)
+        closeButton.frame = centered(NSSize(width: u(24), height: u(24)), right: x)
+        x = closeButton.frame.minX - u(4)
+        stepper.sizeToFit()
+        stepper.frame = centered(NSSize(width: max(stepper.frame.width, u(52)), height: stepper.frame.height), right: x)
+        x = stepper.frame.minX - u(8)
+        caseButton.sizeToFit()
+        caseButton.frame = centered(NSSize(width: max(caseButton.frame.width, u(34)), height: caseButton.frame.height), right: x)
+        x = caseButton.frame.minX - u(8)
+        let counterWidth = min(u(64), max(u(40), bounds.width * 0.14))
+        count.frame = centered(NSSize(width: counterWidth, height: u(16)), right: x)
+        x = count.frame.minX - u(8)
+        let fieldHeight = max(field.intrinsicContentSize.height, u(22))
+        field.frame = NSRect(x: u(8), y: ((h - fieldHeight) / 2).rounded(), width: max(24, x - u(8)), height: fieldHeight)
     }
 
     var fieldHasFocus: Bool {
@@ -206,7 +241,7 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
     private func updateCount() {
         let total = cursor.matches.count
         count.stringValue = "\(cursor.currentIndex.map { $0 + 1 } ?? 0)/\(total)"
-        count.textColor = !cachedQuery.isEmpty && total == 0 ? TermAppearance.red : TermAppearance.textDim
+        count.textColor = !cachedQuery.isEmpty && total == 0 ? TermAppearance.statusAttention : TermAppearance.textSecondary
         count.toolTip = "\(total)개 일치"
     }
 
@@ -272,12 +307,24 @@ final class TerminalFindBar: NSView, NSTextFieldDelegate {
         refreshWork?.cancel(); refreshWork = nil
         queryWork?.cancel(); queryWork = nil
         terminal.selection.selectNone()
+        if let surface, superview != nil { // 위로 살짝 걷히며 사라진다(막대 자체는 바로 뗀다)
+            FloatFx.ghost(FloatFx.snapshot(self), frame: frame, in: surface, above: self, duration: Motion.fast, dy: 6)
+        }
         removeFromSuperview()
         surface?.needsLayout = true
         terminal.window?.makeFirstResponder(terminal)
     }
     @objc private func next() { search() }
     @objc private func previous() { search(backwards: true) }
+    @objc private func stepped(_ sender: NSSegmentedControl) {
+        if sender.selectedSegment == 0 { previous() } else { next() }
+    }
+    /// 지우기 단추(검색 칸 오른쪽 ⊗)가 글을 비웠다: 강조·개수도 비운다(글자를 칠 때는 controlTextDidChange 가 맡는다)
+    @objc private func fieldAction() {
+        guard field.stringValue.isEmpty, !cachedQuery.isEmpty else { return }
+        queryWork?.cancel(); queryWork = nil
+        search(reset: true)
+    }
     func setCaseSensitive(_ enabled: Bool) {
         caseSensitive = enabled
         caseButton.state = enabled ? .on : .off

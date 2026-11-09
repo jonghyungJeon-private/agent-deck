@@ -1,77 +1,74 @@
 import AppKit
 
-/// 세션 창 오른쪽 아래, 🌐 버튼 왼쪽의 ⌨ 버튼: 누르면 고른 세션의 작은 터미널 창을 켜고 끈다(⌃`).
-/// 열려 있으면 속이 찬 모양, 창을 닫아 둔 채 명령이 돌고 있으면 오른쪽 위에 점.
-final class ScratchToggleButton: NSView {
-    var isOn = false { didSet { if isOn != oldValue { needsDisplay = true; updateTip() } } }
+/// 세션 창 오른쪽 아래, 🌐 버튼 왼쪽의 터미널 버튼: 누르면 고른 세션의 작은 터미널 창을 켜고 끈다(⌃`).
+/// 28pt 둥근 모서리 버튼(15pt 가는 기호, 평소 textSecondary). 열려 있으면 속이 찬 기호 + 한 단계 밝은 바탕,
+/// 창을 닫아 둔 채 명령이 돌고 있으면 오른쪽 위에 숨 쉬는 점(작업 중 점과 같은 시계).
+final class ScratchToggleButton: FloatPillButton {
     /// 닫아 둔 작은 터미널에서 명령이 돌고 있음(앞에서 도는 프로그램이 셸이 아님)
-    var busy = false { didSet { if busy != oldValue { needsDisplay = true; updateTip() } } }
-    var onClick: (() -> Void)?
+    var busy = false { didSet { if busy != oldValue { refreshBusyDot(); updateTip() } } }
 
-    private var hovering = false { didSet { needsDisplay = true } }
-    static var size: CGFloat { TermAppearance.scaled(44) }
-    private static var symbolSide: CGFloat { TermAppearance.scaled(20) }
-    private var color: NSColor { TermAppearance.textSecondary }
+    static var size: CGFloat { FloatPillButton.height }
+    private static var symbolSide: CGFloat { TermAppearance.scaled(15) }
+    private let dot = CALayer()
+
+    override var isOn: Bool { didSet { if isOn != oldValue { updateTip(); refreshBusyDot() } } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
+        dot.cornerRadius = TermAppearance.scaled(4)
+        dot.borderWidth = 1.5
+        dot.isHidden = true
+        layer?.addSublayer(dot)
+        NotificationCenter.default.addObserver(self, selector: #selector(pulseChanged), name: WorkingPulse.didChange, object: nil)
         updateTip()
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     override var intrinsicContentSize: NSSize { NSSize(width: Self.size, height: Self.size) }
 
-    /// 글꼴 크기 배율이 바뀜: 크기를 다시
-    func scaleChanged() { invalidateIntrinsicContentSize(); needsDisplay = true }
+    override func scaleChanged() {
+        super.scaleChanged()
+        dot.cornerRadius = TermAppearance.scaled(4)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let side = TermAppearance.scaled(8)
+        let inset = TermAppearance.scaled(2)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dot.frame = NSRect(x: bounds.maxX - side - inset, y: bounds.maxY - side - inset, width: side, height: side)
+        CATransaction.commit()
+    }
+
+    override func refreshChrome(animated: Bool = true) {
+        super.refreshChrome(animated: animated)
+        refreshBusyDot()
+    }
+
+    @objc private func pulseChanged() { dot.setWorkingPulse(busy && !isOn) }
+
+    /// 점은 창이 닫혀 있고 명령이 돌 때만
+    private func refreshBusyDot() {
+        let show = busy && !isOn
+        dot.isHidden = !show
+        dot.backgroundColor = TermAppearance.statusWorking.cg(in: self)
+        dot.borderColor = TermAppearance.background.cg(in: self)
+        dot.setWorkingPulse(show)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
-        let rect = bounds.insetBy(dx: 1, dy: 1)
-        let shape = NSBezierPath(ovalIn: rect)
-        let tint = isOn ? TermAppearance.accent : color
-        TermAppearance.background.setFill()
-        shape.fill() // 터미널 글자 위에 떠 있으므로 바탕을 먼저
-        tint.withAlphaComponent(isOn ? 0.3 : (hovering ? 0.2 : 0.1)).setFill()
-        shape.fill()
-        tint.withAlphaComponent(isOn || hovering ? 1 : 0.45).setStroke()
-        shape.lineWidth = 1
-        shape.stroke()
         let side = Self.symbolSide
-        if let image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: side, weight: .semibold)
-                .applying(.init(paletteColors: [tint.withAlphaComponent(isOn || hovering ? 1 : 0.8)]))) {
-            let size = image.size
-            image.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
-                                  width: size.width, height: size.height))
-        }
-        if busy {
-            let dot = TermAppearance.scaled(10)
-            let radius = bounds.height / 2
-            let cx = bounds.maxX - radius + radius * 0.707, cy = bounds.maxY - radius + radius * 0.707
-            TermAppearance.background.setFill()
-            NSBezierPath(ovalIn: NSRect(x: cx - dot / 2 - 1, y: cy - dot / 2 - 1, width: dot + 2, height: dot + 2)).fill()
-            TermAppearance.agentColor.setFill()
-            NSBezierPath(ovalIn: NSRect(x: cx - dot / 2, y: cy - dot / 2, width: dot, height: dot)).fill()
-        }
+        guard let image = NSImage(systemSymbolName: isOn ? "terminal.fill" : "terminal", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: side, weight: .regular)
+                .applying(.init(paletteColors: [emphasized ? TermAppearance.textPrimary : TermAppearance.textSecondary]))) else { return }
+        let size = image.size
+        image.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width, height: size.height))
     }
 
     private func updateTip() {
         toolTip = "작은 터미널 (⌃`)" + (busy && !isOn ? " — 명령 실행 중" : "")
     }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self))
-    }
-    override func mouseEntered(with event: NSEvent) { hovering = true }
-    override func mouseExited(with event: NSEvent) { hovering = false }
-    override func mouseDown(with event: NSEvent) { onClick?() }
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func isAccessibilityElement() -> Bool { true }
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
-    override func accessibilityLabel() -> String? { toolTip }
-    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
 }
