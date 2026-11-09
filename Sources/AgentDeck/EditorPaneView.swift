@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import EditorCore
 
 /// 편집기 화면(보이는 동안만 만든다): [디스크 변경 배너] / [줄 번호·변경 표시 여백 | 글] / [상태 줄].
@@ -11,7 +12,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     private var container: NSTextContainer?
     private var highlighter: EditorHighlighter?
     private let banner = EditorBannerView()
-    private let status = NSTextField(labelWithString: "")
+    private let status = EditorStatusLabel(labelWithString: "")
     private var notice: EditorNoticeView?
     private var bannerHeight: NSLayoutConstraint!
     private let body = NSView()
@@ -20,6 +21,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     private let modeSwitch = EditorModeSwitch()
     private var modeSwitchWidth: NSLayoutConstraint!
     private var previewRefreshQueued = false
+    private var bannerTransition = 0
     /// 미리보기에서 로컬 파일 링크를 눌렀을 때(경로)
     var onOpenFile: ((String) -> Void)?
     /// ⌘클릭(글 위치) — 선언으로 이동
@@ -30,7 +32,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     private var hintToken = 0
 
     /// 상태 줄 높이(글꼴 크기 배율을 따른다)
-    static var statusHeight: CGFloat { TermAppearance.scaled(20) }
+    static var statusHeight: CGFloat { TermAppearance.scaled(28) }
     private var statusHeightConstraint: NSLayoutConstraint!
     private var modeSwitchHeight: NSLayoutConstraint!
 
@@ -38,10 +40,11 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         self.document = document
         super.init(frame: frame)
         wantsLayer = true
+        body.wantsLayer = true
         refreshLayerColors()
 
-        status.font = TermAppearance.scaledUIFont(10)
-        status.textColor = TermAppearance.textDim
+        status.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.caption))
+        status.textColor = TermAppearance.textSecondary
         status.lineBreakMode = .byTruncatingHead
         status.alignment = .right
         banner.onReload = { [weak self] in self?.document.reloadFromDisk() }
@@ -65,12 +68,12 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
             body.leadingAnchor.constraint(equalTo: leadingAnchor),
             body.trailingAnchor.constraint(equalTo: trailingAnchor),
             body.bottomAnchor.constraint(equalTo: status.topAnchor),
-            modeSwitch.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            modeSwitch.leadingAnchor.constraint(equalTo: leadingAnchor, constant: TermAppearance.scaled(Space.sm)),
             modeSwitch.centerYAnchor.constraint(equalTo: status.centerYAnchor),
             modeSwitchHeight,
             modeSwitchWidth,
             status.leadingAnchor.constraint(equalTo: modeSwitch.trailingAnchor, constant: 8),
-            status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            status.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -TermAppearance.scaled(Space.md)),
             status.bottomAnchor.constraint(equalTo: bottomAnchor),
             statusHeightConstraint,
             hintLabel.topAnchor.constraint(equalTo: body.topAnchor, constant: 10),
@@ -131,13 +134,20 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
 
     /// 앱 글꼴 크기 변경: 글·줄 번호 여백 글꼴을 바꾸고 여백 폭을 다시 정한다
     @objc private func fontSizeChanged() {
+        body.layer?.removeAnimation(forKey: "editorMode")
+        bannerTransition += 1
+        banner.layer?.removeAllAnimations()
+        banner.alphaValue = 1
+        banner.show(document.diskConflict)
         // 상태 줄·편집/미리보기 단추·안내·배너·안내 문구는 앱 테두리 배율로
-        status.font = TermAppearance.scaledUIFont(10)
+        status.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.caption))
         statusHeightConstraint.constant = Self.statusHeight
+        updateStatus()
         hintLabel.refreshScale()
         banner.refreshScale()
         bannerHeight.constant = document.diskConflict == nil ? 0 : EditorBannerView.height
         notice?.refreshScale()
+        modeSwitch.refreshScale()
         modeSwitchHeight.constant = EditorModeSwitch.height
         modeSwitchWidth.constant = canPreview ? modeSwitch.fittingWidth : 0
         modeSwitch.needsDisplay = true
@@ -282,27 +292,74 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
     }
 
     private func updateBanner() {
-        banner.show(document.diskConflict)
-        bannerHeight.constant = document.diskConflict == nil ? 0 : EditorBannerView.height
+        bannerTransition += 1
+        let transition = bannerTransition
+        let conflict = document.diskConflict
+        let visible = conflict != nil
+        let wasVisible = bannerHeight.constant > 0
+        guard visible != wasVisible, window != nil, !Motion.reduced else {
+            banner.show(conflict)
+            banner.alphaValue = 1
+            bannerHeight.constant = visible ? EditorBannerView.height : 0
+            return
+        }
+        if visible {
+            banner.show(conflict)
+            bannerHeight.constant = EditorBannerView.height
+            banner.alphaValue = 0
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.fast
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            banner.animator().alphaValue = visible ? 1 : 0
+        } completionHandler: { [weak self] in
+            guard let self, self.bannerTransition == transition else { return }
+            if !visible {
+                self.banner.show(nil)
+                self.bannerHeight.constant = 0
+            }
+            self.banner.alphaValue = 1
+        }
     }
 
     private func updateStatus() {
         guard document.content == .text, let textView, let storage = document.storage else { return }
         if preview != nil {
             var parts = ["미리보기 · 읽기 전용", "⇧⌘V 편집으로"]
-            if document.isDirty { parts.insert("● 저장 안 됨 (편집 중인 내용을 보여 줌)", at: 0) }
-            status.stringValue = parts.joined(separator: "  ·  ")
+            if document.isDirty { parts.insert("저장 안 됨 (편집 중인 내용을 보여 줌)", at: 0) }
+            setStatus(parts, data: ["⇧⌘V"])
             return
         }
         let location = min(textView.selectedRange().location, storage.length)
         let line = document.lines.line(containing: location)
         let column = location - document.lines.starts[line] + 1
         var parts = ["\(line + 1):\(column)", "UTF-8" + (document.hasBOM ? " BOM" : ""), document.lineEnding.label]
+        let data = parts
         if let language = document.language { parts.append(language.rawValue) }
         if !document.highlightEnabled, document.language != nil { parts.append("색 없음(500KB 넘음)") }
         if !document.markersEnabled { parts.append("변경 표시 없음(큰 파일)") }
-        if document.isDirty { parts.insert("● 저장 안 됨", at: 0) }
-        status.stringValue = parts.joined(separator: "  ·  ")
+        if document.isDirty { parts.insert("저장 안 됨", at: 0) }
+        setStatus(parts, data: data)
+    }
+
+    private func setStatus(_ parts: [String], data: [String]) {
+        let text = parts.joined(separator: "  ·  ")
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .right
+        paragraph.lineBreakMode = .byTruncatingHead
+        let value = NSMutableAttributedString(string: text, attributes: [
+            .font: TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.caption)),
+            .foregroundColor: TermAppearance.textSecondary,
+            .paragraphStyle: paragraph,
+        ])
+        for part in data {
+            let range = (text as NSString).range(of: part)
+            if range.location != NSNotFound {
+                value.addAttribute(.font, value: TermAppearance.scaledUIFont(TypeSize.caption), range: range)
+            }
+        }
+        status.attributedStringValue = value
+        status.toolTip = text
     }
 
     // MARK: - Markdown 미리보기
@@ -317,6 +374,16 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         guard !on || canPreview, on != (preview != nil) else { return }
         let hadFocus = (window?.firstResponder as? NSView).map { $0.isDescendant(of: self) } ?? false
         document.showsPreview = on
+        // Core Animation keeps the previous rendered surface for the fade;
+        // document state, focus and view teardown still change immediately.
+        body.layer?.removeAnimation(forKey: "editorMode")
+        if window != nil, !Motion.reduced {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = Motion.standard
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            body.layer?.add(fade, forKey: "editorMode")
+        }
         applyMode()
         if hadFocus, let target = focusTarget { window?.makeFirstResponder(target) }
     }
@@ -738,7 +805,7 @@ final class EditorHintView: NSView {
         refreshLayerColors()
         layer?.cornerRadius = 6
         layer?.borderWidth = 1
-        label.font = TermAppearance.scaledUIFont(12)
+        label.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.row))
         label.textColor = TermAppearance.textPrimary
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -764,7 +831,7 @@ final class EditorHintView: NSView {
     }
 
     /// 글꼴 크기 배율이 바뀜
-    func refreshScale() { label.font = TermAppearance.scaledUIFont(12) }
+    func refreshScale() { label.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.row)) }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
@@ -996,109 +1063,70 @@ final class EditorHighlighter {
     }
 }
 
+/// 상태 줄 글: 줄 높이보다 큰 칸에서도 세로 가운데에 그린다(NSTextField 는 위에 붙인다).
+final class EditorStatusLabel: NSTextField {
+    private final class Cell: NSTextFieldCell {
+        override func drawingRect(forBounds rect: NSRect) -> NSRect {
+            var r = super.drawingRect(forBounds: rect)
+            let h = cellSize(forBounds: rect).height
+            if h < r.height { r.origin.y += (r.height - h) / 2; r.size.height = h }
+            return r
+        }
+    }
+    override class var cellClass: AnyClass? {
+        get { Cell.self }
+        set {}
+    }
+}
+
 // MARK: - 편집·미리보기 단추
 
 /// 상태 줄 왼쪽의 [편집 | 미리보기] 두 칸 단추(Markdown 파일만). 고른 칸은 강조색.
-final class EditorModeSwitch: NSView {
-    static var height: CGFloat { TermAppearance.scaled(16) }
-    static let titles = ["편집", "미리보기"]
+final class EditorModeSwitch: NSSegmentedControl {
+    static var height: CGFloat { TermAppearance.scaled(24) }
     var onSelect: ((Bool) -> Void)?
-    var selected = 0 {
-        didSet { if selected != oldValue { needsDisplay = true } }
+    var selected: Int {
+        get { selectedSegment }
+        set { selectedSegment = newValue }
     }
-    private var hovered: Int?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        segmentCount = 2
+        setLabel("편집", forSegment: 0)
+        setLabel("미리보기", forSegment: 1)
+        trackingMode = .selectOne
+        controlSize = .small
+        segmentStyle = .rounded
+        selectedSegment = 0
         toolTip = "편집 ↔ 미리보기 (⇧⌘V)"
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
-                                       owner: self, userInfo: nil))
+        target = self
+        action = #selector(selectMode)
+        refreshScale()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isFlipped: Bool { true }
+    var fittingWidth: CGFloat { intrinsicContentSize.width }
 
-    private func attributes(_ index: Int) -> [NSAttributedString.Key: Any] {
-        let on = index == selected
-        return [.font: TermAppearance.scaledUIFont(10, bold: on),
-                .foregroundColor: on ? TermAppearance.accent : (hovered == index ? TermAppearance.textPrimary : TermAppearance.textDim)]
+    func refreshScale() {
+        font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
+        for index in 0..<segmentCount { setWidth(0, forSegment: index) }
+        invalidateIntrinsicContentSize()
     }
 
-    /// 두 칸 폭의 합(굵은 글꼴 기준이라 고른 칸이 바뀌어도 흔들리지 않게 넉넉히)
-    var fittingWidth: CGFloat { Self.widths.reduce(0, +) }
-
-    private static var widths: [CGFloat] {
-        titles.map { ceil(($0 as NSString).size(withAttributes: [.font: TermAppearance.scaledUIFont(10, bold: true)]).width) + TermAppearance.scaled(16) }
-    }
-
-    private func segmentRects() -> [NSRect] {
-        let total = fittingWidth
-        let widths = Self.widths
-        let scale = bounds.width / max(total, 1)
-        var x: CGFloat = 0
-        return widths.map { width in
-            defer { x += width * scale }
-            return NSRect(x: x, y: 0, width: width * scale, height: bounds.height)
-        }
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        let outline = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4)
-        TermAppearance.chrome.setFill()
-        outline.fill()
-        let rects = segmentRects()
-        for (index, rect) in rects.enumerated() {
-            if index == selected {
-                let fill = NSBezierPath(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), xRadius: 3, yRadius: 3)
-                TermAppearance.accent.withAlphaComponent(0.16).setFill()
-                fill.fill()
-            }
-            let title = Self.titles[index] as NSString
-            let attrs = attributes(index)
-            let size = title.size(withAttributes: attrs)
-            title.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2), withAttributes: attrs)
-        }
-        if rects.count == 2 {
-            TermAppearance.border.setFill()
-            NSRect(x: rects[1].minX, y: 3, width: 1, height: bounds.height - 6).fill()
-        }
-        (selected == 1 ? TermAppearance.accent.withAlphaComponent(0.55) : TermAppearance.border).setStroke()
-        outline.lineWidth = 1
-        outline.stroke()
-    }
-
-    private func index(at event: NSEvent) -> Int? {
-        let point = convert(event.locationInWindow, from: nil)
-        return segmentRects().firstIndex { $0.contains(point) }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard let index = index(at: event) else { return }
-        onSelect?(index == 1)
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        let index = index(at: event)
-        if index != hovered { hovered = index; needsDisplay = true }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hovered = nil
-        needsDisplay = true
-    }
-
-    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    @objc private func selectMode() { onSelect?(selectedSegment == 1) }
 }
 
 // MARK: - 배너·안내
 
 /// "디스크에서 바뀌었습니다 · 다시 읽기 / 내 것으로 덮어쓰기"
 final class EditorBannerView: NSView {
-    static var height: CGFloat { TermAppearance.scaled(30) }
+    static var height: CGFloat { TermAppearance.scaled(32) }
     var onReload: (() -> Void)?
     var onOverwrite: (() -> Void)?
     private let label = NSTextField(labelWithString: "")
+    private let warning = NSImageView()
     private let reload = NSButton(title: "다시 읽기", target: nil, action: nil)
     private let overwrite = NSButton(title: "내 것으로 덮어쓰기", target: nil, action: nil)
 
@@ -1107,29 +1135,34 @@ final class EditorBannerView: NSView {
         wantsLayer = true
         refreshLayerColors()
         clipsToBounds = true
-        label.font = TermAppearance.scaledUIFont(11, bold: true)
-        label.textColor = NSColor.palette(.editorBannerText)
+        label.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
+        label.textColor = TermAppearance.textSecondary
+        warning.image = NSImage(systemSymbolName: "exclamationmark.triangle", accessibilityDescription: "디스크 변경")
+        warning.contentTintColor = TermAppearance.warning
         label.lineBreakMode = .byTruncatingTail
         for button in [reload, overwrite] {
-            button.bezelStyle = .recessed
+            button.bezelStyle = .rounded
             button.controlSize = .small
-            button.font = TermAppearance.scaledUIFont(11)
+            button.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
             button.target = self
         }
         reload.action = #selector(reloadPressed)
         overwrite.action = #selector(overwritePressed)
-        for view in [label, reload, overwrite] as [NSView] {
+        for view in [warning, label, reload, overwrite] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            warning.leadingAnchor.constraint(equalTo: leadingAnchor, constant: TermAppearance.scaled(Space.md)),
+            warning.centerYAnchor.constraint(equalTo: centerYAnchor),
+            warning.widthAnchor.constraint(equalToConstant: TermAppearance.scaled(Space.lg)),
+            label.leadingAnchor.constraint(equalTo: warning.trailingAnchor, constant: TermAppearance.scaled(Space.sm)),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            reload.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 10),
+            reload.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: TermAppearance.scaled(Space.sm)),
             reload.centerYAnchor.constraint(equalTo: centerYAnchor),
-            overwrite.leadingAnchor.constraint(equalTo: reload.trailingAnchor, constant: 6),
-            overwrite.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            overwrite.leadingAnchor.constraint(equalTo: reload.trailingAnchor, constant: TermAppearance.scaled(Space.sm)),
+            overwrite.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -TermAppearance.scaled(Space.md)),
             overwrite.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -1137,7 +1170,7 @@ final class EditorBannerView: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     private func refreshLayerColors() {
-        layer?.backgroundColor = NSColor.palette(.editorBannerBackground).cg(in: self)
+        layer?.backgroundColor = TermAppearance.chrome.cg(in: self)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -1149,11 +1182,11 @@ final class EditorBannerView: NSView {
         isHidden = conflict == nil
         switch conflict {
         case .changed?:
-            label.stringValue = "⚠ 디스크에서 바뀌었습니다 (내 편집은 아직 저장 안 됨)"
+            label.stringValue = "디스크에서 바뀌었습니다 (내 편집은 아직 저장 안 됨)"
             reload.isHidden = false
             overwrite.title = "내 것으로 덮어쓰기"
         case .deleted?:
-            label.stringValue = "⚠ 디스크에서 지워졌습니다"
+            label.stringValue = "디스크에서 지워졌습니다"
             reload.isHidden = true
             overwrite.title = "내 것으로 저장"
         case nil:
@@ -1163,9 +1196,9 @@ final class EditorBannerView: NSView {
 
     /// 글꼴 크기 배율이 바뀜
     func refreshScale() {
-        label.font = TermAppearance.scaledUIFont(11, bold: true)
-        reload.font = TermAppearance.scaledUIFont(11)
-        overwrite.font = TermAppearance.scaledUIFont(11)
+        label.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
+        reload.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
+        overwrite.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
     }
 
     @objc private func reloadPressed() { onReload?() }
@@ -1192,14 +1225,14 @@ final class EditorNoticeView: NSView {
         icon.symbolConfiguration = .init(pointSize: 28, weight: .light)
         icon.contentTintColor = TermAppearance.textDim
         let titleLabel = NSTextField(wrappingLabelWithString: title)
-        titleLabel.font = TermAppearance.scaledUIFont(13, bold: true)
+        titleLabel.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.emphasis), weight: .semibold)
         titleLabel.textColor = TermAppearance.textPrimary
         titleLabel.alignment = .center
         let detailLabel = NSTextField(wrappingLabelWithString: (detail as NSString).abbreviatingWithTildeInPath)
-        detailLabel.font = TermAppearance.scaledUIFont(11)
+        detailLabel.font = TermAppearance.scaledUIFont(TypeSize.secondary)
         self.titleLabel = titleLabel
         self.detailLabel = detailLabel
-        detailLabel.textColor = TermAppearance.textDim
+        detailLabel.textColor = TermAppearance.textSecondary
         detailLabel.alignment = .center
         let reveal = NSButton(title: "Finder 에서 보기", target: self, action: #selector(revealInFinder))
         reveal.bezelStyle = .rounded
@@ -1228,8 +1261,8 @@ final class EditorNoticeView: NSView {
 
     /// 글꼴 크기 배율이 바뀜
     func refreshScale() {
-        titleLabel?.font = TermAppearance.scaledUIFont(13, bold: true)
-        detailLabel?.font = TermAppearance.scaledUIFont(11)
+        titleLabel?.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.emphasis), weight: .semibold)
+        detailLabel?.font = TermAppearance.scaledUIFont(TypeSize.secondary)
     }
 
     @objc private func revealInFinder() {

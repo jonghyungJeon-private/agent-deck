@@ -445,24 +445,26 @@ enum MarkdownPage {
         let bg = hex(.background, dark: dark)
         let text = hex(.editorText, dark: dark)
         let strong = hex(.textPrimary, dark: dark)
-        let dim = hex(.textDim, dark: dark)
+        let dim = hex(.textSecondary, dark: dark)
         let border = hex(.border, dark: dark)
         let chrome = hex(.chrome, dark: dark)
         let raised = hex(.chromeRaised, dark: dark)
-        let accent = hex(.accent, dark: dark)
+        let accent = hex(.accentText, dark: dark)
         let selection = hex(.editorSelection, dark: dark)
-        let quote = dark ? "#a7adb8" : "#5a606c"
-        let stripe = dark ? "#2b3038" : "#f1f2f5"
-        let mark = dark ? "#e5c07b40" : "#f2c94c55"
+        let accentFill = hex(.accentFill, dark: dark)
+        let onAccent = hex(.onAccent, dark: dark)
+        let quote = hex(.markdownQuote, dark: dark)
+        let stripe = hex(.markdownTableStripe, dark: dark)
+        let mark = hex(.markdownHighlight, dark: dark)
         // 웹 화면은 다른 프로세스라 앱에 등록한 글꼴을 못 본다 → 앱에 넣은 D2Coding 을 한글이 있을 때만 받아 쓴다(위 @font-face)
         let mono = "\"CT Mono\", \"CT Hangul\", \"D2Coding\", \"NanumGothicCoding\", ui-monospace, Menlo, monospace"
         let check = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.4l3 3 6-7' "
-            + "fill='none' stroke='%23\(bg.dropFirst())' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+            + "fill='none' stroke='%23\(onAccent.dropFirst())' stroke-width='2.3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
         return """
         html{background:\(bg)}
         body{margin:0;background:\(bg);color:\(text);font:15px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Helvetica Neue",sans-serif;
         -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;word-break:keep-all;overflow-wrap:break-word}
-        main{max-width:860px;margin:0 auto;padding:30px 44px 120px}
+        main{box-sizing:border-box;max-width:calc(75ch + 88px);margin:0 auto;padding:clamp(16px,4vw,30px) clamp(16px,5vw,44px) clamp(48px,12vw,120px);min-width:0}
         main>:first-child{margin-top:0!important}
         main:empty::before{content:"빈 문서입니다";color:\(dim)}
         p,ul,ol,dl,table,pre,blockquote,details,figure{margin:0 0 16px}
@@ -479,25 +481,24 @@ enum MarkdownPage {
         :not(pre)>code{font-size:.86em;background:\(raised);border:1px solid \(border);border-radius:5px;padding:.1em .38em;color:\(strong)}
         pre{background:\(chrome);border:1px solid \(border);border-radius:8px;padding:14px 16px;overflow:auto;line-height:1.55}
         pre code{font-size:13px;color:\(text);white-space:pre;word-break:normal}
-        blockquote{margin-left:0;padding:2px 0 2px 16px;border-left:3px solid \(accent)80;color:\(quote)}
+        blockquote{margin-left:0;padding:2px 0 2px 16px;border-left:1px solid \(border);color:\(quote)}
         blockquote>:last-child,li>:last-child,details>:last-child{margin-bottom:0}
         ul,ol{padding-left:1.7em}li+li{margin-top:.28em}li>ul,li>ol{margin:.28em 0 0}li>p{margin:0 0 8px}
         li::marker{color:\(dim)}
         li:has(>input[type=checkbox]){list-style:none}
         input[type=checkbox]{-webkit-appearance:none;appearance:none;width:15px;height:15px;margin:0 .55em 0 -1.45em;vertical-align:-2px;
         border:1.5px solid \(dim);border-radius:4px;background:transparent}
-        input[type=checkbox]:checked{background:\(accent) url("\(check)") center/12px no-repeat;border-color:\(accent)}
+        input[type=checkbox]:checked{background:\(accentFill) url("\(check)") center/12px no-repeat;border-color:\(accentFill)}
         table{border-collapse:collapse;display:block;width:max-content;max-width:100%;overflow:auto;font-size:.94em;line-height:1.55}
         th,td{border:1px solid \(border);padding:7px 13px}
         th{background:\(raised);color:\(strong);font-weight:600}
         tr:nth-child(2n) td{background:\(stripe)}
         img{max-width:100%;border-radius:4px}
         .remote-image{display:inline-block;font-size:.84em;line-height:1.6;color:\(dim);border:1px dashed \(border);border-radius:5px;padding:0 .5em}
-        .remote-image::before{content:"🖼 "}
         kbd{display:inline-block;padding:.05em .45em;border:1px solid \(border);border-bottom-width:2px;border-radius:5px;background:\(raised);
         color:\(strong);font-size:.8em;line-height:1.5}
         details{border:1px solid \(border);border-radius:8px;padding:8px 14px}
-        summary{cursor:pointer;color:\(strong);font-weight:600}
+        summary{cursor:default;color:\(strong);font-weight:600}
         details[open]>summary{margin-bottom:8px}
         mark{background:\(mark);color:\(strong);border-radius:3px;padding:0 .15em}
         .notice{color:\(dim)}
