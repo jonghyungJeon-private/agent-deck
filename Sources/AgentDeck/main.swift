@@ -679,6 +679,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             print("fake-session-states \(model.debugFakeStates.count)")
             fflush(stdout)
             #endif
+        case "fake-footer":
+            // fake-footer <장면[,장면…]|off>: 상태 줄 입력을 메모리에서만 덮어쓴다(디버그 빌드 전용). 장면: normal · update · error · failed · connecting · limited
+            // · usage-high · usage-none · usage-stale · usage-claude-only. 저장·네트워크·진짜 연결은 건드리지 않는다.
+            #if DEBUG
+            FooterDebug.shared.scenarios = argument == "off" ? [] : Set(argument.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init))
+            print("fake-footer \(FooterDebug.shared.scenarios.sorted().joined(separator: ","))")
+            fflush(stdout)
+            #endif
         case "quit":
             // 앱 메뉴 "종료"(⌘Q)와 같은 길 — 데몬이 앱과 따로 남는지 시험할 때
             NSApp.terminate(nil)
