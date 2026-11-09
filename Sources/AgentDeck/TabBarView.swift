@@ -1,6 +1,141 @@
 import AppKit
+import TermLayout
 
-/// 터미널 위 탭 줄(herdr 처럼 납작하게, 지금 탭은 강조색으로 칠한다). AppKit 으로 직접 그린다.
+// MARK: - 탭 줄·도구 줄·분할 제목이 함께 쓰는 작은 도구(그리는 쪽 전용)
+
+/// 짧은 화면 전환(0 → 1, 감속). 직접 그리는 뷰가 `onTick` 에서 다시 그린다. 동작 줄이기면 움직임 없이 바로 끝난다.
+final class ViewTween {
+    private var timer: Timer?
+    private var startTime: CFTimeInterval = 0
+    private var duration: Double = Motion.standard
+    private(set) var progress: CGFloat = 1
+    var onTick: (() -> Void)?
+
+    /// 감속(ease-out) 을 건 진행 0…1
+    var eased: CGFloat { 1 - pow(1 - progress, 3) }
+    var isRunning: Bool { timer != nil }
+
+    func run(duration: Double) {
+        stop()
+        guard !Motion.reduced else {
+            progress = 1
+            return
+        }
+        self.duration = duration
+        startTime = CACurrentMediaTime()
+        progress = 0
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    private func tick() {
+        let value = min(1, (CACurrentMediaTime() - startTime) / duration)
+        progress = CGFloat(value)
+        if value >= 1 { stop() }
+        onTick?()
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    /// 움직임 없이 끝난 상태로
+    func settle() {
+        stop()
+        progress = 1
+    }
+
+    deinit { timer?.invalidate() }
+}
+
+/// 그리는 중에 두 색을 섞는다(색 이름표는 그리는 모양으로 풀린다). t = 0 → a, 1 → b.
+func mixColor(_ a: NSColor, _ b: NSColor, _ t: CGFloat) -> NSColor {
+    guard t > 0 else { return a }
+    guard t < 1 else { return b }
+    guard let x = a.usingColorSpace(.sRGB), let y = b.usingColorSpace(.sRGB) else { return b }
+    func lerp(_ p: CGFloat, _ q: CGFloat) -> CGFloat { p + (q - p) * t }
+    return NSColor(srgbRed: lerp(x.redComponent, y.redComponent), green: lerp(x.greenComponent, y.greenComponent),
+                   blue: lerp(x.blueComponent, y.blueComponent), alpha: lerp(x.alphaComponent, y.alphaComponent))
+}
+
+func lerpRect(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
+    CGRect(x: a.minX + (b.minX - a.minX) * t, y: a.minY + (b.minY - a.minY) * t,
+           width: a.width + (b.width - a.width) * t, height: a.height + (b.height - a.height) * t)
+}
+
+/// SF Symbol 을 글자 두께로 칠해 상자 가운데에 그린다(그리는 뷰 좌표가 뒤집혀 있어도 바로 선다).
+enum SymbolDrawing {
+    private static var cache: [String: NSImage] = [:]
+
+    static func image(_ name: String, size: CGFloat, weight: NSFont.Weight) -> NSImage? {
+        let key = "\(name)|\(size)|\(weight.rawValue)"
+        if let cached = cache[key] { return cached }
+        let configuration = NSImage.SymbolConfiguration(pointSize: size, weight: weight)
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
+        else { return nil }
+        cache[key] = image
+        return image
+    }
+
+    /// 그린 가로 길이
+    @discardableResult
+    static func draw(_ name: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor, centeredIn box: CGRect) -> CGFloat {
+        guard let base = image(name, size: size, weight: weight) else { return 0 }
+        let tinted = NSImage(size: base.size, flipped: false) { rect in
+            base.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        let rect = CGRect(x: box.midX - base.size.width / 2, y: box.midY - base.size.height / 2,
+                          width: base.size.width, height: base.size.height)
+        tinted.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        return base.size.width
+    }
+}
+
+/// 탭·세션 종류: 앞에 아이콘 + 종류 색(claude ✻ 주황 · codex ‹› 청록 · 셸 ›_ 중립). 편집기 탭은 문서 아이콘.
+enum SessionKind: Equatable {
+    case claude, codex, shell, document
+
+    var color: NSColor {
+        switch self {
+        case .claude: return TermAppearance.typeClaude
+        case .codex: return TermAppearance.typeCodex
+        case .shell: return TermAppearance.typeShell
+        case .document: return TermAppearance.textSecondary
+        }
+    }
+
+    /// 상자 안에 아이콘을 그린다. claude 는 SF Symbol 이 없어 선으로 직접 그린 ✻(8갈래).
+    func drawIcon(size: CGFloat, in box: CGRect) {
+        switch self {
+        case .claude:
+            let radius = min(box.width, box.height) / 2
+            let width = max(1.1, radius * 0.3)
+            let path = NSBezierPath()
+            path.lineCapStyle = .round
+            path.lineWidth = width
+            for spoke in 0..<8 {
+                let angle = CGFloat(spoke) * .pi / 4
+                path.move(to: CGPoint(x: box.midX + cos(angle) * radius * 0.2, y: box.midY + sin(angle) * radius * 0.2))
+                path.line(to: CGPoint(x: box.midX + cos(angle) * (radius - width / 2), y: box.midY + sin(angle) * (radius - width / 2)))
+            }
+            color.setStroke()
+            path.stroke()
+        case .codex:
+            SymbolDrawing.draw("chevron.left.forwardslash.chevron.right", size: size, weight: .semibold, color: color, centeredIn: box)
+        case .shell:
+            SymbolDrawing.draw("terminal", size: size, weight: .semibold, color: color, centeredIn: box)
+        case .document:
+            SymbolDrawing.draw("doc.text", size: size, weight: .regular, color: color, centeredIn: box)
+        }
+    }
+}
+
+/// 터미널 위 탭 줄. AppKit 으로 직접 그린다. 지금 탭은 화면과 같은 바탕으로 이어 붙이고(위에 2pt 강조 줄), 나머지는 글자만.
 final class TabBarView: NSView, NSViewToolTipOwner {
     struct Tab: Equatable {
         var title: String
@@ -10,11 +145,16 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         var status: WorkStatus = .none
         /// 탭 안 화면 중 권한·승인·샌드박스를 건너뛰는 옵션으로 띄운 것의 설명(풍선 도움말에 ⚠ 로)
         var warning: String?
+        /// 제목 앞 아이콘: 탭의 포커스 화면 종류(세션 목록과 같은 판별 — TermModel 줄에서 읽기만 한다)
+        var kind: SessionKind = .shell
     }
 
     /// 상태 점 지름과 제목까지 간격
     private static var dotSize: CGFloat { TermAppearance.scaled(8) }
-    private static var dotGap: CGFloat { TermAppearance.scaled(6) }
+    private static var dotGap: CGFloat { TermAppearance.scaled(8) }
+    /// 종류 아이콘 상자와 제목까지 간격
+    private static var iconBox: CGFloat { TermAppearance.scaled(12) }
+    private static var iconGap: CGFloat { TermAppearance.scaled(6) }
     /// 배율을 곱한 길이
     private func ui(_ value: CGFloat) -> CGFloat { TermAppearance.scaled(value) }
 
@@ -32,20 +172,118 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     private var closeRects: [CGRect] = []
     private var plusRect: CGRect = .zero
 
+    // 움직임: 탭이 생기고 사라질 때 나머지가 미끄러지고, 지금 탭 표시가 옆 탭으로 미끄러진다
+    private let tween = ViewTween()
+    private var fromRects: [CGRect] = []
+    private var fromAlpha: [CGFloat] = []
+    private var fromPlus: CGRect = .zero
+    private var fromSelection: CGRect?
+    private var ghost: (tab: Tab, rect: CGRect)?
+    private var pulseTimer: Timer?
+    private var pulseObserver: NSObjectProtocol?
+
     override var isFlipped: Bool { true }
 
-    /// 글꼴 크기 배율이 바뀜: 탭 폭·글꼴을 다시
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func setup() {
+        tween.onTick = { [weak self] in self?.needsDisplay = true }
+        pulseObserver = NotificationCenter.default.addObserver(forName: WorkingPulse.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.needsDisplay = true
+            self?.syncPulse()
+        }
+    }
+
+    deinit {
+        pulseTimer?.invalidate()
+        if let pulseObserver { NotificationCenter.default.removeObserver(pulseObserver) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        syncPulse()
+    }
+
+    /// 글꼴 크기 배율이 바뀜: 탭 폭·글꼴을 다시(움직임 없이)
     func scaleChanged() {
         layoutTabs()
+        settle()
         needsDisplay = true
     }
 
     func update(tabs: [Tab], selected: Int?) {
         guard tabs != self.tabs || selected != self.selected else { return }
+        let old = self.tabs
+        let previousRects = displayRects()
+        let previousSelection = currentSelectionRect()
+        let previousPlus = displayPlus()
         self.tabs = tabs
         self.selected = selected
         layoutTabs()
+        // 끌기·처음 뜰 때·창이 안 보일 때·동작 줄이기에서는 움직임 없이 바로
+        let animates = !old.isEmpty && !tabs.isEmpty && drag == nil && window?.isVisible == true && !Motion.reduced
+        if animates, let change = Self.change(from: old, to: tabs), previousRects.count == old.count {
+            fromRects = change.source.enumerated().map { index, source in source.map { previousRects[$0] } ?? tabRects[index] }
+            fromAlpha = change.source.map { $0 == nil ? 0 : 1 }
+            ghost = change.removed.map { (old[$0], previousRects[$0]) }
+            fromSelection = previousSelection
+            fromPlus = previousPlus
+            tween.run(duration: Motion.standard)
+        } else {
+            settle()
+        }
         needsDisplay = true
+        syncPulse()
+    }
+
+    /// 바뀐 모양을 한 번의 끼움·빼기·같은 자리 변화로 풀 수 있으면 (새 탭마다 이전 탭 번호, 빠진 이전 탭 번호). 순서를 바꾼 것 등은 nil(움직임 없음).
+    private static func change(from old: [Tab], to new: [Tab]) -> (source: [Int?], removed: Int?)? {
+        if new.count == old.count {
+            let differing = new.indices.filter { old[$0] != new[$0] }
+            return differing.count < 2 ? (new.indices.map { Int?.some($0) }, nil) : nil
+        }
+        let common = zip(old, new).prefix { $0 == $1 }.count
+        if new.count == old.count + 1, Array(old[common...]) == Array(new[(common + 1)...]) {
+            return (new.indices.map { $0 < common ? $0 : $0 == common ? nil : $0 - 1 }, nil)
+        }
+        if new.count == old.count - 1, Array(old[(common + 1)...]) == Array(new[common...]) {
+            return (new.indices.map { $0 < common ? $0 : $0 + 1 }, common)
+        }
+        return nil
+    }
+
+    /// 움직임 없이 지금 자리를 그대로
+    private func settle() {
+        tween.settle()
+        fromRects = tabRects
+        fromAlpha = Array(repeating: 1, count: tabRects.count)
+        fromPlus = plusRect
+        fromSelection = nil
+        ghost = nil
+    }
+
+    private func displayRects() -> [CGRect] {
+        guard fromRects.count == tabRects.count else { return tabRects }
+        let t = tween.eased
+        return tabRects.indices.map { lerpRect(fromRects[$0], tabRects[$0], t) }
+    }
+
+    private func displayAlpha(_ index: Int) -> CGFloat {
+        guard fromAlpha.indices.contains(index) else { return 1 }
+        return fromAlpha[index] + (1 - fromAlpha[index]) * tween.eased
+    }
+
+    private func displayPlus() -> CGRect { lerpRect(fromPlus == .zero ? plusRect : fromPlus, plusRect, tween.eased) }
+
+    private func currentSelectionRect() -> CGRect? {
+        guard let selected, tabRects.indices.contains(selected) else { return nil }
+        guard let fromSelection else { return displayRects()[selected] }
+        return lerpRect(fromSelection, tabRects[selected], tween.eased)
     }
 
     /// 긴 대화 제목은 가운데를 줄인다(탭이 너무 넓어지지 않게)
@@ -54,27 +292,41 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         return String(title.prefix(limit - 9)) + "…" + String(title.suffix(8))
     }
 
-    private func titleAttributes(_ index: Int) -> [NSAttributedString.Key: Any] {
-        let isSelected = index == selected
-        // 입력 대기 탭은 붉은 바탕 위라 흐린 글자 대신 밝은 글자로
-        var waiting = false
-        if tabs.indices.contains(index), case .waiting = tabs[index].status { waiting = true }
-        let color = isSelected ? TermAppearance.chrome
-            : index == hovered || waiting ? TermAppearance.textPrimary : TermAppearance.textDim
-        return [.font: TermAppearance.scaledUIFont(12, bold: isSelected), .foregroundColor: color]
+    /// 제목은 두께를 늘 같게(고르면 폭이 변하지 않게). 지금 탭 = 으뜸 글자색, 나머지 = 보조 글자색.
+    private func titleAttributes(selected isSelected: Bool, hovered: Bool, waiting: Bool) -> [NSAttributedString.Key: Any] {
+        let color = isSelected || hovered || waiting ? TermAppearance.textPrimary : TermAppearance.textSecondary
+        return [.font: TermAppearance.scaledUIFont(12), .foregroundColor: color]
     }
 
-    private func smallAttributes(_ index: Int, alpha: CGFloat) -> [NSAttributedString.Key: Any] {
-        let color = index == selected ? TermAppearance.chrome : TermAppearance.textDim
-        return [.font: TermAppearance.scaledUIFont(10), .foregroundColor: color.withAlphaComponent(alpha)]
+    private var smallAttributes: [NSAttributedString.Key: Any] {
+        [.font: TermAppearance.scaledUIFont(10), .foregroundColor: TermAppearance.textSecondary]
     }
 
-    private func badge(_ tab: Tab) -> String? {
-        tab.paneCount > 1 ? (tab.zoomed ? "◫\(tab.paneCount)" : "⊞\(tab.paneCount)") : nil
+    private func isWaiting(_ tab: Tab) -> Bool {
+        if case .waiting = tab.status { return true }
+        return false
     }
 
-    private func trailing(_ index: Int) -> String {
-        index < 9 ? "⌘\(index + 1)" : "×"
+    /// 점을 그릴 상태(claude 인데 아직 상태를 모르는 것은 종류 아이콘이 이미 알려 주므로 점을 안 둔다)
+    private func showsDot(_ status: WorkStatus) -> Bool {
+        switch status {
+        case .none, .unknown, .codexUnknown: return false
+        default: return true
+        }
+    }
+
+    private func trailing(_ index: Int) -> String? {
+        index < 9 ? "⌘\(index + 1)" : nil
+    }
+
+    private func tailWidth(_ index: Int) -> CGFloat {
+        let text = trailing(index).map { ($0 as NSString).size(withAttributes: smallAttributes).width } ?? 0
+        return max(text, ui(12))
+    }
+
+    private func badgeWidth(_ tab: Tab) -> CGFloat? {
+        guard tab.paneCount > 1 else { return nil }
+        return ui(12) + ui(3) + ("\(tab.paneCount)" as NSString).size(withAttributes: smallAttributes).width
     }
 
     private func layoutTabs() {
@@ -84,19 +336,18 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         let height = bounds.height
         for (index, tab) in tabs.enumerated() {
             var width: CGFloat = ui(12)
-            if tab.status != .none { width += Self.dotSize + Self.dotGap }
-            width += (Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(index)).width
-            if let badge = badge(tab) {
-                width += ui(6) + (badge as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width
-            }
-            let tail = max((trailing(index) as NSString).size(withAttributes: smallAttributes(index, alpha: 1)).width, ui(12))
-            width += ui(10) + tail + ui(12)
+            if showsDot(tab.status) { width += Self.dotSize + Self.dotGap }
+            width += Self.iconBox + Self.iconGap
+            width += (Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(selected: false, hovered: false, waiting: false)).width
+            if let badge = badgeWidth(tab) { width += ui(8) + badge }
+            let tail = tailWidth(index)
+            width += ui(12) + tail + ui(12)
             let rect = CGRect(x: x, y: 0, width: ceil(width), height: height)
             tabRects.append(rect)
             closeRects.append(CGRect(x: rect.maxX - ui(12) - tail - ui(4), y: 0, width: tail + ui(8), height: height))
             x = rect.maxX
         }
-        plusRect = CGRect(x: x, y: 0, width: ui(30), height: height)
+        plusRect = CGRect(x: x, y: 0, width: ui(32), height: height)
         // 풍선 도움말: 줄이지 않은 제목(+ 위험한 실행 옵션)
         removeAllToolTips()
         for rect in tabRects { addToolTip(rect, owner: self, userData: nil) }
@@ -111,84 +362,133 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         layoutTabs()
+        settle()
     }
+
+    // MARK: - 그리기
 
     override func draw(_ dirtyRect: NSRect) {
         TermAppearance.chrome.setFill()
         bounds.fill()
+        let selection = drag == nil ? currentSelectionRect() : nil
+        // 아래 경계: 지금 탭 밑만 비워 화면과 이어 보이게
+        TermAppearance.border.setFill()
+        if let selection {
+            CGRect(x: 0, y: bounds.height - 1, width: max(0, selection.minX), height: 1).fill()
+            CGRect(x: selection.maxX, y: bounds.height - 1, width: max(0, bounds.width - selection.maxX), height: 1).fill()
+        } else {
+            CGRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
+        }
         // 끄는 동안엔 탭을 층(그림)으로 옮겨 그리므로 바탕만
-        for (index, tab) in tabs.enumerated() where index < tabRects.count && drag == nil {
-            let rect = tabRects[index]
-            let isSelected = index == selected
-            if isSelected {
-                TermAppearance.accent.setFill()
-                rect.fill()
-            } else if index == hovered {
-                TermAppearance.chromeRaised.setFill()
-                rect.fill()
-            }
-            // 안 보고 있는 탭이 입력 대기면 바탕을 붉게 물들이고 아래에 붉은 줄(색과 모양 둘 다로 눈에 띄게)
-            if !isSelected, case .waiting = tab.status {
-                TermAppearance.red.withAlphaComponent(index == hovered ? 0.26 : 0.18).setFill()
-                rect.fill()
-                TermAppearance.red.setFill()
-                CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
-            }
-            var x = rect.minX + ui(12)
-            if tab.status != .none {
-                drawDot(tab.status, at: CGPoint(x: x + Self.dotSize / 2, y: rect.midY), onAccent: isSelected)
-                x += Self.dotSize + Self.dotGap
-            }
-            let title = Self.short(tab.title) as NSString
-            let attributes = titleAttributes(index)
-            let size = title.size(withAttributes: attributes)
-            title.draw(at: CGPoint(x: x, y: (rect.height - size.height) / 2), withAttributes: attributes)
-            x += size.width
-            if let badge = badge(tab) {
-                let small = smallAttributes(index, alpha: 0.8)
-                let badgeSize = (badge as NSString).size(withAttributes: small)
-                (badge as NSString).draw(at: CGPoint(x: x + ui(6), y: (rect.height - badgeSize.height) / 2), withAttributes: small)
-            }
-            // 오른쪽 끝: 평소엔 ⌘숫자, 마우스를 올리면 닫기(×)
-            let closing = index == hovered
-            let tail = (closing ? "×" : trailing(index)) as NSString
-            var tailAttributes = smallAttributes(index, alpha: closing ? (hoveringClose ? 1 : 0.8) : 0.6)
-            if closing { tailAttributes[.font] = TermAppearance.scaledUIFont(13) }
-            let tailSize = tail.size(withAttributes: tailAttributes)
-            let closeRect = closeRects[index]
-            tail.draw(at: CGPoint(x: closeRect.midX - tailSize.width / 2, y: (rect.height - tailSize.height) / 2),
-                      withAttributes: tailAttributes)
-            if !isSelected, index + 1 != selected {
-                TermAppearance.border.withAlphaComponent(0.6).setFill()
-                CGRect(x: rect.maxX - 0.5, y: rect.midY - ui(7), width: 1, height: ui(14)).fill()
-            }
+        guard drag == nil else { return }
+        if let selection {
+            TermAppearance.background.setFill()
+            selection.fill()
+            TermAppearance.accent.setFill()
+            CGRect(x: selection.minX, y: 0, width: selection.width, height: 2).fill()
+        }
+        let rects = displayRects()
+        for (index, tab) in tabs.enumerated() where index < rects.count {
+            let rect = rects[index]
+            guard rect.intersects(dirtyRect) else { continue }
+            drawTab(tab, index: index, rect: rect, alpha: displayAlpha(index))
+        }
+        if let ghost, tween.isRunning {
+            // 닫힌 탭은 Motion.exit 만에 걷힌다
+            let fade = 1 - min(1, tween.progress * CGFloat(Motion.standard / Motion.exit))
+            if fade > 0 { drawTab(ghost.tab, index: nil, rect: ghost.rect, alpha: fade) }
         }
         // 분할 화면을 끌어 와 탭으로 놓을 틈
         if let insertion, let last = tabRects.last {
             let x = insertion < tabRects.count ? tabRects[insertion].minX : last.maxX
             TermAppearance.accent.setFill()
-            CGRect(x: max(0, x - 1.5), y: 3, width: 3, height: bounds.height - 6).fill()
+            CGRect(x: max(0, x - 1), y: 4, width: 2, height: bounds.height - 8).fill()
         }
-        let plus = "+" as NSString
-        let plusAttributes: [NSAttributedString.Key: Any] = [
-            .font: TermAppearance.scaledUIFont(14),
-            .foregroundColor: hoveringPlus ? TermAppearance.textPrimary : TermAppearance.textDim,
-        ]
-        let plusSize = plus.size(withAttributes: plusAttributes)
-        plus.draw(at: CGPoint(x: plusRect.midX - plusSize.width / 2, y: (plusRect.height - plusSize.height) / 2),
-                  withAttributes: plusAttributes)
+        let plus = displayPlus()
+        if hoveringPlus {
+            TermAppearance.chromeRaised.setFill()
+            NSBezierPath(roundedRect: CGRect(x: plus.midX - ui(12), y: plus.midY - ui(12), width: ui(24), height: ui(24)),
+                         xRadius: 6, yRadius: 6).fill()
+        }
+        SymbolDrawing.draw("plus", size: ui(11), weight: .semibold,
+                           color: hoveringPlus ? TermAppearance.textPrimary : TermAppearance.textSecondary, centeredIn: plus)
     }
 
-    /// 상태 점(사이드바와 같은 모양): 쉬는 중은 속 빈 점, 입력 대기는 테두리 두른 점, 오케스트레이션 중은 점선 고리 + 가운데 점, 나머지는 찬 점.
-    /// 강조색(지금 탭) 위에서는 바탕색 테두리를 둘러 점이 묻히지 않게 한다.
-    private func drawDot(_ status: WorkStatus, at center: CGPoint, onAccent: Bool) {
+    /// 탭 하나. index == nil 이면 닫히는 중인 탭(마우스 상태 없음). alpha < 1 이면 통째로 옅게(생기고 사라질 때).
+    private func drawTab(_ tab: Tab, index: Int?, rect: CGRect, alpha: CGFloat) {
+        let context = NSGraphicsContext.current?.cgContext
+        if alpha < 1 {
+            context?.saveGState()
+            context?.setAlpha(alpha)
+            context?.beginTransparencyLayer(auxiliaryInfo: nil)
+        }
+        defer {
+            if alpha < 1 {
+                context?.endTransparencyLayer()
+                context?.restoreGState()
+            }
+        }
+        let isSelected = index != nil && index == selected
+        let isHovered = index != nil && index == hovered
+        let waiting = isWaiting(tab)
+        var background = TermAppearance.chrome
+        if isSelected {
+            background = TermAppearance.background
+        } else if isHovered {
+            background = TermAppearance.chromeRaised
+            background.setFill()
+            rect.fill()
+        }
+        // 안 보고 있는 탭이 입력 대기면 바탕을 붉게 물들이고 아래에 붉은 줄(색과 모양 둘 다로 눈에 띄게)
+        if !isSelected, waiting {
+            TermAppearance.statusAttention.withAlphaComponent(isHovered ? 0.2 : 0.14).setFill()
+            rect.fill()
+            TermAppearance.statusAttention.setFill()
+            CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
+        }
+        var x = rect.minX + ui(12)
+        if showsDot(tab.status) {
+            drawDot(tab.status, at: CGPoint(x: x + Self.dotSize / 2, y: rect.midY), cutout: background)
+            x += Self.dotSize + Self.dotGap
+        }
+        tab.kind.drawIcon(size: ui(11), in: CGRect(x: x, y: rect.midY - Self.iconBox / 2, width: Self.iconBox, height: Self.iconBox))
+        x += Self.iconBox + Self.iconGap
+        let title = Self.short(tab.title) as NSString
+        let attributes = titleAttributes(selected: isSelected, hovered: isHovered, waiting: waiting)
+        let size = title.size(withAttributes: attributes)
+        title.draw(at: CGPoint(x: x, y: rect.midY - size.height / 2), withAttributes: attributes)
+        x += size.width
+        if tab.paneCount > 1 {
+            x += ui(8)
+            SymbolDrawing.draw(tab.zoomed ? "arrow.up.left.and.arrow.down.right" : "square.split.2x1", size: ui(10), weight: .regular,
+                               color: TermAppearance.textSecondary, centeredIn: CGRect(x: x, y: rect.midY - ui(6), width: ui(12), height: ui(12)))
+            let count = "\(tab.paneCount)" as NSString
+            let countSize = count.size(withAttributes: smallAttributes)
+            count.draw(at: CGPoint(x: x + ui(15), y: rect.midY - countSize.height / 2), withAttributes: smallAttributes)
+        }
+        // 오른쪽 끝: 평소엔 ⌘숫자, 마우스를 올리면 닫기(×)
+        guard let index else { return }
+        let tailBox = CGRect(x: rect.maxX - ui(12) - tailWidth(index), y: rect.minY, width: tailWidth(index), height: rect.height)
+        if isHovered || trailing(index) == nil {
+            SymbolDrawing.draw("xmark", size: ui(9), weight: .semibold,
+                               color: isHovered && hoveringClose ? TermAppearance.textPrimary : TermAppearance.textSecondary,
+                               centeredIn: tailBox)
+        } else if let hint = trailing(index) as NSString? {
+            let hintSize = hint.size(withAttributes: smallAttributes)
+            hint.draw(at: CGPoint(x: tailBox.midX - hintSize.width / 2, y: rect.midY - hintSize.height / 2), withAttributes: smallAttributes)
+        }
+        if !isSelected, index + 1 != selected {
+            TermAppearance.border.setFill()
+            CGRect(x: rect.maxX - 0.5, y: rect.midY - ui(7), width: 1, height: ui(14)).fill()
+        }
+    }
+
+    /// 상태 점(사이드바와 같은 약속): 작업 중 = 으뜸 글자색 찬 점이 숨 쉼, 입력 대기 = 붉은 고리 + 점(◉), 오류 = 붉은 점에 "!" 도려냄,
+    /// 끝 = 세이지 찬 점, 쉼 = 회색 고리, 오케스트레이션 = 회색 점선 고리. 색은 WorkStatus.color. cutout = 점 아래 바탕색(! 를 도려낼 때).
+    private func drawDot(_ status: WorkStatus, at center: CGPoint, cutout: NSColor) {
         let size = Self.dotSize
         let rect = CGRect(x: center.x - size / 2, y: center.y - size / 2, width: size, height: size)
         let color = status.color
-        if onAccent {
-            TermAppearance.chrome.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: -1.5, dy: -1.5)).fill()
-        }
         switch status {
         case .idle:
             color.setStroke()
@@ -203,17 +503,53 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             color.setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill()
         case .orchestrating:
-            // 점선 고리 + 가운데 작은 점(사이드바와 같은 모양)
             color.setStroke()
             let ring = NSBezierPath(ovalIn: rect.insetBy(dx: 0.6, dy: 0.6))
             ring.lineWidth = 1.2
             ring.setLineDash([1.8, 1.3], count: 2, phase: 0)
             ring.stroke()
+        case .error:
             color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: size * 0.32, dy: size * 0.32)).fill()
+            NSBezierPath(ovalIn: rect).fill()
+            // "!" 도려내기: 위 막대 + 아래 점
+            cutout.setFill()
+            let barWidth = max(1.2, size * 0.16)
+            NSBezierPath(roundedRect: CGRect(x: center.x - barWidth / 2, y: rect.minY + size * 0.2, width: barWidth, height: size * 0.36),
+                         xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
+            NSBezierPath(ovalIn: CGRect(x: center.x - barWidth / 2, y: rect.minY + size * 0.64, width: barWidth, height: barWidth)).fill()
+        case .working:
+            let running = WorkingPulse.shared.isRunning
+            let context = NSGraphicsContext.current?.cgContext
+            context?.saveGState()
+            context?.setAlpha(running ? CGFloat(WorkingPulseSpec.opacity(at: Date.timeIntervalSinceReferenceDate)) : 1)
+            color.setFill()
+            NSBezierPath(ovalIn: rect).fill()
+            context?.restoreGState()
         default:
             color.setFill()
             NSBezierPath(ovalIn: rect).fill()
+        }
+    }
+
+    /// 작업 중인 탭이 있으면 점만 30fps 로 다시 그려 숨 쉬게 한다(멈춰야 하면 타이머도 멈춤 — WorkingPulse 기준)
+    private func syncPulse() {
+        let needs = drag == nil && window != nil && WorkingPulse.shared.isRunning && tabs.contains { $0.status == .working }
+        if needs, pulseTimer == nil {
+            let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.invalidateWorkingDots() }
+            RunLoop.main.add(timer, forMode: .common)
+            pulseTimer = timer
+        } else if !needs, pulseTimer != nil {
+            pulseTimer?.invalidate()
+            pulseTimer = nil
+        }
+    }
+
+    private func invalidateWorkingDots() {
+        guard drag == nil else { return }
+        let rects = displayRects()
+        for (index, tab) in tabs.enumerated() where tab.status == .working && index < rects.count {
+            setNeedsDisplay(CGRect(x: rects[index].minX + ui(12) - 2, y: rects[index].midY - Self.dotSize, width: Self.dotSize + 4,
+                                   height: Self.dotSize * 2))
         }
     }
 
@@ -359,6 +695,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         hovered = nil
         hoveringClose = false
         hoveringPlus = false
+        settle()
         wantsLayer = true
         let images = tabRects.map(snapshot) // 바탕만 그리기 전에 찍는다
         var layers: [CALayer] = []
@@ -381,6 +718,8 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
         CATransaction.commit()
         drag = Drag(index: index, rects: tabRects, grab: grab, layers: layers, to: index)
+        pulseTimer?.invalidate()
+        pulseTimer = nil
         needsDisplay = true
     }
 
@@ -431,6 +770,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         CATransaction.commit()
         self.drag = nil
         needsDisplay = true
+        syncPulse()
         onDragOutside?(drag.index, nil)
         guard drag.rects.count == tabs.count else { return } // 끄는 사이 탭이 열리거나 닫힘
         if !drag.inside {

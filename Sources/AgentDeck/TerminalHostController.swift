@@ -8,20 +8,25 @@ import TermWire
 /// 지금 탭에 보이는 화면만 터미널 뷰를 만든다(다른 탭은 데몬이 지난 출력만 들고 있다).
 final class TerminalHostController: NSViewController {
     /// 탭 줄 높이(글꼴 크기 배율을 따른다). 도구 창 머리 줄·도구 버튼 줄도 같은 높이라 한 선에 맞는다.
-    static var tabBarHeight: CGFloat { TermAppearance.scaled(28) }
+    static var tabBarHeight: CGFloat { TermAppearance.scaled(32) }
 
     let model: TermModel
     private(set) var terminals: [String: PaneTerminal] = [:]
     /// 보이는 편집기 화면(터미널처럼 보일 때만 만든다)
     private(set) var editorViews: [String: EditorPaneView] = [:]
     private let container = SplitContainerView()
-    private let placeholder = NSTextField(labelWithString: "")
+    /// 화면이 하나도 없을 때(또는 연결 중·끊김): 아이콘 + 한 줄 안내(안내 글만 — 버튼은 두지 않는다)
+    private let placeholder = NSStackView()
+    private let placeholderIcon = NSImageView()
+    private let placeholderLabel = NSTextField(wrappingLabelWithString: "")
     private let tabBar = TabBarView()
     /// 탭·화면을 끄는 동안 놓일 곳을 보이는 덮개
     private let dropOverlay = DropOverlayView()
     private var tabBarHeight: NSLayoutConstraint!
     /// 탭 줄 아래(탭 줄이 없으면 맨 위) — 떠 있는 버튼을 이 아래에 붙인다
     var belowTabBarAnchor: NSLayoutYAxisAnchor { tabBar.bottomAnchor }
+    /// 탭 줄 세로 가운데(떠 있는 버튼을 탭 줄 오른쪽 끝에 앉힌다)
+    var tabBarCenterYAnchor: NSLayoutYAxisAnchor { tabBar.centerYAnchor }
     /// 탭 줄 높이(없으면 0)
     var tabBarInset: CGFloat { tabBarHeight?.constant ?? 0 }
     /// 탭 줄 높이가 바뀜(작은 창 자리를 다시 맞춘다)
@@ -108,8 +113,17 @@ final class TerminalHostController: NSViewController {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
-        placeholder.textColor = TermAppearance.textSecondary
-        placeholder.alignment = .center
+        placeholder.orientation = .vertical
+        placeholder.alignment = .centerX
+        placeholder.spacing = Space.sm
+        placeholderIcon.contentTintColor = TermAppearance.textDim
+        placeholderLabel.textColor = TermAppearance.textSecondary
+        placeholderLabel.alignment = .center
+        placeholderLabel.maximumNumberOfLines = 0
+        placeholderLabel.preferredMaxLayoutWidth = 320
+        placeholder.addArrangedSubview(placeholderIcon)
+        placeholder.addArrangedSubview(placeholderLabel)
+        applyPlaceholderFonts()
         tabBarHeight = tabBar.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             tabBar.topAnchor.constraint(equalTo: root.topAnchor),
@@ -193,10 +207,11 @@ final class TerminalHostController: NSViewController {
         created.forEach { $0.attach() }
 
         tabBarHeight.constant = tab == nil ? 0 : Self.tabBarHeight
+        tabBar.isHidden = tab == nil // 높이 0 이어도 그림이 경계 밖으로 새지 않게(빈 화면에 "+" 가 비치던 것)
         onTabBarHeightChanged?()
         updateTabBar()
         placeholder.isHidden = tab != nil
-        placeholder.stringValue = model.connectionStatusText ?? "왼쪽 위 버튼이나 ⌘T 로 새 화면을 여세요"
+        placeholderLabel.stringValue = model.connectionStatusText ?? "왼쪽 위 버튼이나 ⌘T 로 새 화면을 여세요"
         focusTerminal()
     }
 
@@ -218,12 +233,16 @@ final class TerminalHostController: NSViewController {
         let workspace = model.workspace
         // 탭마다 화면 상태를 찾으므로 줄을 한 번만 사전으로 만든다(탭·화면 수만큼 목록을 훑지 않게)
         let statuses = Dictionary(model.rows.map { ($0.id, $0.status) }, uniquingKeysWith: { first, _ in first })
+        let kinds: [String: SessionKind] = Dictionary(model.rows.map { row in
+            (row.id, row.isCodex ? SessionKind.codex : row.isClaude ? SessionKind.claude : SessionKind.shell)
+        }, uniquingKeysWith: { first, _ in first })
         let warnings = Dictionary(model.rows.compactMap { row in row.launchWarning.map { (row.id, $0) } },
                                   uniquingKeysWith: { first, _ in first })
         tabBar.update(tabs: workspace.tabs.map { tab in
             TabBarView.Tab(title: model.tabTitle(tab), paneCount: tab.root.panes.count, zoomed: tab.zoomed,
                            status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }),
-                           warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first)
+                           warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first,
+                           kind: EditorPane.isEditor(tab.focused) ? .document : kinds[tab.focused] ?? .shell)
         }, selected: workspace.selectedIndex)
     }
 
@@ -281,8 +300,16 @@ final class TerminalHostController: NSViewController {
         guard isViewLoaded else { return }
         if tabBarHeight.constant > 0 { tabBarHeight.constant = Self.tabBarHeight; onTabBarHeightChanged?() }
         sessionSwitcher.scaleChanged()
+        applyPlaceholderFonts()
         tabBar.scaleChanged()
         container.scaleChanged()
+    }
+
+    /// 빈 화면 안내 글꼴·아이콘 크기(글꼴 배율을 따른다)
+    private func applyPlaceholderFonts() {
+        placeholderLabel.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.emphasis))
+        let configuration = NSImage.SymbolConfiguration(pointSize: TermAppearance.scaled(28), weight: .light)
+        placeholderIcon.image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)?.withSymbolConfiguration(configuration)
     }
 
     func paneExited(_ id: String) {

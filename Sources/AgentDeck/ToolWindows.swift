@@ -128,7 +128,11 @@ final class ToolWindowsController: NSObject {
                 self?.layout.appearance = mode
                 self?.save()
             }
-        host.onTabBarHeightChanged = { [weak self] in self?.layoutFloat() }
+        host.onTabBarHeightChanged = { [weak self] in
+            self?.updateButtonsVisibility()
+            self?.layoutFloat()
+        }
+        updateButtonsVisibility()
         scratchButton.onClick = { [weak self] in self?.toggleScratch() }
         scratchPanel.addTitleButton(symbol: "power", tip: "끝내기 — 이 작은 터미널의 셸을 끝냅니다(다음에 열면 새 셸)") { [weak self] in self?.endScratch() }
         floatPanel.addTitleButton(symbol: "rectangle.portrait.and.arrow.right", tip: "별도 창으로 떼기") { [weak self] in self?.popOutBrowser() }
@@ -250,20 +254,21 @@ final class ToolWindowsController: NSObject {
 
     private var buttonConstraints: [NSLayoutConstraint] = []
 
-    /// 🌐·⌨ 를 설정한 구석에 붙인다(바꾸면 다시 붙인다). 오른쪽 위는 탭 줄 아래 10pt, 터미널 스크롤바(약 15pt)를 피해 오른쪽에서 22pt.
+    /// 🌐·⌨ 를 설정한 구석에 붙인다(바꾸면 다시 붙인다). 오른쪽 위는 탭 줄 오른쪽 끝(세로 가운데, 오른쪽에서 8pt)에 앉혀
+    /// 화면 위쪽(찾기 막대·편집기 첫 줄·오른쪽 분할 화면 모서리)을 덮지 않는다. 오른쪽 아래는 터미널 스크롤바(약 15pt)를 피해 오른쪽에서 22pt.
     private func anchorButtons() {
         NSLayoutConstraint.deactivate(buttonConstraints)
         switch layout.floatCorner {
         case .topRight:
             buttonConstraints = [
-                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.topRightSideInset),
-                browserButton.topAnchor.constraint(equalTo: host.belowTabBarAnchor, constant: Self.topInset),
+                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.tabRowSideInset),
+                browserButton.centerYAnchor.constraint(equalTo: host.tabBarCenterYAnchor),
                 scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -8),
-                scratchButton.topAnchor.constraint(equalTo: browserButton.topAnchor),
+                scratchButton.centerYAnchor.constraint(equalTo: browserButton.centerYAnchor),
             ]
         case .bottomRight:
             buttonConstraints = [
-                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -14),
+                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.bottomSideInset),
                 browserButton.bottomAnchor.constraint(equalTo: host.view.bottomAnchor, constant: -12),
                 scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -8),
                 scratchButton.bottomAnchor.constraint(equalTo: browserButton.bottomAnchor),
@@ -272,8 +277,10 @@ final class ToolWindowsController: NSObject {
         NSLayoutConstraint.activate(buttonConstraints)
     }
 
-    private static let topInset: CGFloat = 10
-    private static let topRightSideInset: CGFloat = 22
+    /// 탭 줄 안 오른쪽 여백(오른쪽 위 구석)
+    private static let tabRowSideInset: CGFloat = 8
+    /// 오른쪽 아래 구석: 터미널 스크롤바를 피한 여백
+    private static let bottomSideInset: CGFloat = 22
 
     /// 설정에서 구석을 바꿈: 버튼을 다시 붙이고, 두 작은 창의 저장된 자리는 지워 새 구석의 처음 자리로 다시 연다(열림은 그대로)
     func setFloatCorner(_ corner: FloatCorner) {
@@ -285,15 +292,22 @@ final class ToolWindowsController: NSObject {
         save()
     }
 
+    /// 화면(탭)이 하나도 없으면 🌐·⌨ 는 할 일이 없어 숨긴다(빈 화면에 떠 있지 않게)
+    private func updateButtonsVisibility() {
+        let hidden = host.tabBarInset == 0
+        browserButton.isHidden = hidden
+        scratchButton.isHidden = hidden
+    }
+
     /// 시험 명령 `float-corner <top|bottom>`
     var floatCorner: FloatCorner { layout.floatCorner }
 
     /// 구석 쪽 세로 가장자리에서 띄울 거리. 오른쪽 아래: 브라우저는 🌐 버튼 윗선 + 14pt, 작은 터미널은 아래 가장자리 + 14pt.
-    /// 오른쪽 위: 둘 다 탭 줄 + 버튼 줄(10pt + 버튼 높이) 아래 + 14pt — 버튼이 가려지지 않게.
+    /// 오른쪽 위: 둘 다 탭 줄 아래 + 14pt(버튼이 탭 줄 안에 있어 따로 비우지 않는다).
     private func edgeInset(_ kind: FloatKind) -> Double {
         switch layout.floatCorner {
         case .topRight:
-            return Double(host.tabBarInset + Self.topInset + BrowserToggleButton.size) + FloatSpec.margin
+            return Double(host.tabBarInset) + FloatSpec.margin
         case .bottomRight:
             return kind == .browser ? 12 + Double(BrowserToggleButton.size) + FloatSpec.margin : FloatSpec.margin
         }
@@ -957,7 +971,7 @@ final class DockViewController: NSViewController {
     }
 }
 
-/// 도크 위 도구 버튼 줄(탭 줄과 같은 모양: 고른 것은 강조색 바탕). 오른쪽 클릭 = 옮기기·숨기기.
+/// 도크 위 도구 버튼 줄(분할 컨트롤 모양: 고른 것은 chromeRaised 바탕 + 으뜸 글자색). 오른쪽 클릭 = 옮기기·숨기기.
 final class DockStripView: NSView {
     /// 터미널 탭 줄과 같은 높이(양쪽 줄이 한 선에 맞게)
     static var height: CGFloat { TerminalHostController.tabBarHeight }
@@ -969,43 +983,64 @@ final class DockStripView: NSView {
     private var selected: ToolID?
     private var hovered: ToolID?
     private var rects: [(ToolID, CGRect)] = []
+    /// 고른 칸이 바뀔 때 바탕·글자색이 서로 섞인다(Motion.fast): 칸마다 고름 정도(0…1)의 시작값
+    private lazy var tween: ViewTween = {
+        let tween = ViewTween()
+        tween.onTick = { [weak self] in self?.needsDisplay = true }
+        return tween
+    }()
+    private var selectionFrom: [ToolID: CGFloat] = [:]
 
     override var isFlipped: Bool { true }
 
     func scaleChanged() {
         layoutButtons()
+        tween.settle()
         needsDisplay = true
     }
 
     func update(tools: [ToolID], selected: ToolID?) {
         guard tools != self.tools || selected != self.selected else { return }
+        let animates = window?.isVisible == true && !self.tools.isEmpty && tools == self.tools
+        selectionFrom = Dictionary(uniqueKeysWithValues: self.tools.map { ($0, selectionAmount($0)) })
         self.tools = tools
         self.selected = selected
         layoutButtons()
+        if animates { tween.run(duration: Motion.fast) } else { tween.settle() }
         needsDisplay = true
     }
 
-    private func attributes(_ tool: ToolID) -> [NSAttributedString.Key: Any] {
-        let isSelected = tool == selected
-        let color = isSelected ? TermAppearance.chrome : tool == hovered ? TermAppearance.textPrimary : TermAppearance.textDim
-        return [.font: TermAppearance.scaledUIFont(11, bold: isSelected), .foregroundColor: color]
+    /// 이 칸이 골라진 정도(0 = 아님, 1 = 고름)
+    private func selectionAmount(_ tool: ToolID) -> CGFloat {
+        let target: CGFloat = tool == selected ? 1 : 0
+        let from = selectionFrom[tool] ?? target
+        return from + (target - from) * tween.eased
     }
 
-    private func hintAttributes(_ tool: ToolID) -> [NSAttributedString.Key: Any] {
-        let color = tool == selected ? TermAppearance.chrome.withAlphaComponent(0.7) : TermAppearance.textDim.withAlphaComponent(0.7)
-        return [.font: TermAppearance.scaledUIFont(9), .foregroundColor: color]
+    /// 칸 이름은 언어라 시스템 글꼴, 두께는 늘 같게(고르면 폭이 변하지 않게)
+    private var labelFont: NSFont { TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.row), weight: .medium) }
+
+    private func labelAttributes(_ tool: ToolID) -> [NSAttributedString.Key: Any] {
+        let rest = tool == hovered ? TermAppearance.textPrimary : TermAppearance.textSecondary
+        return [.font: labelFont, .foregroundColor: mixColor(rest, TermAppearance.textPrimary, selectionAmount(tool))]
+    }
+
+    /// 단축키는 데이터라 JetBrains Mono, 10pt, 보조 글자색
+    private var hintAttributes: [NSAttributedString.Key: Any] {
+        [.font: TermAppearance.scaledUIFont(TypeSize.caption), .foregroundColor: TermAppearance.textSecondary]
     }
 
     private func layoutButtons() {
         rects = []
-        var x: CGFloat = 0
+        var x: CGFloat = TermAppearance.scaled(Space.xs)
+        let nameAttributes: [NSAttributedString.Key: Any] = [.font: labelFont]
         for tool in tools {
-            let label = (tool.rawValue as NSString).size(withAttributes: attributes(tool)).width
-            let hint = (ToolWindowsController.shortcutLabel(tool) as NSString).size(withAttributes: hintAttributes(tool)).width
-            let pad = TermAppearance.scaled(12), gap = TermAppearance.scaled(6)
+            let label = (tool.rawValue as NSString).size(withAttributes: nameAttributes).width
+            let hint = (ToolWindowsController.shortcutLabel(tool) as NSString).size(withAttributes: hintAttributes).width
+            let pad = TermAppearance.scaled(Space.md), gap = TermAppearance.scaled(6)
             let rect = CGRect(x: x, y: 0, width: ceil(pad + label + gap + hint + pad), height: bounds.height)
             rects.append((tool, rect))
-            x = rect.maxX
+            x = rect.maxX + TermAppearance.scaled(2)
         }
     }
 
@@ -1019,24 +1054,23 @@ final class DockStripView: NSView {
         TermAppearance.chrome.setFill()
         bounds.fill()
         for (tool, rect) in rects {
-            if tool == selected {
-                TermAppearance.accent.setFill()
-                rect.fill()
-            } else if tool == hovered {
-                TermAppearance.chromeRaised.setFill()
-                rect.fill()
+            // 고른 칸: 안쪽으로 들인 둥근 chromeRaised 바탕(분할 컨트롤처럼)
+            let amount = selectionAmount(tool)
+            if amount > 0 {
+                mixColor(TermAppearance.chrome, TermAppearance.chromeRaised, amount).setFill()
+                NSBezierPath(roundedRect: rect.insetBy(dx: 0, dy: TermAppearance.scaled(Space.xs)), xRadius: 6, yRadius: 6).fill()
             }
             let label = tool.rawValue as NSString
-            let size = label.size(withAttributes: attributes(tool))
-            let pad = TermAppearance.scaled(12), gap = TermAppearance.scaled(6)
-            label.draw(at: CGPoint(x: rect.minX + pad, y: rect.midY - size.height / 2), withAttributes: attributes(tool))
+            let attributes = labelAttributes(tool)
+            let size = label.size(withAttributes: attributes)
+            let pad = TermAppearance.scaled(Space.md), gap = TermAppearance.scaled(6)
+            label.draw(at: CGPoint(x: rect.minX + pad, y: rect.midY - size.height / 2), withAttributes: attributes)
             let hint = ToolWindowsController.shortcutLabel(tool) as NSString
-            let hintSize = hint.size(withAttributes: hintAttributes(tool))
-            hint.draw(at: CGPoint(x: rect.minX + pad + size.width + gap, y: rect.midY - hintSize.height / 2 + 0.5),
-                      withAttributes: hintAttributes(tool))
+            let hintSize = hint.size(withAttributes: hintAttributes)
+            hint.draw(at: CGPoint(x: rect.minX + pad + size.width + gap, y: rect.midY - hintSize.height / 2), withAttributes: hintAttributes)
         }
         // 아래 경계(도구 내용과 나눔)
-        TermAppearance.border.withAlphaComponent(0.6).setFill()
+        TermAppearance.border.setFill()
         CGRect(x: 0, y: bounds.height - 1, width: bounds.width, height: 1).fill()
     }
 
