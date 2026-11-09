@@ -1,4 +1,5 @@
 import AppKit
+import SessionCore
 import SwiftUI
 import TermLayout
 import TermWire
@@ -1375,13 +1376,52 @@ struct AgentRowView: View {
     }
 }
 
-/// 도크 맨 아래 상태 줄: 새 버전·오류·요금제 사용량·메모리·버전·데몬 연결. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
+#if DEBUG
+/// 시험 전용(`fake-footer`): 상태 줄이 받는 입력(새 버전·데몬 연결·사용량·오류)을 메모리에서만 덮어쓴다. 저장·네트워크·진짜 연결은 건드리지 않는다.
+final class FooterDebug: ObservableObject {
+    static let shared = FooterDebug()
+    @Published var scenarios: Set<String> = []
+    func has(_ name: String) -> Bool { scenarios.contains(name) }
+    /// 사용량 시험값을 쓰는가(normal 이거나 usage-… 가 하나라도 있으면)
+    var fakesUsage: Bool { scenarios.contains { $0 == "normal" || $0.hasPrefix("usage") } }
+
+    /// 사용량 줄 시험값: usage-none · usage-stale · usage-high(70%↑ 호박·90%↑ 빨강) · 그 밖엔 평소 값
+    func usage(provider: String) -> UsageLine? {
+        let now = Date()
+        let usage: PlanUsage?
+        if has("usage-none") { usage = nil } else {
+            let high = has("usage-high")
+            let claude = provider == "Claude"
+            let numbers: (Double, Double) = high ? (claude ? (74, 52) : (93, 41)) : (claude ? (36, 61) : (12, 20))
+            usage = PlanUsage(fiveHour: UsageWindow(percent: numbers.0, resetsAt: now.addingTimeInterval(3600)),
+                              weekly: UsageWindow(percent: numbers.1, resetsAt: now.addingTimeInterval(86400)),
+                              recordedAt: has("usage-stale") ? now.addingTimeInterval(-8 * 3600) : now.addingTimeInterval(-120),
+                              source: claude ? .ccDash : .codexRollout)
+        }
+        return UsageSummary.line(provider: provider, usage: usage, now: now,
+                                 missingHelp: provider == "Claude" ? UsageStore.claudeMissingHelp : "")
+    }
+}
+#endif
+
+/// 상태 줄에 띄울 데몬 연결 알림. 평소(붙어 있고 세션 유지가 온전함)엔 `.none` — 줄을 그리지 않는다.
+private enum DaemonNotice: Equatable {
+    case none
+    case limited
+    case failed(message: String, failures: Int)
+    case connecting(String)
+}
+
+/// 도크 맨 아래 상태 줄: 새 버전·오류·데몬 연결(이상할 때만)·요금제 사용량·버전·설정. 도구(spaces·files)와 상관없이 도크에 붙어 보인다.
 struct StatusFooterView: View {
     @ObservedObject var model: TermModel
     @ObservedObject private var updates: UpdateNotifier
     @ObservedObject private var launch: LaunchSettings
     @ObservedObject private var usage: UsageStore
     @ObservedObject private var scaling = UIScaleModel.shared
+    #if DEBUG
+    @ObservedObject private var fake = FooterDebug.shared
+    #endif
     private var ui: UIScale { scaling.scale }
 
     init(model: TermModel) {
@@ -1391,18 +1431,64 @@ struct StatusFooterView: View {
         _usage = ObservedObject(wrappedValue: model.usage)
     }
 
+    private static let bundleVersion = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+    private static let bundleBuild = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+
+    /// 줄에는 짧게("v0.4.1"), 빌드 번호는 풍선 도움말에
+    private static let versionShort: String = bundleVersion.map { "v\($0)" } ?? "개발 빌드"
     private static let versionLabel: String = {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        let label = [version.map { "v\($0)" }, build.map { "빌드 \($0)" }]
-            .compactMap { $0 }.joined(separator: " · ")
+        let label = [bundleVersion.map { "v\($0)" }, bundleBuild.map { "빌드 \($0)" }].compactMap { $0 }.joined(separator: " · ")
         return label.isEmpty ? "개발 빌드" : label
     }()
 
+    /// 평소엔 보이지 않는 정보(빌드·메모리·세션 유지 안내)는 버전 글자에 마우스를 올리면 나온다.
+    /// 세션 유지 안내는 데몬이 멀쩡할 때만 — 연결 문제·유지 제한이면 위 알림 줄이 그 얘기를 하므로 되풀이하지 않는다.
+    private var diagnosticsHelp: String {
+        var lines = [Self.versionLabel, "앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))"]
+        if daemonNotice == .none { lines.append("앱을 꺼도 세션은 계속 돕니다") }
+        return lines.joined(separator: "\n")
+    }
+
+    // 화면에 그릴 입력. 디버그 빌드의 `fake-footer` 가 덮어쓸 수 있고, 그 밖엔 모델 값 그대로
+    private var updateTag: String? {
+        #if DEBUG
+        if fake.has("update") { return "v9.9.9" }
+        #endif
+        return updates.available.map { UpdateNotifier.display($0.tag) }
+    }
+    private var lastError: String? {
+        #if DEBUG
+        if fake.has("error") { return "새 화면을 만들지 못했습니다." }
+        #endif
+        return model.lastError
+    }
+    private var claudeUsage: UsageLine? {
+        #if DEBUG
+        if fake.fakesUsage { return fake.usage(provider: "Claude") }
+        #endif
+        return usage.claude
+    }
+    private var codexUsage: UsageLine? {
+        #if DEBUG
+        if fake.fakesUsage { return fake.has("usage-claude-only") ? nil : fake.usage(provider: "Codex") }
+        #endif
+        return usage.codex
+    }
+    private var daemonNotice: DaemonNotice {
+        #if DEBUG
+        if fake.has("failed") { return .failed(message: "소켓에 붙지 못했습니다", failures: 3) }
+        if fake.has("connecting") { return .connecting("세션 데몬 연결 중…") }
+        if fake.has("limited") { return .limited }
+        #endif
+        if model.connected { return model.link.limited ? .limited : .none }
+        if case .failed(let message, _) = model.link.phase { return .failed(message: message, failures: model.link.failures) }
+        return .connecting(model.connectionStatusText ?? "세션 데몬 연결 중…")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: ui(Space.xs)) {
-            if let release = updates.available {
-                UpdateLine(tag: UpdateNotifier.display(release.tag)) { updates.presentUpdate() }
+            if let tag = updateTag {
+                UpdateLine(tag: tag) { updates.presentUpdate() }
                     .padding(.bottom, ui(Space.xs))
             }
             if model.legacyDaemon || model.relocating {
@@ -1415,29 +1501,24 @@ struct StatusFooterView: View {
                                                                   logPath: Self.logPath))
                     .padding(.bottom, ui(Space.xs))
             }
-            if let error = model.lastError {
+            if let error = lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.statusAttention))
             }
-            if let claude = usage.claude { UsageLineView(line: claude) }
-            if let codex = usage.codex { UsageLineView(line: codex) }
-            // 이름은 시스템 글꼴, 크기(숫자)는 고정폭
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
-                Text("앱 ")
-                Text(Memory.format(model.appFootprint)).uiFont(TypeSize.caption)
-                Text(" · 데몬 ")
-                Text(Memory.format(model.daemonFootprint)).uiFont(TypeSize.caption)
+            if daemonNotice != .none { // 평소엔 줄 자체가 없다. 이상할 때만 다른 알림과 함께 맨 위에 모인다
+                daemonLine.padding(.bottom, ui(Space.xs))
             }
-            .lineLimit(1)
+            if let claude = claudeUsage { UsageLineView(line: claude) }
+            if let codex = codexUsage { UsageLineView(line: codex) }
             HStack(alignment: .center, spacing: ui(Space.sm)) {
-                Text(Self.versionLabel)
+                Text(Self.versionShort)
                     .monospacedDigit()
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .textSelection(.enabled)
+                    .help(diagnosticsHelp)
                 Spacer(minLength: ui(Space.xs))
                 SettingsButton(warning: launch.danger(.claude) ?? launch.danger(.codex)) { model.openSettings() }
             }
-            daemonLine
         }
         .uiTextFont(TypeSize.caption)
         .foregroundStyle(Color(TermAppearance.textSecondary))
@@ -1451,25 +1532,24 @@ struct StatusFooterView: View {
 
     private static var logPath: String { TermPaths.home.appendingPathComponent("daemon.log").path }
 
-    /// 맨 아래 데몬 연결 줄: 평소엔 흐리게 한 줄, 붙는 중·실패·세션 유지 제한은 색 점과 함께 눈에 띄게
+    /// 데몬 연결 줄: 평소엔 아무것도 그리지 않고, 붙는 중·실패·세션 유지 제한만 색 점과 함께 눈에 띄게
     @ViewBuilder private var daemonLine: some View {
-        if model.connected {
-            if model.link.limited {
-                NoticeLine(color: TermAppearance.warning, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있음",
-                           help: """
-                               세션 데몬이 launchd 작업이 아니라 예전 방식(posix_spawn)으로 떠서 앱과 같은 묶음(coalition)에 있습니다.
-                               앱을 ⌘Q 로 끄면 세션은 남지만, 강제 종료하거나 Dock 에서 강제 종료하면 셸·claude·codex 가 함께 끝날 수 있습니다.
-                               모든 화면을 닫고 데몬이 끝난 뒤(약 1분) 앱을 다시 켜면 launchd 작업으로 다시 띄웁니다.
-                               기록: \(Self.logPath)
-                               """)
-            } else {
-                Text("앱을 꺼도 세션은 계속 돕니다")
-            }
-        } else if case .failed(let message, _) = model.link.phase {
+        switch daemonNotice {
+        case .none:
+            EmptyView() // body 가 이 경우엔 부르지 않는다
+        case .limited:
+            NoticeLine(color: TermAppearance.warning, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있음",
+                       help: """
+                           세션 데몬이 launchd 작업이 아니라 예전 방식(posix_spawn)으로 떠서 앱과 같은 묶음(coalition)에 있습니다.
+                           앱을 ⌘Q 로 끄면 세션은 남지만, 강제 종료하거나 Dock 에서 강제 종료하면 셸·claude·codex 가 함께 끝날 수 있습니다.
+                           모든 화면을 닫고 데몬이 끝난 뒤(약 1분) 앱을 다시 켜면 launchd 작업으로 다시 띄웁니다.
+                           기록: \(Self.logPath)
+                           """)
+        case .failed(let message, let failures):
             NoticeLine(color: TermAppearance.statusAttention, title: "세션 데몬에 연결하지 못함", detail: "잠시 뒤 다시 시도합니다",
-                       help: "\(message) (\(model.link.failures)번째 실패)\n새 화면을 열면 바로 다시 시도합니다.\n기록: \(Self.logPath)")
-        } else {
-            NoticeLine(color: TermAppearance.textSecondary, title: model.connectionStatusText ?? "세션 데몬 연결 중…", detail: nil,
+                       help: "\(message) (\(failures)번째 실패)\n새 화면을 열면 바로 다시 시도합니다.\n기록: \(Self.logPath)")
+        case .connecting(let text):
+            NoticeLine(color: TermAppearance.textSecondary, title: text, detail: nil,
                        help: "세션 데몬에 연결하는 중입니다. 데몬이 없으면 띄웁니다(몇 초 걸릴 수 있음).\n기록: \(Self.logPath)")
         }
     }

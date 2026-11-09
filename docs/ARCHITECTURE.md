@@ -632,6 +632,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   상태 모양 시험 명령: `fake-session-states [off]`(디버그 빌드에서만 컴파일 — 지금 화면들의 종류 claude·codex·셸과 상태 일하는 중·기다림·오류·완료·쉼·오케스트레이션을 돌아가며 메모리에서만 덧씌운다. 저장·진짜 실행·네트워크 없음, 되살리기 정보는 건드리지 않는다. 사이드바·탭·전환기의 아이콘·점 모양 확인용, 알림은 `AGENTDECK_NO_NOTIFY=1` 로 끈다).
+  상태 줄 시험 명령: `fake-footer <장면[,장면…]|off>`(디버그 빌드에서만 컴파일 — 상태 줄 입력을 메모리에서만 덮어쓴다: `normal`(사용량 36/61·12/20%)·`update`·`error`·`failed`·`connecting`·`limited`·`usage-high`(70%↑ 호박·90%↑ 빨강)·`usage-none`·`usage-stale`·`usage-claude-only`).
   종료 시험 명령: `quit`(⌘Q 와 같은 길 — 데몬·화면이 앱과 따로 남는지 볼 때).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
   `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호·탭)·`settings-tab <connections|browser|sessions|screen>`(설정 창 탭 고르기)·`float-corner <top|bottom>`·`settings-snap <png>`·`chrome-import snap <png>`(가져오기 창 그림)·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
@@ -642,6 +643,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   이때와 `AGENTDECK_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
+<<<<<<< HEAD
 ## 메뉴 막대
 
 - 순서: AgentDeck · 파일 · 편집 · 셸 · 이동 · 보기 · **윈도우** · **도움말**(`main.swift` `buildMenu`). macOS 표준 틀을 따른다.
@@ -656,6 +658,15 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
 - 기기 메뉴(`DeviceMenu`)는 면책 줄 대신 머리 줄 기기 버튼 풍선 도움말과 "직접 크기 입력" 창에 같은 말을 둔다. 이름에 크기가 든 기기("Laptop 1280×800")는 크기를 한 번만 적고, 이름 속 `1280x800` 의 x 도 ×로 맞춘다.
   "최근"은 macOS 14 이상에서 시스템 구역 머리(`NSMenuItem.sectionHeader`), 13 은 꺼진 작은 글 줄.
 - 별도 창 "⋯" 메뉴(`BrowserWindows.menu(for:)`): "다른 창 위에" 머리(14+ 구역 머리) 아래 일반 창·AgentDeck 쓸 때만 위·항상 위. "고른 방식은 새 세션의 기본값도 됩니다"는 항목 풍선 도움말.
+=======
+## 사이드바 상태 줄(StatusFooterView)
+
+평소(데몬이 붙어 있고 세션 유지가 온전함)에는 **사용량 두 줄(Claude ✻·Codex ‹›, 범례) + 한 줄("v0.4.1" ··· 설정)** 만 보인다. 앱·데몬 메모리, 빌드 번호,
+"앱을 꺼도 세션은 계속 돕니다"는 버전 글자의 풍선 도움말로 옮겼다(데몬이 멀쩡할 때만 그 문장을 넣는다 — 이상하면 알림 줄이 말한다).
+이상할 때만 줄이 늘고, 모두 맨 위에 모인다: 새 버전(중립 알약) → 이전 데몬·데이터 옮기기 실패 → 오류(`statusAttention` 글) →
+데몬 연결 알림(`DaemonNotice`: 붙는 중 중립 점·연결 실패 `statusAttention` 점·세션 유지 제한 `warning` 점, 각각 풍선 도움말에 자세한 내용) → 사용량.
+사용량은 70% 이상 호박, 90% 이상 빨강(`UsageTier`), 정보 없음·오래됨은 그대로 보인다. 새 버전 줄·설정 단추·위험 옵션 경고는 그대로.
+>>>>>>> side/ux-footer-20261109
 
 ## 작업 상태 표시와 알림
 
