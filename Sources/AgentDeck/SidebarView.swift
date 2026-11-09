@@ -463,7 +463,7 @@ struct ChromeButton: View {
                 if warning {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: ui(TypeSize.caption)))
-                        .foregroundStyle(Color(TermAppearance.warning))
+                        .foregroundStyle(Color(TermAppearance.danger))
                         .accessibilityLabel("주의")
                 }
             }
@@ -1040,7 +1040,7 @@ struct SessionRowView: View {
                     if row.launchWarning != nil {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: ui(TypeSize.caption)))
-                            .foregroundStyle(Color(TermAppearance.warning))
+                            .foregroundStyle(Color(TermAppearance.danger))
                     }
                 }
                 detail
@@ -1598,7 +1598,7 @@ private struct SettingsButton: View {
             HStack(spacing: ui(Space.xs)) {
                 if warning != nil {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color(TermAppearance.warning))
+                        .foregroundStyle(Color(TermAppearance.danger))
                         .accessibilityLabel("주의")
                 }
                 Image(systemName: "gearshape")
