@@ -134,8 +134,13 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     static var iconBoxWidth: CGFloat { TermAppearance.scaled(14) }
     static var iconBoxHeight: CGFloat { TermAppearance.scaled(12) }
     static var iconGap: CGFloat { TermAppearance.scaled(6) }
-    /// 제목을 줄이는 한계(이보다 좁아지지는 않는다)
+    /// 제목을 줄이는 한계(이보다 좁아지지는 않는다 — 더 안 들어가면 ⌄ 메뉴로 보낸다)
     private static var minTitleWidth: CGFloat { TermAppearance.scaled(24) }
+    /// 탭을 ⌄ 로 보내기 전까지 제목을 줄여 두는 폭(이보다 좁은 제목은 이름을 알아볼 수 없어 탭을 덜 보이는 쪽을 고른다)
+    private static var comfortTitleWidth: CGFloat { TermAppearance.scaled(48) }
+    /// "+" 와 ⌄ 단추 폭
+    private var plusWidth: CGFloat { ui(32) }
+    private var overflowWidth: CGFloat { ui(28) }
     /// 배율을 곱한 길이
     private func ui(_ value: CGFloat) -> CGFloat { TermAppearance.scaled(value) }
 
@@ -152,6 +157,11 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     private var tabRects: [CGRect] = []
     private var closeRects: [CGRect] = []
     private var plusRect: CGRect = .zero
+    /// 안 들어가는 탭을 모아 보이는 ⌄ 단추 자리(다 들어가면 .zero). 안 보이는 탭의 `tabRects` 는 폭 0 이다(왼쪽에 숨으면 맨 앞, 오른쪽에 숨으면 보이는 끝).
+    private var overflowRect: CGRect = .zero
+    private var hiddenTabs: [Int] = []
+    private var hoveringOverflow = false
+    private var overflowMenuOpen = false
 
     // 움직임: 탭이 생기고 사라질 때 나머지가 미끄러지고, 지금 탭 표시가 옆 탭으로 미끄러진다
     private let tween = ViewTween()
@@ -176,7 +186,16 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             relayoutAnimated()
         }
     }
-    /// 탭마다 제목을 최소 폭까지 줄여도 필요한 폭(탭 + "+") — 이보다 좁으면 알약을 탭 줄 안에 둘 수 없다
+    /// 탭 줄 왼쪽에서 비워 둘 폭: 창 제목 줄과 합쳐졌을 때 신호등(●●●)이 이 줄 위에 있으면 그 폭(사이드바가 왼쪽에 있으면 0).
+    /// 탭과 "+" 는 이 오른쪽에서 시작한다. 이 안쪽 빈 곳은 창을 끄는 자리다.
+    var leadingInset: CGFloat = 0 {
+        didSet {
+            guard leadingInset != oldValue else { return }
+            relayoutAnimated()
+        }
+    }
+    /// 가장 좁게 줄였을 때 필요한 폭: 신호등 자리 + 탭 하나(제목 최소) + "+" (탭이 더 있으면 ⌄ 도) — 이보다 좁으면 알약을 탭 줄 안에 둘 수 없다.
+    /// 나머지 탭은 ⌄ 메뉴가 맡으므로 탭이 많아도 이 폭은 늘지 않는다.
     private(set) var minimumContentWidth: CGFloat = 0
     /// `minimumContentWidth` 가 바뀜(탭이 생기고 사라짐·제목·배율)
     var onContentChanged: (() -> Void)?
@@ -355,8 +374,6 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     }
 
     private func layoutTabs() {
-        tabRects = []
-        closeRects = []
         var fixed: [Double] = [], natural: [Double] = []
         for (index, tab) in tabs.enumerated() {
             var width: CGFloat = ui(12)
@@ -367,33 +384,61 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             fixed.append(Double(width))
             natural.append(Double(ceil((Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(selected: false, hovered: false)).width)))
         }
-        // 오른쪽 여백을 뺀 폭에 안 들어가면 제목을 줄인다(긴 제목부터, 최소 폭까지)
-        let widths = bounds.width > 0
-            ? TabBarFit.titleWidths(titles: natural, fixed: fixed, extra: Double(ui(32)), available: Double(contentWidth),
-                                    minTitle: Double(Self.minTitleWidth))
-            : natural
-        titleWidths = widths.map { CGFloat($0) }
-        let minimum = CGFloat(fixed.reduce(0, +) + natural.reduce(0) { $0 + min($1, Double(Self.minTitleWidth)) }) + ui(32)
+        let minTitle = Double(Self.minTitleWidth)
+        // 줄어드는 한계는 minTitle 이지만, 탭을 ⌄ 로 보낼지는 알아볼 수 있는 폭(comfortTitleWidth)으로 가른다
+        let minWidths = zip(fixed, natural).map { $0 + min($1, Double(Self.comfortTitleWidth)) }
+        // 탭이 시작하는 곳부터 알약 자리 앞까지 = 탭·"+"(·⌄)를 놓을 수 있는 폭
+        let room = bounds.width > 0 ? max(0, contentWidth - leadingInset) : .infinity
+        // 제목을 최소로 줄여도 안 들어가면 ⌄ 단추를 두고, 보일 탭 구간만 남긴다(고른 탭은 늘 보인다)
+        let overflowing = bounds.width > 0 && minWidths.reduce(0, +) + Double(plusWidth) > Double(room)
+        let range = overflowing
+            ? TabBarFit.visibleRange(minWidths: minWidths, selected: selected,
+                                     available: max(0, Double(room - plusWidth - overflowWidth)))
+            : 0..<tabs.count
+        let visible = Array(range)
+        // 보이는 탭의 제목은 남은 폭에 맞춘다(긴 제목부터 줄인다)
+        let fitted = bounds.width > 0
+            ? TabBarFit.titleWidths(titles: visible.map { natural[$0] }, fixed: visible.map { fixed[$0] },
+                                    extra: Double(plusWidth + (overflowing ? overflowWidth : 0)), available: Double(room), minTitle: minTitle)
+            : visible.map { natural[$0] }
+        titleWidths = Array(repeating: 0, count: tabs.count)
+        for (slot, index) in visible.enumerated() { titleWidths[index] = CGFloat(fitted[slot]) }
+        // 가장 좁은 폭: 신호등 자리 + (고른 탭 또는 첫 탭) + "+" (+ ⌄)
+        var minimum = leadingInset + plusWidth
+        if !tabs.isEmpty {
+            minimum += CGFloat(minWidths[min(max(selected ?? 0, 0), tabs.count - 1)]) + (tabs.count > 1 ? overflowWidth : 0)
+        }
         if minimum != minimumContentWidth {
             minimumContentWidth = minimum
             DispatchQueue.main.async { [weak self] in self?.onContentChanged?() }
         }
-        var x: CGFloat = 0
         let height = bounds.height
-        for index in tabs.indices {
-            let rect = CGRect(x: x, y: 0, width: ceil(CGFloat(fixed[index] + widths[index])), height: height)
+        var rects = [CGRect](repeating: .zero, count: tabs.count)
+        var closes = [CGRect](repeating: .zero, count: tabs.count)
+        var x = leadingInset
+        for index in visible {
+            let rect = CGRect(x: x, y: 0, width: ceil(CGFloat(fixed[index]) + titleWidths[index]), height: height)
             let tail = tailWidth(index)
-            tabRects.append(rect)
-            closeRects.append(CGRect(x: rect.maxX - ui(12) - tail - ui(4), y: 0, width: tail + ui(8), height: height))
+            rects[index] = rect
+            closes[index] = CGRect(x: rect.maxX - ui(12) - tail - ui(4), y: 0, width: tail + ui(8), height: height)
             x = rect.maxX
         }
-        plusRect = CGRect(x: x, y: 0, width: ui(32), height: height)
-        // 풍선 도움말: 줄이지 않은 제목(+ 위험한 실행 옵션)
+        for index in tabs.indices where !range.contains(index) {
+            rects[index] = CGRect(x: index < range.lowerBound ? leadingInset : x, y: 0, width: 0, height: height)
+        }
+        tabRects = rects
+        closeRects = closes
+        hiddenTabs = tabs.indices.filter { !range.contains($0) }
+        plusRect = CGRect(x: x, y: 0, width: plusWidth, height: height)
+        overflowRect = hiddenTabs.isEmpty ? .zero : CGRect(x: plusRect.maxX, y: 0, width: overflowWidth, height: height)
+        // 풍선 도움말: 줄이지 않은 제목(+ 위험한 실행 옵션), ⌄ 단추
         removeAllToolTips()
-        for rect in tabRects where rect.minX < contentWidth { addToolTip(rect, owner: self, userData: nil) }
+        for rect in tabRects where rect.width > 0 && rect.minX < contentWidth { addToolTip(rect, owner: self, userData: nil) }
+        if overflowRect != .zero { addToolTip(overflowRect, owner: self, userData: nil) }
     }
 
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
+        if overflowRect != .zero, overflowRect.contains(point) { return "숨은 탭 \(hiddenTabs.count)개 보기" }
         guard let index = tabRects.firstIndex(where: { $0.contains(point) }), tabs.indices.contains(index) else { return "" }
         let tab = tabs[index]
         return tab.title + (tab.warning.map { "\n⚠ " + $0 } ?? "")
@@ -433,7 +478,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         let rects = displayRects()
         for (index, tab) in tabs.enumerated() where index < rects.count {
             let rect = rects[index]
-            guard rect.intersects(dirtyRect) else { continue }
+            guard rect.width > 0, rect.intersects(dirtyRect) else { continue }
             drawTab(tab, index: index, rect: rect, alpha: displayAlpha(index))
         }
         if let ghost, tween.isRunning {
@@ -447,6 +492,8 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             TermAppearance.accent.setFill()
             CGRect(x: max(0, x - 1), y: 4, width: 2, height: bounds.height - 8).fill()
         }
+        // 탭이 없으면 줄만 있다(창 제목 줄 역할: 신호등 자리·창 끌기)
+        guard !tabs.isEmpty else { return }
         let plus = displayPlus()
         if hoveringPlus {
             TermAppearance.chromeRaised.setFill()
@@ -455,6 +502,17 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
         SymbolDrawing.draw("plus", size: ui(11), weight: .semibold,
                            color: hoveringPlus ? TermAppearance.textPrimary : TermAppearance.textSecondary, centeredIn: plus)
+        if overflowRect != .zero {
+            let box = CGRect(x: plus.maxX, y: 0, width: overflowWidth, height: bounds.height)
+            let active = hoveringOverflow || overflowMenuOpen
+            if active {
+                TermAppearance.chromeRaised.setFill()
+                NSBezierPath(roundedRect: CGRect(x: box.midX - ui(12), y: box.midY - ui(12), width: ui(24), height: ui(24)),
+                             xRadius: 6, yRadius: 6).fill()
+            }
+            SymbolDrawing.draw("chevron.down", size: ui(10), weight: .semibold,
+                               color: active ? TermAppearance.textPrimary : TermAppearance.textSecondary, centeredIn: box)
+        }
     }
 
     /// 탭 하나. index == nil 이면 닫히는 중인 탭(마우스 상태 없음). alpha < 1 이면 통째로 옅게(생기고 사라질 때).
@@ -527,7 +585,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     private func syncDotLayers() {
         let rects = displayRects()
         let indices = drag == nil && window != nil
-            ? tabs.indices.filter { tabs[$0].status == .working && $0 < rects.count && rects[$0].minX < contentWidth } : []
+            ? tabs.indices.filter { tabs[$0].status == .working && $0 < rects.count && rects[$0].width > 0 && rects[$0].minX < contentWidth } : []
         guard let root = layer else { return }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -566,17 +624,21 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         return tabRects.firstIndex { $0.contains(point) }
     }
 
-    private func isPlus(_ point: CGPoint) -> Bool { point.x < contentWidth && plusRect.contains(point) }
+    private func isPlus(_ point: CGPoint) -> Bool { !tabs.isEmpty && point.x < contentWidth && plusRect.contains(point) }
+
+    private func isOverflow(_ point: CGPoint) -> Bool { overflowRect != .zero && point.x < contentWidth && overflowRect.contains(point) }
 
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         let index = tabIndex(at: point)
         let close = index.map { closeRects[$0].contains(point) } ?? false
         let plus = isPlus(point)
-        guard index != hovered || close != hoveringClose || plus != hoveringPlus else { return }
+        let overflow = isOverflow(point)
+        guard index != hovered || close != hoveringClose || plus != hoveringPlus || overflow != hoveringOverflow else { return }
         hovered = index
         hoveringClose = close
         hoveringPlus = plus
+        hoveringOverflow = overflow
         needsDisplay = true
     }
 
@@ -584,6 +646,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         hovered = nil
         hoveringClose = false
         hoveringPlus = false
+        hoveringOverflow = false
         needsDisplay = true
     }
 
@@ -592,6 +655,8 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         press = nil
         if isPlus(point) {
             onNew?()
+        } else if isOverflow(point) {
+            showOverflowMenu()
         } else if let index = tabIndex(at: point) {
             if closeRects[index].contains(point) {
                 onClose?(index)
@@ -601,8 +666,74 @@ final class TabBarView: NSView, NSViewToolTipOwner {
                 // 고르기는 놓을 때(끌면 옮기기 — 다른 탭을 끌어 지금 탭의 분할에 놓을 수 있게 미리 고르지 않는다)
                 press = (index, point)
             }
+        } else {
+            // 빈 곳(신호등 자리·탭 오른쪽·알약 사이)은 제목 줄처럼: 끌면 창을 옮기고, 두 번 누르면 시스템 설정대로 확대·최소화
+            WindowDragging.mouseDown(event, in: window)
         }
     }
+
+    /// ⌄: 안 보이는 탭 목록(종류 아이콘 + 이름 + 상태). 고르면 그 탭으로 가고 탭 줄이 그 탭이 보이게 밀린다.
+    private func makeOverflowMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for index in hiddenTabs where tabs.indices.contains(index) {
+            let tab = tabs[index]
+            let item = MenuAction(title: Self.short(tab.title, limit: 36)) { [weak self] in self?.onSelect?(index) }
+            let title = NSMutableAttributedString(string: item.title)
+            if let status = tab.status.label {
+                title.append(NSAttributedString(string: "  " + status, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+            }
+            item.attributedTitle = title
+            let kind = tab.kind
+            item.image = NSImage(size: NSSize(width: 14, height: 12), flipped: false) { rect in
+                kind.drawIcon(size: 11, in: rect)
+                return true
+            }
+            item.toolTip = tab.title
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private func showOverflowMenu() {
+        guard !hiddenTabs.isEmpty else { return }
+        let menu = makeOverflowMenu()
+        overflowMenuOpen = true
+        needsDisplay = true
+        menu.popUp(positioning: nil, at: NSPoint(x: overflowRect.minX, y: overflowRect.maxY), in: self)
+        overflowMenuOpen = false
+        hoveringOverflow = false
+        needsDisplay = true
+    }
+
+    /// 시험용: ⌄ 메뉴 항목 제목들(없으면 빈 배열)
+    var debugOverflowTitles: [String] { makeOverflowMenu().items.map { $0.attributedTitle?.string ?? $0.title } }
+
+    /// 시험용: ⌄ 메뉴의 n 번째 항목을 고른 것과 같게
+    func debugPickOverflow(_ n: Int) {
+        let items = makeOverflowMenu().items
+        guard items.indices.contains(n), let action = items[n].action else { return }
+        NSApp.sendAction(action, to: items[n].target, from: items[n])
+    }
+
+    /// 시험용: ⌄ 를 눌러 메뉴를 연다(시험 명령이 막히지 않게 다음 차례에 띄우고, `closeAfter` 초 뒤 스스로 닫는다)
+    func debugOpenOverflow(closeAfter: TimeInterval) {
+        guard !hiddenTabs.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let menu = self.makeOverflowMenu()
+            let timer = Timer(timeInterval: closeAfter, repeats: false) { _ in menu.cancelTracking() }
+            RunLoop.main.add(timer, forMode: .common)
+            self.overflowMenuOpen = true
+            self.needsDisplay = true
+            menu.popUp(positioning: nil, at: NSPoint(x: self.overflowRect.minX, y: self.overflowRect.maxY), in: self)
+            self.overflowMenuOpen = false
+            self.needsDisplay = true
+        }
+    }
+
+    /// 시험용: ⌄ 메뉴에 들어갈 탭 번호(왼쪽에서부터)
+    var debugHiddenTabs: [Int] { hiddenTabs }
 
     override func mouseDragged(with event: NSEvent) {
         guard let press else { return }
@@ -635,6 +766,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         return menu
     }
 
+    /// 빈 곳 끌기는 `mouseDown` 이 `performDrag` 로 직접 한다(탭을 끌 때 창이 같이 움직이지 않게)
     override var mouseDownCanMoveWindow: Bool { false }
 
     /// 창이 뒤에 있어도 첫 클릭으로 바로 고르거나 끌 수 있게(분할 틈과 같게)
@@ -695,7 +827,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     var windowTabRects: [CGRect] { tabRects.map { convert($0, to: nil) } }
 
     private func snapshot(_ rect: CGRect) -> CGImage? {
-        guard let rep = bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        guard !rect.isEmpty, let rep = bitmapImageRepForCachingDisplay(in: rect) else { return nil }
         cacheDisplay(in: rect, to: rep)
         return rep.cgImage
     }
@@ -740,16 +872,22 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         if inside {
             let width = drag.rects[drag.index].width
             let end = drag.rects.last?.maxX ?? width
-            let x = min(max(point.x - drag.grab, 0), max(0, end - width))
+            let x = min(max(point.x - drag.grab, leadingInset), max(leadingInset, end - width))
             // 끄는 탭을 뺀 순서에서 가운데가 끄는 탭 가운데보다 왼쪽인 탭 수 = 놓일 자리
             let others = drag.rects.indices.filter { $0 != drag.index }
-            var cursor: CGFloat = 0
+            var cursor = leadingInset
             var to = 0
+            // 안 보이는 탭(폭 0): 왼쪽에 숨은 것은 늘 앞, 오른쪽에 숨은 것은 보이는 끝 뒤(끌어다 놓아도 그 앞에 놓인다)
+            let firstVisible = drag.rects.firstIndex { $0.width > 0 } ?? drag.rects.count
             for i in others {
+                if drag.rects[i].width == 0 {
+                    if i < firstVisible { to += 1 }
+                    continue
+                }
                 if cursor + drag.rects[i].width / 2 < x + width / 2 { to += 1 }
                 cursor += drag.rects[i].width
             }
-            cursor = 0
+            cursor = leadingInset
             for (k, i) in others.enumerated() {
                 if k == to { cursor += width }
                 frames[i].origin.x = cursor

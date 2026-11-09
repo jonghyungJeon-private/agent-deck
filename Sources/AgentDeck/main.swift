@@ -29,6 +29,8 @@ app.run()
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     let model = TermModel()
     var window: NSWindow?
+    /// 탭 줄이 제목 줄에 들어간 창 모양(신호등 자리·전체 화면)
+    var windowChrome: MainWindowChrome?
     var toolWindows: ToolWindowsController?
     /// 설정 창(⌘,) — 처음 열 때 만든다
     lazy var settingsWindow = SettingsWindowController(settings: model.launch, model: model, chromeImport: chromeImport)
@@ -50,13 +52,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let window = NSWindow(contentViewController: tools.split)
         window.title = "AgentDeck"
-        window.titlebarAppearsTransparent = true
         window.backgroundColor = TermAppearance.chrome
+        // 탭 줄이 제목 줄을 겸한다: 내용이 제목 줄 밑까지 올라오고(투명, 글자 숨김) 신호등은 탭 줄·왼쪽 도크 위에 앉는다.
+        // 창 제목·부제는 고른 세션 이름·폴더로 계속 설정한다(창 메뉴·Mission Control).
+        let chrome = MainWindowChrome(window: window, rowHeight: { TerminalHostController.tabBarHeight })
+        windowChrome = chrome
+        tools.lightsMaxX = { [weak chrome] in chrome?.lightsMaxX ?? 0 }
+        chrome.onChange = { [weak tools] in tools?.windowChromeChanged() }
+        host.onWindowTitleChanged = { [weak window] title, subtitle in
+            guard let window else { return }
+            if window.title != title { window.title = title }
+            if window.subtitle != subtitle { window.subtitle = subtitle }
+        }
         window.setContentSize(NSSize(width: 1200, height: 760))
         window.setFrameAutosaveName("AgentDeckMain")
         window.delegate = self
         tools.restoreWidths()
         self.window = window
+        chrome.refresh()
+        host.render() // 창 제목을 지금 세션으로
         // 시험용: AGENTDECK_NO_ACTIVATE=1 이면 앞으로 나오지 않는다(사용 중인 다른 앱의 포커스를 뺏지 않게 창을 뒤에 둔다)
         if AgentDeckEnv.isOn("NO_ACTIVATE") {
             window.orderBack(nil)
@@ -1251,14 +1265,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             print("dragpoints end")
             fflush(stdout)
         case "mouse":
-            // 끌기 단계별 시험: mouse <down|drag|up|right> <x> <y> (창 좌표, 아래가 0). 사이에 그림을 찍어 볼 수 있다.
+            // 끌기 단계별 시험: mouse <down|drag|up|right> <x> <y> [누른 횟수] (창 좌표, 아래가 0). 사이에 그림을 찍어 볼 수 있다.
             let v = argument.split(separator: " ").map(String.init)
-            guard v.count == 3, let window, let x = Double(v[1]), let y = Double(v[2]) else { return }
+            guard v.count == 3 || v.count == 4, let window, let x = Double(v[1]), let y = Double(v[2]) else { return }
+            let clicks = v.count == 4 ? Int(v[3]) ?? 1 : 1 // 네 번째 값 = 누른 횟수(2 = 두 번 누르기)
             let kinds: [String: NSEvent.EventType] = ["down": .leftMouseDown, "drag": .leftMouseDragged, "up": .leftMouseUp,
                                                       "right": .rightMouseDown]
             guard let kind = kinds[v[0]], let event = NSEvent.mouseEvent(
                 with: kind, location: NSPoint(x: x, y: y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)
             else { return }
             if kind == .rightMouseDown {
                 // 오른쪽 클릭 메뉴 항목만 출력(메뉴를 띄우면 시험이 멈춘다)
@@ -1402,6 +1417,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let caret = view.subviews.first { String(describing: type(of: $0)) == "CaretView" }
             print("render-state active=\(NSApp.isActive) ordered=\(window?.isVisible ?? false) mini=\(window?.isMiniaturized ?? false) activeSpace=\(window?.isOnActiveSpace ?? false) level=\(window?.level.rawValue ?? 0) window=\(String(describing: window?.frame)) hidden=\(NSApp.isHidden) visible=\(window?.occlusionState.contains(.visible) ?? false) key=\(window?.isKeyWindow ?? false) focus=\(view.hasFocus) frame=\(view.bounds) cells=\(view.terminal.cols)x\(view.terminal.rows) font=\(view.font.pointSize) cursor=\(view.terminal.options.cursorStyle) caretAnimations=\(caret?.layer?.animationKeys() ?? []) snapshotNext=\(String(describing: snapshotTimer?.fireDate))")
             fflush(stdout)
+        case "chrome":
+            // chrome: 신호등·제목 줄 뷰·탭 줄 자리 읽기(창 맨 위에서 아래로 잰 값) — 위치 확인용
+            print(windowChrome?.debugReport ?? "chrome none")
+            if let host = model.host, let view = host.view as NSView?, let content = window?.contentView {
+                let rect = view.convert(view.bounds, to: nil)
+                print(String(format: "chrome host x=%.1f top=%.1f w=%.1f tabBarInset=%.1f leadingInset=%.1f hidden-tabs=%@ safeTop=%.1f",
+                             rect.minX, content.bounds.height - rect.maxY, rect.width, host.tabBarInset, host.tabBarLeadingInset,
+                             host.tabBarHiddenTabs.map(String.init).joined(separator: ","), view.safeAreaInsets.top))
+            }
+            fflush(stdout)
+        case "activate":
+            // 시험: 창을 앞으로 가져와 활성 상태 모양(신호등 색)을 본다. 끝낼 때까지 활성으로 남는다.
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        case "zoom-window":
+            window?.performZoom(nil) // 시험: 제목 줄 빈 곳 두 번 누르기와 같은 동작(확대 ↔ 원래 크기)
+        case "hit":
+            // hit <x> <y>: 창 좌표(아래가 0)에서 마우스가 처음 닿는 뷰(제목 줄 영역에서 무엇이 받는지 확인)
+            let v = argument.split(separator: " ").compactMap { Double($0) }
+            guard v.count == 2, let frame = window?.contentView?.superview else { return }
+            let hit = frame.hitTest(frame.convert(NSPoint(x: v[0], y: v[1]), from: nil))
+            print("hit \(v[0]),\(v[1]) -> \(hit.map { String(describing: type(of: $0)) } ?? "nil") canMoveWindow=\(hit?.mouseDownCanMoveWindow ?? false)")
+            fflush(stdout)
+        case "overflow":
+            // overflow [pick <n> | open <초>]: 탭 줄 ⌄ 메뉴 항목 읽기 / n 번째 고르기 / 열어 두기(그림용, 정해진 초 뒤 닫힘)
+            let v = argument.split(separator: " ").map(String.init)
+            if v.first == "pick", v.count == 2, let n = Int(v[1]) { model.host?.debugPickOverflow(n) }
+            if v.first == "open" { model.host?.debugOpenOverflow(closeAfter: v.count > 1 ? Double(v[1]) ?? 3 : 3) }
+            print("overflow hidden=\(model.host?.tabBarHiddenTabs ?? []) items=" + (model.host?.tabBarOverflowTitles ?? []).joined(separator: " | "))
+            fflush(stdout)
+        case "snapshot-frame":
+            // snapshot-frame <png 경로>: 신호등·제목 줄까지 든 창 전체 그림(창 그림 `snapshot-now` 는 내용 뷰만이라 신호등이 빠진다)
+            guard let frame = window?.contentView?.superview, let rep = frame.bitmapImageRepForCachingDisplay(in: frame.bounds) else { return }
+            frame.cacheDisplay(in: frame.bounds, to: rep)
+            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument), options: .atomic)
         case "window-size":
             let size = argument.split(separator: " ").compactMap { Double($0) }
             if size.count == 2 { window?.setContentSize(NSSize(width: size[0], height: size[1])) }

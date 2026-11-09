@@ -31,6 +31,18 @@ final class TerminalHostController: NSViewController {
     var tabBarInset: CGFloat { tabBarHeight?.constant ?? 0 }
     /// 탭 줄 오른쪽에서 비울 폭(탭 줄 안에 앉은 🌐·⌨ 알약 폭 — 탭과 "+" 가 알약 아래로 들어가지 않게)
     func setTabBarTrailingReserve(_ width: CGFloat) { tabBar.trailingReserve = width }
+    /// 탭 줄 왼쪽에서 비울 폭(창 제목 줄과 합쳐져 신호등이 탭 줄 위에 있을 때 그 폭)
+    func setTabBarLeadingInset(_ width: CGFloat) { tabBar.leadingInset = width }
+    /// 탭 줄 왼쪽 비움(시험·표시용)
+    var tabBarLeadingInset: CGFloat { tabBar.leadingInset }
+    /// 지금 보이는 탭 줄 ⌄ 메뉴에 든 탭 번호(시험·표시용)
+    var tabBarHiddenTabs: [Int] { tabBar.debugHiddenTabs }
+    /// 시험 명령: ⌄ 메뉴 항목·고르기·열기
+    var tabBarOverflowTitles: [String] { tabBar.debugOverflowTitles }
+    func debugPickOverflow(_ n: Int) { tabBar.debugPickOverflow(n) }
+    func debugOpenOverflow(closeAfter: TimeInterval) { tabBar.debugOpenOverflow(closeAfter: closeAfter) }
+    /// 고른 세션 이름·폴더가 바뀜(창 제목·부제 — 창 메뉴와 Mission Control 이 읽는다)
+    var onWindowTitleChanged: ((_ title: String, _ subtitle: String) -> Void)?
     /// 탭 제목을 최소 폭까지 줄였을 때 탭 + "+" 가 차지하는 폭(알약이 탭 줄 안에 들어갈 수 있는지 가늠한다)
     var tabBarMinimumContentWidth: CGFloat { tabBar.minimumContentWidth }
     /// 탭이 생기고 사라지거나 제목·배율이 바뀌어 `tabBarMinimumContentWidth` 가 바뀜
@@ -148,7 +160,7 @@ final class TerminalHostController: NSViewController {
             dropOverlay.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             dropOverlay.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             placeholder.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            placeholder.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+            placeholder.centerYAnchor.constraint(equalTo: container.centerYAnchor),
         ])
         container.onRatioChange = { [weak self] path, ratio in self?.model.setRatio(path: path, ratio: ratio) }
         view = root
@@ -215,8 +227,8 @@ final class TerminalHostController: NSViewController {
         // 크기가 정해진 뒤 붙어야 지난 출력이 맞는 크기로 그려진다
         created.forEach { $0.attach() }
 
-        tabBarHeight.constant = tab == nil ? 0 : Self.tabBarHeight
-        tabBar.isHidden = tab == nil // 높이 0 이어도 그림이 경계 밖으로 새지 않게(빈 화면에 "+" 가 비치던 것)
+        // 탭 줄은 창 제목 줄이기도 해서 탭이 없어도 높이를 둔다(신호등 자리·창 끌기). 탭이 없으면 줄만 그리고 "+" 는 안 그린다.
+        tabBarHeight.constant = Self.tabBarHeight
         onTabBarHeightChanged?()
         updateTabBar()
         placeholder.isHidden = tab != nil
@@ -247,12 +259,28 @@ final class TerminalHostController: NSViewController {
         }, uniquingKeysWith: { first, _ in first })
         let warnings = Dictionary(model.rows.compactMap { row in row.launchWarning.map { (row.id, $0) } },
                                   uniquingKeysWith: { first, _ in first })
+        publishWindowTitle()
         tabBar.update(tabs: workspace.tabs.map { tab in
             TabBarView.Tab(title: model.tabTitle(tab), paneCount: tab.root.panes.count, zoomed: tab.zoomed,
                            status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }),
                            warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first,
                            kind: EditorPane.isEditor(tab.focused) ? .document : kinds[tab.focused] ?? .shell)
         }, selected: workspace.selectedIndex)
+    }
+
+    /// 창 제목 = 고른 탭의 이름, 부제 = 그 폴더(편집기는 파일이 든 폴더). 탭이 없으면 앱 이름만.
+    private func publishWindowTitle() {
+        let selected = model.connected ? model.workspace.selectedTab?.focused : nil
+        var folder: String?
+        if let selected {
+            if EditorPane.isEditor(selected) {
+                folder = model.workspace.editors[selected].map { ($0.path as NSString).deletingLastPathComponent }
+            } else {
+                folder = model.row(selected)?.cwd
+            }
+        }
+        let text = WindowChrome.windowTitle(session: selected.map(model.paneLabel), folder: folder, home: NSHomeDirectory())
+        onWindowTitleChanged?(text.title, text.subtitle)
     }
 
     /// 분할 테두리에 쓰는 화면 제목과 상태

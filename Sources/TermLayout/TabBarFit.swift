@@ -29,4 +29,24 @@ public enum TabBarFit {
         }
         return zip(titles, floors).map { max($0.1, min($0.0, low)) }
     }
+
+    /// 탭 줄에 다 안 들어갈 때 보일 탭의 이어진 구간(탭마다 제목을 최소로 줄인 폭 `minWidths`, 둘 수 있는 폭 `available`).
+    /// 다 들어가면 전부. 아니면 맨 앞부터 채우고, 고른 탭이 밖이면 고른 탭이 들어올 때까지 구간을 오른쪽으로 민다(고른 탭은 늘 보인다).
+    /// 한 탭도 안 들어가는 좁은 폭에서도 고른 탭 하나는 둔다.
+    public static func visibleRange(minWidths: [Double], selected: Int?, available: Double) -> Range<Int> {
+        let count = minWidths.count
+        guard count > 0 else { return 0..<0 }
+        guard minWidths.reduce(0, +) > available else { return 0..<count }
+        let target = min(max(selected ?? 0, 0), count - 1)
+        var start = 0
+        while true {
+            var end = start, used = minWidths[start]
+            while end + 1 < count, used + minWidths[end + 1] <= available {
+                end += 1
+                used += minWidths[end]
+            }
+            if end >= target || start >= target { return start..<(max(end, start) + 1) }
+            start += 1
+        }
+    }
 }
