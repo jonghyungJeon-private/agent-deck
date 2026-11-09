@@ -244,9 +244,9 @@ private struct SettingsPage: View {
     }
 }
 
-/// 행의 상태 말: 색은 뜻이다(됨 = 초록, 주의 = 호박, 오류 = 빨강, 그 밖 = 중립). 색만으로 알리지 않게 기호와 글이 같이 간다.
+/// 행의 상태 말: 색은 뜻이다(됨 = 초록, 주의 = 호박, 오류 = 빨강, 안전장치를 약하게 하는 설정 = 난초색 `danger`, 그 밖 = 중립). 색만으로 알리지 않게 기호와 글이 같이 간다.
 private struct SettingStatus {
-    enum Tone { case ok, warn, bad, neutral }
+    enum Tone { case ok, warn, bad, danger, neutral }
     let text: String
     let tone: Tone
 
@@ -255,6 +255,7 @@ private struct SettingStatus {
         case .ok: return TermAppearance.statusDone
         case .warn: return TermAppearance.warnText
         case .bad: return TermAppearance.statusAttention
+        case .danger: return TermAppearance.dangerText
         case .neutral: return TermAppearance.textSecondary
         }
     }
@@ -264,6 +265,7 @@ private struct SettingStatus {
         case .ok: return "checkmark.circle.fill"
         case .warn: return "exclamationmark.triangle.fill"
         case .bad: return "exclamationmark.octagon.fill"
+        case .danger: return "exclamationmark.triangle.fill"
         // 점선 고리는 상태 어휘의 "오케스트레이션"이라 쓰지 않는다
         case .neutral: return "minus.circle"
         }
@@ -352,11 +354,11 @@ private struct SettingRow<Control: View>: View {
     }
 }
 
-/// 한 줄 경고(켜진 위험 옵션 바로 아래): 기호 + 글, 위험 색. 색만으로 알리지 않는다.
+/// 한 줄 경고(켜진 위험 옵션 바로 아래): 기호 + 글, 위험(`danger`) 색. 색만으로 알리지 않는다.
 private struct WarningLine: View {
     @Environment(\.uiScale) private var ui
     let text: String
-    var tone: SettingStatus.Tone = .bad
+    var tone: SettingStatus.Tone = .danger
 
     var body: some View {
         let color = SettingStatus(text: "", tone: tone).color
@@ -400,7 +402,7 @@ private struct SettingPicker<Value: Hashable>: View {
     }
 }
 
-/// 켜고 끄는 시스템 스위치(작게). 위험한 옵션은 켜면 주의 색.
+/// 켜고 끄는 시스템 스위치(작게). 위험한 옵션은 켜면 위험(`danger`) 색.
 private struct SettingSwitch: View {
     let title: String
     @Binding var isOn: Bool
@@ -411,7 +413,7 @@ private struct SettingSwitch: View {
             .labelsHidden()
             .toggleStyle(.switch)
             .controlSize(.small)
-            .tint(danger ? Color(TermAppearance.statusAttention) : nil)
+            .tint(danger ? Color(TermAppearance.dangerFill) : nil)
     }
 }
 
@@ -881,12 +883,12 @@ private struct CommandPreview: View {
         .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(TermAppearance.border), lineWidth: 1))
     }
 
-    /// $ claude --flag 값 … (프로그램은 종류 색, 옵션은 밝게, 값은 보조색, 위험한 것은 주의 색)
+    /// $ claude --flag 값 … (프로그램은 종류 색, 옵션은 밝게, 값은 보조색, 위험한 것은 위험 색)
     private var styled: Text {
         var text = Text("$ ").foregroundColor(Color(TermAppearance.textSecondary))
             + Text(program).foregroundColor(Color(color))
         for arg in arguments {
-            let shade: NSColor = dangerous(arg) ? TermAppearance.statusAttention
+            let shade: NSColor = dangerous(arg) ? TermAppearance.dangerText
                 : arg.hasPrefix("-") ? TermAppearance.textPrimary : TermAppearance.textSecondary
             text = text + Text(" " + ShellWords.command([arg])).foregroundColor(Color(shade))
         }
