@@ -2,6 +2,8 @@ import AppKit
 import TermLayout
 
 /// 세션 창 안에 떠 있는 작은 창(브라우저·작은 터미널): 얇은 제목 줄(제목 · 추가 버튼 · 크게 · ✕) + 내용.
+/// 되돌릴 수 없는 추가 버튼(끝내기)은 "크게"와 8pt 떨어뜨려 닫기와 같은 무게로 붙어 있지 않게 한다.
+/// 나타날 때·사라질 때는 투명도 + 아래로 6pt 정도만 움직인다(Motion.standard, 동작 줄이기에서는 바로).
 /// 제목 줄을 끌면 옮기고, 가장자리·모서리를 끌면 크기를 바꾼다. 자리는 호스트(부모 뷰) 좌표 frame 으로 다루고,
 /// 사람이 끌기를 마치면 `onFrameChanged` 로 알린다(저장은 ToolWindowsController). 종류마다 `FloatSpec`(최소 크기)이 다르다.
 final class FloatPanel: NSView {
@@ -20,6 +22,10 @@ final class FloatPanel: NSView {
     private let strip = FloatTitleStrip()
     private let container = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
+    /// 호스트가 준 제목 글(앞의 기호·"종류 · 이름 · 폴더" 모양을 나눠 그린다)
+    private var titleText = ""
+    /// 떼기 직전 내용이 아직 있을 때 찍어 둔 모습(사라짐에 쓴다)
+    private var exitSnapshot: NSImage?
     private let sizeButton = FloatIconButton(symbol: "arrow.up.left.and.arrow.down.right", tip: "크게")
     private let closeButton: FloatIconButton
     private var iconButtons: [FloatIconButton] = []
@@ -45,8 +51,8 @@ final class FloatPanel: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.shadowColor = NSColor.black.cgColor
-        layer?.shadowRadius = 12
-        layer?.shadowOffset = CGSize(width: 0, height: -3)
+        layer?.shadowRadius = 10
+        layer?.shadowOffset = CGSize(width: 0, height: -2)
         clip.wantsLayer = true
         clip.layer?.cornerRadius = 10
         clip.layer?.masksToBounds = true
@@ -63,8 +69,6 @@ final class FloatPanel: NSView {
         clip.addSubview(container)
         clip.addSubview(strip)
 
-        titleLabel.font = TermAppearance.scaledUIFont(11, bold: true)
-        titleLabel.textColor = TermAppearance.textPrimary
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.setContentHuggingPriority(.defaultLow - 1, for: .horizontal) // 남는 폭은 제목이 차지해 버튼이 오른쪽에 붙게
@@ -111,7 +115,7 @@ final class FloatPanel: NSView {
 
     /// 레이어 색은 값으로 굳으므로 모양(라이트·다크)이 바뀔 때마다 다시 받는다. 그림자는 밝은 바탕에서 옅게.
     private func refreshLayerColors() {
-        layer?.shadowOpacity = effectiveAppearance.isDark ? 0.45 : 0.2
+        layer?.shadowOpacity = effectiveAppearance.isDark ? 0.4 : 0.16
         clip.layer?.borderColor = TermAppearance.border.cg(in: self)
         clip.layer?.backgroundColor = TermAppearance.background.cg(in: self)
     }
@@ -121,7 +125,32 @@ final class FloatPanel: NSView {
         refreshLayerColors()
     }
 
-    func setTitle(_ text: String) { titleLabel.stringValue = text }
+    func setTitle(_ text: String) {
+        titleText = text
+        renderTitle()
+    }
+
+    /// "⌨ 터미널 · 이름 · 폴더" → 종류 "터미널"은 시스템 글꼴 semibold(말), 나머지 이름·폴더는 고정폭 textSecondary(데이터). 앞의 기호는 뗀다.
+    private func renderTitle() {
+        var text = titleText
+        while let first = text.unicodeScalars.first, !CharacterSet.alphanumerics.contains(first) { text.removeFirst() }
+        let separator = " · "
+        var parts = text.components(separatedBy: separator)
+        let lead = parts.removeFirst()
+        let rest = parts.joined(separator: separator)
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        let result = NSMutableAttributedString(string: lead, attributes: [
+            .font: TermAppearance.uiTextFont(TermAppearance.scaled(11), weight: .semibold),
+            .foregroundColor: TermAppearance.textPrimary, .paragraphStyle: paragraph,
+        ])
+        if !rest.isEmpty {
+            result.append(NSAttributedString(string: "  " + rest, attributes: [
+                .font: TermAppearance.scaledUIFont(11), .foregroundColor: TermAppearance.textSecondary, .paragraphStyle: paragraph,
+            ]))
+        }
+        titleLabel.attributedStringValue = result
+    }
 
     var hasContent: Bool { content?.superview === container }
 
@@ -135,7 +164,7 @@ final class FloatPanel: NSView {
     /// 글꼴 크기 배율이 바뀜: 제목 줄 높이·글꼴·버튼
     func scaleChanged() {
         stripHeightConstraint.constant = Self.stripHeight
-        titleLabel.font = TermAppearance.scaledUIFont(11, bold: true)
+        renderTitle()
         iconButtons.forEach { $0.scaleChanged() }
         setLarge(large)
     }
@@ -143,7 +172,11 @@ final class FloatPanel: NSView {
     /// 내용(브라우저 도구·터미널 뷰)을 단다(nil = 뗀다). 다른 곳(옆 도크: 시험 명령)에 붙어 있었으면 거기서 먼저 뗀다.
     func setContent(_ view: NSView?) {
         guard view !== content || view?.superview !== container else { return }
-        if let old = content, old.superview === container { old.removeFromSuperview() }
+        if let old = content, old.superview === container {
+            // 내용을 떼면 사라지는 모습에 빈 틀만 남으므로 떼기 전에 찍어 둔다(곧 창도 떼어질 때 쓴다)
+            if view == nil, window != nil, !Motion.reduced { exitSnapshot = FloatFx.snapshot(self) }
+            old.removeFromSuperview()
+        }
         content = view
         guard let view else { return }
         view.removeFromSuperview()
@@ -160,12 +193,16 @@ final class FloatPanel: NSView {
     /// 제목 줄의 "크게" 앞에 아이콘 버튼을 더한다(브라우저의 "별도 창으로 떼기", 작은 터미널의 "끝내기")
     func addTitleButton(symbol: String, tip: String, action: @escaping () -> Void) {
         let button = FloatIconButton(symbol: symbol, tip: tip)
+        // 끝내기(power)는 되돌릴 수 없다: 빨강으로 반응하고 "크게"·닫기와 8pt 떨어진다(같은 동작, 확인창은 없다)
+        let destructive = symbol == "power"
+        if destructive { button.hoverTint = TermAppearance.statusAttention }
         button.target = self
         button.action = #selector(extraClicked(_:))
         button.tag = extraActions.count
         extraActions.append(action)
         iconButtons.append(button)
         row.insertArrangedSubview(button, at: row.arrangedSubviews.firstIndex(of: sizeButton) ?? row.arrangedSubviews.count)
+        if destructive { row.setCustomSpacing(8, after: button) }
     }
 
     @objc private func extraClicked(_ sender: NSButton) {
@@ -274,7 +311,27 @@ final class FloatPanel: NSView {
     }
     override func setFrameOrigin(_ newOrigin: NSPoint) { super.setFrameOrigin(newOrigin); invalidateCursors() }
     override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); invalidateCursors() }
-    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); invalidateCursors() }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        invalidateCursors()
+        // 열릴 때 떠오르듯 나타난다(앱이 막 뜨는 동안 복원되는 창은 그냥 나타난다)
+        if window != nil, Self.pastLaunch { FloatFx.fadeIn(self, duration: Motion.standard, dy: -6) }
+    }
+
+    /// 앱이 뜬 지 몇 초 안에는 움직이지 않는다(복원되는 창)
+    private static var pastLaunch: Bool {
+        guard let launched = NSRunningApplication.current.launchDate else { return true }
+        return Date().timeIntervalSince(launched) > 3
+    }
+
+    /// 닫힐 때 그 자리에서 투명해지며 조금 내려앉는다(떼는 것은 바로 — 아래 그림만 남아 사라진다)
+    override func removeFromSuperview() {
+        if let host = superview, window != nil, !Motion.reduced, Self.pastLaunch {
+            FloatFx.ghost(exitSnapshot ?? FloatFx.snapshot(self), frame: frame, in: host, above: self, duration: Motion.standard, dy: -6)
+        }
+        exitSnapshot = nil
+        super.removeFromSuperview()
+    }
 
     // 마지막 보루: 위 선언이 안쪽 화면의 커서에 밀려도, 제목 줄·가장자리에 들어올 때 이 창이 직접 커서를 정한다
     override func updateTrackingAreas() {
@@ -349,7 +406,7 @@ final class FloatTitleStrip: NSView {
     override func draw(_ dirtyRect: NSRect) {
         TermAppearance.chrome.setFill()
         bounds.fill()
-        TermAppearance.border.withAlphaComponent(0.6).setFill()
+        TermAppearance.border.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     }
 }
