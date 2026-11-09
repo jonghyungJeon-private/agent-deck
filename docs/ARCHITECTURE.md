@@ -625,15 +625,16 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
 
 claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 대기 · 권한 요청" 같은 글), 묶음 점(안의 가장 급한 상태),
 탭 제목 앞 점(탭 안 화면 중 가장 급한 상태), 분할 테두리 제목 앞("입력 대기 · <이름>")에 보인다. 색만으로 구분하지 않게 글·모양도 다르다.
+왼쪽 목록 세션 줄은 점 뒤에 세션 종류 아이콘(✻ claude 주황 · ‹› codex 청록 · ›_ 셸 회색, `SessionKind`)이 이름 칸 왼쪽에 걸려 있고, 둘째 줄의 프로그램 단어도 같은 색이다(푸터 사용량 이름표도 같은 아이콘·색). 사용량 막대는 중립, 80% 이상 호박색, 90% 이상 빨강.
 
 | 상태 | 색·모양 | 언제 (Claude Code hook) |
 |---|---|---|
-| 작업 중 | 노랑 점 | `UserPromptSubmit`(질문을 보냄) |
-| 입력 대기 | 빨강 테두리 점, 안 보는 탭은 붉은 바탕 + 아래 줄 | `PermissionRequest`(권한 요청), `Notification` 의 `permission_prompt`·`elicitation_dialog`·`elicitation_url_dialog`·`agent_needs_input` |
-| 완료 | 청록 점 | `Stop`(응답을 마침). 그 화면을 보면(앱이 앞에 있을 때) "쉬는 중"으로 바뀐다 |
-| 오케스트레이션 중 | 보라 점선 고리 + 가운데 점, "에이전트 N · 백그라운드 M" | `Stop` 의 `background_tasks` 에 아직 도는 일이 있음(아래). 알림·Dock 배지 없음 |
-| 오류 | 빨강 점 | `StopFailure`(API 오류 등, 오류 종류를 함께 보임) |
-| 쉬는 중 | 초록 속 빈 점 | 완료를 확인했거나 `Notification` 의 `idle_prompt`(입력 없이 약 60초) |
+| 작업 중 | 주 글자색 찬 점, 천천히 숨 쉼(`WorkingPulse`) | `UserPromptSubmit`(질문을 보냄) |
+| 입력 대기 | 빨강 테두리 점 ◉, 안 보는 탭은 붉은 바탕 + 아래 줄 | `PermissionRequest`(권한 요청), `Notification` 의 `permission_prompt`·`elicitation_dialog`·`elicitation_url_dialog`·`agent_needs_input` |
+| 완료 | 세이지 초록 찬 점 | `Stop`(응답을 마침). 그 화면을 보면(앱이 앞에 있을 때) "쉬는 중"으로 바뀐다 |
+| 오케스트레이션 중 | 회색 점선 고리 + 가운데 점, "에이전트 N · 백그라운드 M" | `Stop` 의 `background_tasks` 에 아직 도는 일이 있음(아래). 알림·Dock 배지 없음 |
+| 오류 | 빨강 찬 점에 "!" 를 뚫은 모양 | `StopFailure`(API 오류 등, 오류 종류를 함께 보임) |
+| 쉬는 중 | 회색 속 빈 점 | 완료를 확인했거나 `Notification` 의 `idle_prompt`(입력 없이 약 60초) |
 
 - hook 은 세션 기록 파일(`sessions/<세션>.json`)에 `state`·`stateAt`·`stateMessage`·`pane`·`stateSeq`(상태를 적을 때마다 오르는 번호 — 같은 초 안의 변화도 구분해 알림이 빠지지 않게. 날짜 형식은 예전 빌드와 같다)를 적고, 앱은 2초마다 목록을 다시 만들며 읽는다.
   화면 짝짓기는 hook 이 적은 화면 ID(`pane`)가 먼저다.

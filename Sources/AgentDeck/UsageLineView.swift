@@ -18,11 +18,19 @@ struct UsageLineView: View {
         .help(line.help)
     }
 
+    private var kind: SessionKind { line.provider == "Codex" ? .codex : .claude }
+
     private func row(bars: Bool, staleWord: Bool) -> some View {
         HStack(alignment: .center, spacing: ui(8)) {
-            Text(line.provider)
-                .foregroundStyle(Color(line.stale ? TermAppearance.textSecondary : TermAppearance.textPrimary))
-                .frame(minWidth: ui(38), alignment: .leading)
+            // 범례: 종류 아이콘 + 이름을 종류 색으로(✻ Claude · ‹› Codex) — 세션 줄·탭의 종류 색과 같은 뜻
+            HStack(spacing: ui(Space.xs)) {
+                Image(systemName: kind.symbol)
+                    .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                    .frame(width: ui(14), alignment: .leading)
+                Text(line.provider)
+            }
+            .foregroundStyle(Color(kind.color))
+            .frame(minWidth: ui(58), alignment: .leading)
             if line.cells.isEmpty {
                 Text("사용량 정보 없음")
             } else {
@@ -44,31 +52,46 @@ private struct UsageCellView: View {
     let stale: Bool
     @Environment(\.uiScale) private var ui
 
-    private var color: NSColor {
-        guard !stale else { return TermAppearance.textSecondary }
-        switch cell.tier {
+    /// 막대·숫자 색: 평소 중립, 80% 이상 경고(호박색), 90% 이상(critical)은 빨강 — 오래된 값은 늘 중립
+    private var level: Level {
+        guard !stale, let percent = cell.percent else { return .normal }
+        return cell.tier == .critical ? .critical : percent >= 80 ? .warn : .normal
+    }
+
+    private enum Level { case normal, warn, critical }
+
+    private var barColor: NSColor {
+        switch level {
         case .normal: return TermAppearance.textSecondary
-        case .warn: return TermAppearance.yellow
-        case .critical: return TermAppearance.red
+        case .warn: return TermAppearance.warning
+        case .critical: return TermAppearance.statusAttention
+        }
+    }
+
+    private var textColor: NSColor {
+        switch level {
+        case .normal: return TermAppearance.textSecondary
+        case .warn: return TermAppearance.warnText
+        case .critical: return TermAppearance.statusAttention
         }
     }
 
     var body: some View {
         HStack(alignment: .center, spacing: ui(4)) {
-            Text(cell.label)
+            Text(cell.label).foregroundStyle(Color(TermAppearance.textSecondary))
             if bar {
                 let width = ui(22)
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color(TermAppearance.textDim).opacity(0.22))
-                    Capsule().fill(Color(color).opacity(stale ? 0.6 : 1))
+                    Capsule().fill(Color(barColor).opacity(stale ? 0.6 : 1))
                         .frame(width: width * min(1, max(0, (cell.percent ?? 0) / 100)))
                         .animation(Motion.ease(), value: cell.percent)
                 }
                 .frame(width: width, height: ui(4))
             }
             Text(cell.text)
-                .uiFont(10, bold: !stale && cell.tier == .critical)
-                .foregroundStyle(Color(color))
+                .uiFont(10, bold: level == .critical)
+                .foregroundStyle(Color(textColor))
                 .frame(minWidth: ui(25), alignment: .leading)
         }
     }

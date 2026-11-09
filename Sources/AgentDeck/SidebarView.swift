@@ -311,7 +311,7 @@ struct SidebarView: View {
         var out: [SidebarNotice] = []
         switch model.hookState {
         case .missing:
-            out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.yellow,
+            out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.warning,
                                      title: "Claude Code 연결 필요",
                                      detail: "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다.",
                                      action: claudeHookAction("연결하기")))
@@ -321,7 +321,7 @@ struct SidebarView: View {
                                      detail: "Claude Code 연결이 예전 판(예전 이름 ClaudeTerm·ClaudeSessions 포함)이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다.",
                                      action: claudeHookAction("갱신하기")))
         case .error(let detail):
-            out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.red,
+            out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.statusAttention,
                                      title: "Claude Code 설정을 읽지 못함",
                                      detail: "Claude Code 설정을 읽지 못했습니다: \(detail)", action: nil))
         default: break
@@ -332,7 +332,7 @@ struct SidebarView: View {
                 ? "Codex 연결이 예전 판이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks 에서 훅을 다시 신뢰하세요."
                 : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요."
             if case .error(let detail) = model.codexHookState {
-                out.append(SidebarNotice(id: "codex-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.red,
+                out.append(SidebarNotice(id: "codex-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.statusAttention,
                                          title: "Codex 연결 오류", detail: message + "\n" + detail, action: nil))
             } else {
                 out.append(SidebarNotice(id: "codex-hook", symbol: update ? "arrow.triangle.2.circlepath" : "link",
@@ -366,11 +366,11 @@ struct SidebarView: View {
             guard skill != .unknown else { return nil }
             if !model.daemonHasBrowser {
                 return ("세션 데몬이 예전 판", "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 뜹니다.",
-                        nil, "exclamationmark.triangle.fill", TermAppearance.yellow)
+                        nil, "exclamationmark.triangle.fill", TermAppearance.warning)
             }
             if case .updateFailed(let detail) = skill {
                 return ("abx 스킬 갱신 실패", "abx 스킬을 지금 abx 판으로 바꾸지 못했습니다 — \(detail)", "다시 시도",
-                        "exclamationmark.triangle.fill", TermAppearance.red)
+                        "exclamationmark.triangle.fill", TermAppearance.statusAttention)
             }
             var needs: [String] = []
             if case .missing(let targets) = skill { needs.append("\(targets.joined(separator: "·"))에 abx 스킬 넣기") }
@@ -380,7 +380,7 @@ struct SidebarView: View {
                         "arrow.down.circle", TermAppearance.textSecondary)
             case .failed(let detail):
                 return ("에이전트 전용 브라우저 받기 실패", "에이전트 전용 브라우저를 받지 못했습니다: \(detail)", "다시 시도",
-                        "exclamationmark.triangle.fill", TermAppearance.red)
+                        "exclamationmark.triangle.fill", TermAppearance.statusAttention)
             case .missing:
                 needs.append("에이전트 전용 브라우저(Chrome for Testing, 약 190MB) 받기 — 받기 전에는 설치된 Chrome 을 씁니다")
             default: break
@@ -462,7 +462,7 @@ struct ChromeButton: View {
                 if warning {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.system(size: ui(TypeSize.caption)))
-                        .foregroundStyle(Color(TermAppearance.yellow))
+                        .foregroundStyle(Color(TermAppearance.warning))
                         .accessibilityLabel("주의")
                 }
             }
@@ -544,12 +544,12 @@ private struct NoticeButtonBody<Label: View>: View {
     var body: some View {
         label
             .uiTextFont(TypeSize.secondary, weight: .semibold)
-            .foregroundStyle(Color(prominent ? TermAppearance.chrome : TermAppearance.textPrimary))
+            .foregroundStyle(Color(prominent ? TermAppearance.onAccent : TermAppearance.textPrimary))
             .lineLimit(1)
             .padding(.horizontal, ui(Space.sm))
             .frame(minHeight: ui(Space.xxl))
             .background(RoundedRectangle(cornerRadius: ui(6))
-                .fill(Color(prominent ? TermAppearance.accent : TermAppearance.chromeRaised)))
+                .fill(Color(prominent ? TermAppearance.accentFill : TermAppearance.chromeRaised)))
             .overlay {
                 if !prominent {
                     RoundedRectangle(cornerRadius: ui(6)).strokeBorder(Color(TermAppearance.border), lineWidth: 1)
@@ -660,43 +660,73 @@ private struct InfoNoticeRow: View {
     }
 }
 
-/// 한 줄 목록 칸의 바탕: 둘레를 4pt 띄운 둥근 채움. 짙기(level)로 고른 줄 1·마우스가 올라온 줄·고른 줄을 품은 접힌 줄 0.5·없음 0.
+/// 한 줄 목록 칸의 바탕 짙기: 고른 줄 > 고른 줄을 품은 접힌 줄 > 마우스가 올라온 줄. 셋이 서로 확실히 다르다.
+/// (바탕 위 4.5:1 글자 대비 때문에 고른 줄의 채움을 더 어둡게 할 수 없어, 고른 줄만 얇은 테두리를 더 두른다.)
+private enum PillLevel {
+    static let none = 0.0
+    static let hover = 0.4
+    static let holdsSelection = 0.7
+    static let selected = 1.0
+}
+
+/// 한 줄 목록 칸의 바탕: 둘레를 4pt 띄운 둥근 채움. 짙기(level)는 `PillLevel`, 고른 줄(level 1)만 `border` 테두리를 더한다.
 /// 늘 그려 두고 짙기만 바꿔 서서히 겹쳐 바뀐다(고른 줄이 옮겨 가면 앞 줄은 옅어지고 새 줄은 짙어진다).
 private extension View {
     func sidebarPill(_ level: Double, _ ui: UIScale) -> some View {
         background {
             RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised))
-                .padding(.horizontal, ui(Space.xs))
                 .opacity(level)
+                .overlay {
+                    RoundedRectangle(cornerRadius: ui(6)).strokeBorder(Color(TermAppearance.border), lineWidth: 1)
+                        .opacity(level >= PillLevel.selected ? 1 : 0)
+                }
+                .padding(.horizontal, ui(Space.xs))
                 .animation(Motion.ease(Motion.fast), value: level)
         }
     }
 }
 
-/// 상태 점. 꺼진 화면·쉬는 중은 속이 빈 점, 입력 대기는 테두리를 두른 점, 오케스트레이션 중은 점선 고리 + 가운데 점
-/// (색만으로 구분하지 않게 모양도 다르게).
+/// 상태 점(8pt). 모양은 `WorkStatus.dotShape`: 작업 중·완료·상태 없음 = 찬 점, 쉬는 중·꺼진 화면 = 속 빈 고리, 입력 대기 = 테두리 두른 점 ◉,
+/// 오케스트레이션 = 점선 고리 + 가운데 점, 오류 = 찬 점에 "!" 뚫기(색만으로 구분하지 않는다). 작업 중은 공용 시계로 숨 쉰다(`.workingPulse`).
+/// 상태가 바뀌면 `Motion.fast` 로 겹쳐 바뀐다.
 struct StatusDot: View {
     let status: WorkStatus
     var dormant = false
     @Environment(\.uiScale) private var ui
 
+    private var shape: WorkStatus.DotShape { dormant ? .ring : status.dotShape }
+
     var body: some View {
-        let color = Color(dormant ? TermAppearance.textDim.withAlphaComponent(0.8) : status.color)
-        let hollow = dormant || status == .idle
+        let color = Color(dormant ? TermAppearance.statusNone : status.color)
         Group {
-            if hollow {
+            switch shape {
+            case .ring:
                 Circle().strokeBorder(color, lineWidth: 1.2)
-            } else if case .waiting = status {
+            case .ringedDot:
                 Circle().fill(color).padding(2).overlay(Circle().strokeBorder(color, lineWidth: 1))
-            } else if case .orchestrating = status {
-                // 오케스트레이션 중: 점선 고리(돌고 있는 일들) + 가운데 작은 점(메인)
+            case .dottedRing:
+                // 점선 고리(돌고 있는 일들) + 가운데 작은 점(메인)
                 Circle().fill(color).padding(ui(2.6))
                     .overlay(Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.2, dash: [1.8, 1.3])))
-            } else {
+            case .errorMark:
+                // 찬 점에서 "!" 를 뚫어 낸다(막대 + 점)
+                ZStack {
+                    Circle().fill(color)
+                    VStack(spacing: ui(0.9)) {
+                        RoundedRectangle(cornerRadius: ui(0.6)).frame(width: ui(1.4), height: ui(3.2))
+                        Circle().frame(width: ui(1.5), height: ui(1.5))
+                    }
+                    .blendMode(.destinationOut)
+                }
+                .compositingGroup()
+            case .filled:
                 Circle().fill(color)
             }
         }
         .frame(width: ui(8), height: ui(8))
+        .workingPulse(status.pulses && !dormant)
+        .animation(Motion.ease(Motion.fast), value: shape)
+        .animation(Motion.ease(Motion.fast), value: status.color)
     }
 }
 
@@ -730,14 +760,14 @@ struct SpacesSummaryView: View {
                     StatusDot(status: WorkStatus(summary: kind))
                     Text("\(summary.count(kind))")
                         .uiFont(TypeSize.caption, bold: attention)
-                        .foregroundStyle(Color(attention ? TermAppearance.red : TermAppearance.textPrimary))
+                        .foregroundStyle(Color(attention ? TermAppearance.statusAttention : TermAppearance.textPrimary))
                 }
                 .padding(.horizontal, attention ? ui(5) : 0)
                 .padding(.vertical, attention ? ui(1) : 0)
                 .background {
                     if attention {
-                        Capsule().fill(Color(TermAppearance.red).opacity(0.18))
-                            .overlay(Capsule().strokeBorder(Color(TermAppearance.red).opacity(0.55), lineWidth: 1))
+                        Capsule().fill(Color(TermAppearance.statusAttention).opacity(0.14))
+                            .overlay(Capsule().strokeBorder(Color(TermAppearance.statusAttention).opacity(0.55), lineWidth: 1))
                     }
                 }
             }
@@ -747,7 +777,7 @@ struct SpacesSummaryView: View {
                         .font(.system(size: ui(TypeSize.caption), weight: .semibold))
                     Text("\(summary.runningAgents)").uiFont(TypeSize.caption)
                 }
-                .foregroundStyle(Color(TermAppearance.yellow))
+                .foregroundStyle(Color(TermAppearance.statusWorking))
             }
             Text(summary.sessions > 0 ? "세션 \(summary.sessions)" : "세션 없음")
                 .uiTextFont(TypeSize.caption)
@@ -877,7 +907,7 @@ struct GroupRowView<MenuContent: View, ContextContent: View>: View {
         .padding(.leading, ui(Space.md))
         .padding(.trailing, ui(Space.xs))
         .padding(.vertical, ui(Space.xs))
-        .sidebarPill(holdsSelection || hovering ? 0.5 : 0, ui)
+        .sidebarPill(holdsSelection ? PillLevel.holdsSelection : hovering ? PillLevel.hover : PillLevel.none, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { context() }
@@ -904,7 +934,7 @@ struct WorktreeRowView: View {
                 .frame(width: ui(Space.lg), height: line, alignment: .leading)
             Image(systemName: "arrow.triangle.branch")
                 .font(.system(size: ui(TypeSize.caption), weight: .semibold))
-                .foregroundStyle(Color(section.isClaude ? TermAppearance.claudeColor : TermAppearance.textSecondary))
+                .foregroundStyle(Color(section.isClaude ? TermAppearance.typeClaude : TermAppearance.textSecondary))
                 .frame(width: ui(Space.lg), height: line, alignment: .leading)
             VStack(alignment: .leading, spacing: ui(2)) {
                 TitleWithAside {
@@ -938,7 +968,7 @@ struct WorktreeRowView: View {
         .padding(.leading, ui(Space.md + Space.lg))
         .padding(.trailing, ui(Space.md))
         .padding(.vertical, ui(Space.xs))
-        .sidebarPill(holdsSelection || hovering ? 0.5 : 0, ui)
+        .sidebarPill(holdsSelection ? PillLevel.holdsSelection : hovering ? PillLevel.hover : PillLevel.none, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onToggle)
@@ -952,11 +982,11 @@ struct WorktreeRowView: View {
     private var trailing: some View {
         if section.agents.contains(where: \.isRunning) {
             HStack(spacing: ui(Space.xs)) {
-                Circle().fill(Color(TermAppearance.yellow)).frame(width: ui(6), height: ui(6))
+                Circle().fill(Color(TermAppearance.statusWorking)).frame(width: ui(6), height: ui(6)).workingPulse(true)
                 Text("작업 중 \(section.agents.filter(\.isRunning).count)")
                     .uiTextFont(TypeSize.caption, weight: .semibold)
             }
-            .foregroundStyle(Color(TermAppearance.yellow))
+            .foregroundStyle(Color(TermAppearance.textSecondary))
         } else if !section.agents.isEmpty {
             Text("최근 작업").uiTextFont(TypeSize.caption).foregroundStyle(Color(TermAppearance.textSecondary))
         } else if section.rows.isEmpty {
@@ -980,9 +1010,17 @@ struct SessionRowView: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
+            // 점 + 종류 아이콘은 이름 칸 왼쪽에 걸어 둔다(줄 왼쪽 여백에서 그만큼 덜어 냄) — 이름·둘째 줄은 예전 자리(묶음 이름과 같은 칸) 그대로
             StatusDot(status: row.status, dormant: row.dormant)
-                .frame(width: ui(Space.lg), alignment: .leading)
+                .frame(width: ui(SidebarItem.dotColumn), alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+            Image(systemName: row.sessionKind.symbol)
+                .font(.system(size: ui(TypeSize.caption), weight: .medium))
+                // ‹› 는 가로로 가장 넓어(종횡비 1.5) 이름에 붙어 보이므로 한 단계 작게 — 아이콘 칸 안에서 이름과 간격을 맞춘다
+                .imageScale(row.sessionKind == .codex ? .small : .medium)
+                .foregroundStyle(Color(row.sessionKind.color))
+                .frame(width: ui(SidebarItem.iconColumn), alignment: .leading)
+                .accessibilityLabel(row.sessionKind.label)
             VStack(alignment: .leading, spacing: ui(2)) {
                 HStack(spacing: ui(Space.xs)) {
                     Text(row.title)
@@ -993,7 +1031,7 @@ struct SessionRowView: View {
                     if row.launchWarning != nil {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: ui(TypeSize.caption)))
-                            .foregroundStyle(Color(TermAppearance.red))
+                            .foregroundStyle(Color(TermAppearance.warning))
                     }
                 }
                 detail
@@ -1027,16 +1065,16 @@ struct SessionRowView: View {
             if let tabNumber, showsTabHint {
                 Text("⌘\(tabNumber)")
                     .uiFont(TypeSize.caption)
-                    .foregroundStyle(Color(selected ? TermAppearance.accent : TermAppearance.textSecondary))
+                    .foregroundStyle(Color(selected ? TermAppearance.textPrimary : TermAppearance.textSecondary))
                     .help("탭 \(tabNumber)에 있음")
                     .padding(.leading, ui(Space.xs))
             }
         }
-        .padding(.leading, ui(Space.md + CGFloat(depth) * Space.lg))
+        .padding(.leading, ui(SidebarItem.sessionHang(depth: depth)))
         .padding(.trailing, ui(Space.md))
         .padding(.vertical, ui(6))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .sidebarPill(selected ? 1 : hovering ? 0.5 : 0, ui)
+        .sidebarPill(selected ? PillLevel.selected : hovering ? PillLevel.hover : PillLevel.none, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help("\(row.name)\n\(row.cwd) · \(row.pane.tty ?? "")" + (row.launchWarning.map { "\n⚠ \($0)" } ?? "")
@@ -1067,13 +1105,13 @@ struct SessionRowView: View {
                         .layoutPriority(2)
                 }
                 Group {
+                    // 프로그램 단어는 종류 색(셸은 회색), 상태 설명은 보조 글자색
                     if let detail = row.status.detail {
-                        Text(detail).uiTextFont(TypeSize.caption)
+                        Text(detail).uiTextFont(TypeSize.caption).foregroundStyle(Color(TermAppearance.textSecondary))
                     } else {
-                        Text(row.program).uiFont(TypeSize.caption)
+                        Text(row.program).uiFont(TypeSize.caption).foregroundStyle(Color(row.sessionKind.color))
                     }
                 }
-                .foregroundStyle(Color(row.agentColor))
                 .layoutPriority(1)
                 // 제목이 이미 폴더 이름이면 같은 말을 되풀이하지 않고 터미널 장치로 구분한다
                 Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")
@@ -1118,10 +1156,17 @@ enum SidebarItem: Identifiable, Equatable {
     /// 끌어 놓을 자리 줄을 들여 쓸 너비(줄의 첫 칸과 같은 자리, 배율 곱하기 전)
     var indent: CGFloat {
         switch self {
-        case .session(_, let depth, _, _): return Space.md + CGFloat(depth) * Space.lg
+        case .session(_, let depth, _, _): return Self.sessionHang(depth: depth)
         default: return Space.md
         }
     }
+
+    /// 세션 줄 왼쪽 여백(배율 곱하기 전). 점 칸(`dotColumn`) + 종류 아이콘 칸(`iconColumn`)은 이름 칸 왼쪽에 걸려 있어서,
+    /// 이름은 점 칸 하나(`Space.lg`)만 있던 때와 같은 자리(`Space.md + depth * Space.lg + Space.lg`)에 선다.
+    static func sessionHang(depth: Int) -> CGFloat { CGFloat(depth) * Space.lg }
+    /// 점 칸(8pt 점 + 2pt 여유)과 종류 아이콘 칸(가장 넓은 ‹› 도 이름과 4pt 이상 떨어지게). 합 28 = 걸리는 폭.
+    static let dotColumn: CGFloat = 10
+    static let iconColumn: CGFloat = 18
 
     static func flatten(_ groups: [FolderGroup], spaces: SpacesState = SpacesState()) -> [SidebarItem] {
         var items: [SidebarItem] = []
@@ -1277,7 +1322,7 @@ struct AgentRowView: View {
                         .foregroundStyle(Color(agent.isRunning ? TermAppearance.textPrimary : TermAppearance.textSecondary))
                     HStack(spacing: 0) {
                         Text(when)
-                            .foregroundStyle(Color(agent.isRunning ? TermAppearance.yellow : TermAppearance.textSecondary))
+                            .foregroundStyle(Color(agent.isRunning ? TermAppearance.statusWorking : TermAppearance.textSecondary))
                         Text([agent.agentType, owner.map { "\($0) 의 하위 에이전트" }].compactMap { $0 }
                             .map { " · " + $0 }.joined())
                             .foregroundStyle(Color(TermAppearance.textSecondary))
@@ -1304,7 +1349,7 @@ struct AgentRowView: View {
         .padding(.trailing, ui(Space.md))
         .padding(.vertical, ui(Space.xs))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .sidebarPill(hovering ? 0.5 : 0, ui)
+        .sidebarPill(hovering ? PillLevel.hover : PillLevel.none, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help("누르면 이 에이전트를 띄운 에이전트 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
@@ -1346,13 +1391,13 @@ struct StatusFooterView: View {
                     .padding(.bottom, ui(Space.xs))
             }
             if !model.migrationPending.isEmpty {
-                NoticeLine(color: TermAppearance.yellow, title: "데이터 옮기기 일부 실패", detail: "다음 실행 때 다시 시도합니다",
+                NoticeLine(color: TermAppearance.warning, title: "데이터 옮기기 일부 실패", detail: "다음 실행 때 다시 시도합니다",
                            help: DataLocation.pendingNoticeDetail(model.migrationPending, legacy: DataLocation.legacyRoot(),
                                                                   logPath: Self.logPath))
                     .padding(.bottom, ui(Space.xs))
             }
             if let error = model.lastError {
-                Text(error).foregroundStyle(Color(TermAppearance.red))
+                Text(error).foregroundStyle(Color(TermAppearance.statusAttention))
             }
             if let claude = usage.claude { UsageLineView(line: claude) }
             if let codex = usage.codex { UsageLineView(line: codex) }
@@ -1391,7 +1436,7 @@ struct StatusFooterView: View {
     @ViewBuilder private var daemonLine: some View {
         if model.connected {
             if model.link.limited {
-                NoticeLine(color: TermAppearance.yellow, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있음",
+                NoticeLine(color: TermAppearance.warning, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있음",
                            help: """
                                세션 데몬이 launchd 작업이 아니라 예전 방식(posix_spawn)으로 떠서 앱과 같은 묶음(coalition)에 있습니다.
                                앱을 ⌘Q 로 끄면 세션은 남지만, 강제 종료하거나 Dock 에서 강제 종료하면 셸·claude·codex 가 함께 끝날 수 있습니다.
@@ -1402,10 +1447,10 @@ struct StatusFooterView: View {
                 Text("앱을 꺼도 세션은 계속 돕니다")
             }
         } else if case .failed(let message, _) = model.link.phase {
-            NoticeLine(color: TermAppearance.red, title: "세션 데몬에 연결하지 못함", detail: "잠시 뒤 다시 시도합니다",
+            NoticeLine(color: TermAppearance.statusAttention, title: "세션 데몬에 연결하지 못함", detail: "잠시 뒤 다시 시도합니다",
                        help: "\(message) (\(model.link.failures)번째 실패)\n새 화면을 열면 바로 다시 시도합니다.\n기록: \(Self.logPath)")
         } else {
-            NoticeLine(color: TermAppearance.yellow, title: model.connectionStatusText ?? "세션 데몬 연결 중…", detail: nil,
+            NoticeLine(color: TermAppearance.textSecondary, title: model.connectionStatusText ?? "세션 데몬 연결 중…", detail: nil,
                        help: "세션 데몬에 연결하는 중입니다. 데몬이 없으면 띄웁니다(몇 초 걸릴 수 있음).\n기록: \(Self.logPath)")
         }
     }
@@ -1454,7 +1499,7 @@ private struct SettingsButton: View {
             HStack(spacing: ui(Space.xs)) {
                 if warning != nil {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color(TermAppearance.red))
+                        .foregroundStyle(Color(TermAppearance.warning))
                         .accessibilityLabel("주의")
                 }
                 Image(systemName: "gearshape")
@@ -1483,7 +1528,7 @@ private struct LegacyDaemonLine: View {
     var body: some View {
         VStack(alignment: .leading, spacing: ui(Space.sm)) {
             HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
-                Circle().fill(Color(TermAppearance.yellow)).frame(width: ui(6), height: ui(6))
+                Circle().fill(Color(TermAppearance.warning)).frame(width: ui(6), height: ui(6))
                 Text(relocating ? "새 위치로 옮기는 중…" : "이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다")
                     .uiTextFont(TypeSize.secondary)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
@@ -1499,7 +1544,7 @@ private struct LegacyDaemonLine: View {
     }
 }
 
-/// 상태 줄 맨 위 "새 버전 v0.x.y — 업데이트"(눈에 띄게 강조색, 누르면 업데이트 방법)
+/// 상태 줄 맨 위 "새 버전 v0.x.y — 업데이트"(중립 알림: 갱신 기호 + 주 글자색, 누르면 업데이트 방법. 강조색은 쓰지 않는다)
 private struct UpdateLine: View {
     let tag: String
     let action: () -> Void
@@ -1509,24 +1554,23 @@ private struct UpdateLine: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: ui(Space.sm)) {
-                Circle().fill(Color(TermAppearance.accent)).frame(width: ui(6), height: ui(6))
+                Image(systemName: "arrow.down.circle")
+                    .font(.system(size: ui(TypeSize.secondary), weight: .semibold))
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
                 Text("새 버전 \(tag) — 업데이트")
                     .uiTextFont(TypeSize.secondary, weight: .semibold)
                     .underline(hovering)
             }
-            .foregroundStyle(Color(TermAppearance.accent))
+            .foregroundStyle(Color(TermAppearance.textPrimary))
             .padding(.horizontal, ui(Space.sm))
             .padding(.vertical, ui(Space.xs))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.accent).opacity(hovering ? 0.18 : 0.1)))
+            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)).opacity(hovering ? 1 : 0.6))
             .contentShape(Rectangle())
             .animation(Motion.ease(Motion.fast), value: hovering)
         }
         .buttonStyle(SidebarPressStyle())
-        .onHover { inside in
-            hovering = inside
-            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
+        .onHover { hovering = $0 }
         .help("업데이트 명령과 릴리스 페이지 보기")
     }
 }

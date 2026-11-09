@@ -53,18 +53,45 @@ enum WorkStatus: Equatable {
         }
     }
 
+    /// 상태 색(B2 역할): 입력 대기·오류 = 빨강(내 조작 필요), 완료 = 세이지 초록, 작업 중 = 주 글자색(숨 쉬는 점), 쉼·오케스트레이션·없음 = 중립.
+    /// 종류 색(주황·청록)은 상태에 쓰지 않는다 — 연결 전 claude·codex 는 "상태 없음"이다.
     var color: NSColor {
         switch self {
-        case .none: return TermAppearance.textDim.withAlphaComponent(0.6)
-        case .unknown: return TermAppearance.claudeColor
-        case .codexUnknown: return TermAppearance.codexColor
-        case .working: return TermAppearance.yellow
-        case .waiting, .error: return TermAppearance.red
-        case .done: return TermAppearance.cyan
-        case .orchestrating: return TermAppearance.purple
-        case .idle: return TermAppearance.green
+        case .none, .unknown, .codexUnknown: return TermAppearance.statusNone
+        case .working: return TermAppearance.statusWorking
+        case .waiting, .error: return TermAppearance.statusAttention
+        case .done: return TermAppearance.statusDone
+        case .orchestrating: return TermAppearance.statusOrchestrating
+        case .idle: return TermAppearance.statusIdle
         }
     }
+
+    /// 점 모양(색만으로 구분하지 않는다). 모든 표면(사이드바·탭·분할 제목)이 같은 모양을 그린다.
+    enum DotShape: Equatable {
+        /// 찬 점(작업 중·완료·상태 없음)
+        case filled
+        /// 속 빈 고리(쉼)
+        case ring
+        /// 테두리를 두른 점 ◉(입력 대기)
+        case ringedDot
+        /// 점선 고리 + 가운데 점(오케스트레이션)
+        case dottedRing
+        /// 찬 점에 "!" 를 뚫은 모양(오류)
+        case errorMark
+    }
+
+    var dotShape: DotShape {
+        switch self {
+        case .none, .unknown, .codexUnknown, .working, .done: return .filled
+        case .idle: return .ring
+        case .waiting: return .ringedDot
+        case .orchestrating: return .dottedRing
+        case .error: return .errorMark
+        }
+    }
+
+    /// 점이 숨 쉬어야 하는가(작업 중만) — `.workingPulse(_:)` / `layer.setWorkingPulse(_:)`
+    var pulses: Bool { self == .working }
 
     /// 묶음·탭에 대표로 보일 상태(먼저 볼 것부터)
     var rank: Int {
@@ -130,4 +157,40 @@ enum WorkStatus: Equatable {
         case .error: self = .error(nil)
         }
     }
+}
+
+/// 세션 종류: 어느 에이전트인가. 아이콘(SF Symbol)·종류 색을 한곳에서 정한다 — 사이드바 줄·탭 제목·푸터 사용량 이름표가 같이 쓴다.
+/// ✻ claude(주황) · ‹› codex(청록) · ›_ 셸(중립). 상태에는 쓰지 않는다.
+enum SessionKind: Equatable {
+    case claude, codex, shell
+
+    var color: NSColor {
+        switch self {
+        case .claude: return TermAppearance.typeClaude
+        case .codex: return TermAppearance.typeCodex
+        case .shell: return TermAppearance.typeShell
+        }
+    }
+
+    /// SF Symbol 이름
+    var symbol: String {
+        switch self {
+        case .claude: return "asterisk"
+        case .codex: return "chevron.left.forwardslash.chevron.right"
+        case .shell: return "terminal"
+        }
+    }
+
+    /// 접근성·도움말 이름
+    var label: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        case .shell: return "셸"
+        }
+    }
+}
+
+extension PaneRow {
+    var sessionKind: SessionKind { isCodex ? .codex : isClaude ? .claude : .shell }
 }
