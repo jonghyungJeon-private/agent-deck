@@ -6,6 +6,8 @@ import BrowserCore
 final class DeviceButton: NSButton {
     private var hovering = false { didSet { refreshHoverColor() } }
     private var symbol = "desktopcomputer"
+    /// 마지막으로 보인 상태(모양이 바뀌면 색이 값으로 굳은 그림을 다시 만든다)
+    private var shown: (device: AbxStatus.Tab.Device?, busy: Bool) = (nil, false)
 
     init() {
         super.init(frame: .zero)
@@ -13,7 +15,7 @@ final class DeviceButton: NSButton {
         imagePosition = .imageLeading
         imageHugsTitle = true
         wantsLayer = true
-        layer?.cornerRadius = 5
+        layer?.cornerRadius = Space.xs + 2
         contentTintColor = TermAppearance.textSecondary
         translatesAutoresizingMaskIntoConstraints = false
         setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
@@ -23,16 +25,28 @@ final class DeviceButton: NSButton {
 
     /// 지금 기기(nil = 보통 창). busy: 바꾸는 중
     func show(_ device: AbxStatus.Tab.Device?, busy: Bool) {
+        shown = (device, busy)
         symbol = Self.symbol(device)
         let name = busy ? "바꾸는 중…" : device.map { $0.name + ($0.landscape ? " · 가로" : "") } ?? "데스크톱"
-        attributedTitle = NSAttributedString(string: " " + name + " ▾", attributes: [
-            .font: NSFont.systemFont(ofSize: TermAppearance.scaled(11.5), weight: device == nil ? .regular : .semibold),
-            .foregroundColor: device?.isMobile == true ? TermAppearance.textPrimary : TermAppearance.textSecondary,
+        let color = device?.isMobile == true ? TermAppearance.textPrimary : TermAppearance.textSecondary
+        let size = TermAppearance.scaled(TypeSize.secondary)
+        // 이름 뒤 펼침 표시: 글자 ▾ 가 아니라 chevron.down 기호(색이 값으로 굳으니 모양이 바뀌면 다시 만든다)
+        let chevron = NSTextAttachment()
+        let side = TermAppearance.scaled(8)
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: side, weight: .semibold).applying(.init(paletteColors: [color.resolved(effectiveAppearance)])))
+        chevron.bounds = CGRect(x: 0, y: 0, width: side, height: side * 0.6)
+        let title = NSMutableAttributedString(string: name + " ", attributes: [
+            .font: TermAppearance.uiTextFont(size, weight: device == nil ? .regular : .semibold),
+            .foregroundColor: color,
         ])
+        title.append(NSAttributedString(attachment: chevron))
+        attributedTitle = title
+        contentTintColor = color
         image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)?
-            .withSymbolConfiguration(.init(pointSize: TermAppearance.scaled(12), weight: .medium))
-        let size = device.map { " · \(Int($0.width))×\(Int($0.height))" } ?? ""
-        toolTip = "이 탭을 어떤 기기로 볼지 — 지금: \(name)\(size)\n폰·태블릿 크기, 터치, 그 기기의 사용자 에이전트로 페이지를 다시 읽어요(이 탭만)"
+            .withSymbolConfiguration(.init(pointSize: TermAppearance.scaled(TypeSize.row), weight: .medium))
+        let sizeText = device.map { " · \(Int($0.width))×\(Int($0.height))" } ?? ""
+        toolTip = "이 탭을 어떤 기기로 볼지 — 지금: \(name)\(sizeText)\n폰·태블릿 크기, 터치, 그 기기의 사용자 에이전트로 페이지를 다시 읽어요(이 탭만)"
         setAccessibilityLabel(toolTip)
         isEnabled = !busy
     }
@@ -41,7 +55,7 @@ final class DeviceButton: NSButton {
 
     override var intrinsicContentSize: NSSize {
         let base = super.intrinsicContentSize
-        return NSSize(width: base.width + TermAppearance.scaled(10), height: max(base.height, FloatIconButton.side))
+        return NSSize(width: base.width + TermAppearance.scaled(Space.sm), height: max(base.height, FloatIconButton.side))
     }
 
     static func symbol(_ device: AbxStatus.Tab.Device?) -> String {
@@ -57,6 +71,7 @@ final class DeviceButton: NSButton {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         refreshHoverColor()
+        show(shown.device, busy: shown.busy)
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -98,7 +113,7 @@ enum DeviceMenu {
             menu.addItem(note(locked))
             menu.addItem(.separator())
         }
-        let desktop = ActionItem("데스크톱 — 보통 창") { pick(nil, false) }
+        let desktop = ActionItem("데스크톱 (보통 창)") { pick(nil, false) }
         desktop.image = icon("desktopcomputer")
         desktop.state = current == nil ? .on : .off
         desktop.isEnabled = enabled

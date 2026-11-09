@@ -227,6 +227,14 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   `sides[.browser] = .hidden`(도크와 작은 창은 한 곳만)이라 도크 배치 논리가 그대로다.
   안의 내용은 `BrowserDockController` 가 보여 주는 같은 칸(옮겨 달기, 도구가 보일 때만 스트림, `docked` 크기). ⌘W 는 작은 창만 닫는다.
   시험: `dock browser float`, `uilayout`·`browsers`(`browser-float` 줄: 방식·저장된 자리·창 좌표 자리).
+- **작은 창 투명도(`FloatPanel`, 브라우저 작은 창·작은 터미널 둘 다):** 제목 줄의 "⋯" 버튼(또는 제목 줄 오른쪽 클릭) → "투명도" ▸ 100·90·80·70%(고른 것에 체크, 기본 100% = 예전 모습).
+  종류마다 따로 `UserDefaults` 에 정수 퍼센트로 둔다: `floatPanel.opacity.browser`·`floatPanel.opacity.terminal`(없거나 다른 값이면 100). 다시 켜도 유지.
+  포인터가 창 위에 있거나, 키보드 포커스가 창 안(브라우저 화면·터미널·찾기 막대)에 있거나, 창을 끄는 중이면 100%, 포인터가 나가고 포커스도 없으면 고른 값으로 돌아온다
+  (`Motion.standard` 0.2초 ease-out, 동작 줄이기·창이 처음 놓일 때는 바로). 제목 줄·테두리·그림자는 늘 또렷하고 안쪽만 옅어진다:
+  브라우저는 안쪽 내용 전체(페이지 그림 포함)의 opacity 와 바탕 알파, 작은 터미널은 바탕만 — 터미널 뷰의 기본 바탕(`backgroundOpacity` 0)을 투명하게 두고 창 바탕 레이어의 알파가 투명도라 글자·커서는 그대로 불투명하다
+  (100% 일 때는 터미널이 바탕을 직접 칠해 예전과 같다; 모양이 바뀌면 터미널이 바탕을 불투명으로 다시 칠하므로 한 번 더 건다).
+  창의 `alphaValue`(자동 열기·닫기의 나타남이 쓴다)는 건드리지 않는다. 별도 브라우저 창(`BrowserWindowController`)에는 적용하지 않는다(작은 창만).
+  시험: `panel-opacity <browser|scratch> [100|90|80|70] [blur] [/절대경로.png]`(저장하지 않고 상태 한 줄 출력, blur = 포커스를 창 밖으로, 경로 = 줄무늬 바탕 위에 층째 그린 그림), `layer-snap <경로>`(주 창을 층째).
 - **작은 터미널(⌃`, `ScratchTerminals`·`ScratchToggleButton`):** 🌐 왼쪽(8pt)의 터미널 버튼(28pt, `terminal` 기호; 열리면 `terminal.fill` + 밝은 바탕, 닫아 둔 채 명령이 돌면 숨 쉬는 `statusWorking` 점. 두 버튼의 공통 바탕은 `FloatPillButton`)이
   고른 세션의 임시 셸 창을 켜고 끈다. 창은 `FloatPanel`(호스트의 50%×40%, 최소 360×200)이고 **기본 자리는 이 세션의 브라우저가 보이는지에 따라 다르다**(`ToolLayout.terminalRect`·`terminalRectKind`, 순수 함수 `FloatSpec.defaultRect(in:corner:edgeInset:besideBrowser:)`): 브라우저가 안 보이면 터미널 혼자 구석에 붙는다(오른쪽 위면 버튼 줄 아래, 오른쪽 아래면 🌐 버튼 위 — 브라우저와 같은 쪽·같은 edgeInset); 함께 보이면 나란히(오른쪽 위는 브라우저 처음 자리의 왼쪽 같은 높이에서 겹치지 않게 — 모자라면 폭을 줄이되 최소 폭까지, 오른쪽 아래는 왼쪽 아래 14pt). 브라우저가 열리고 닫힐 때(세션 전환 포함) 터미널이 아직 기본 자리면 다시 놓는다(크기가 같으면 0.18초 미끄러짐 — 줄바꿈이 일어나지 않게 자리만 바뀔 때만). 끌거나 크기를 바꿔 저장된 자리(`terminalFloat.frame`)는 자동으로 옮기지 않는다. "크게" 는 그대로. `scratch-state` 의 `rect=default-alone|default-beside|saved` 로 확인. 창은 제목은 "⌨ 터미널 · 세션 이름 · 폴더",
   버튼은 끝내기(셸 종료, 다음엔 새 셸 — 되돌릴 수 없어 "크게"와 8pt 떨어지고 올리면 빨강)·크게/작게·✕(숨김, 셸은 계속). 제목은 "터미널"(시스템 semibold) + 이름·폴더(고정폭, `textSecondary`). 창은 나타날 때 투명 → 불투명 + 아래에서 6pt 떠오르고 닫힐 때 같은 모습이 내려앉으며 사라진다(`Motion.standard`, 동작 줄이기·앱이 막 뜬 3초 안에는 없음). **세션마다 임시 셸 하나**, 처음 열 때 만들고 작업 폴더 = 그 세션의 지금 폴더
@@ -260,7 +268,12 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
     보이고, 🌐 알약에 "결과 있음"(초록, 약 60초 — 열거나 누르거나 그 세션으로 가서 창을 보면 거둠, 새 작업이 시작돼도 거둠). 결과를 남긴 창은 이후 자동으로 닫지 않는다.
   - **세션마다:** 백그라운드 세션의 열기·닫기는 그 세션의 열림 기록(`FloatState.setOpen`)과 알림만 바꾸고, 그 세션으로 갔을 때 보인다. 보이는 세션만 애니메이션.
   - 시험: `browser-autostate`(세션마다 `autoOpened`·`dismissed`·`lastDoneAt`·`badge`·`interacted`·`agentActive`), `browsers` 의 `browser-state` 줄 `badge=`.
-- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태·제목·주소·탭 수·"표시 ▾"·"제어 가져오기/AI 에게 돌려주기") + 화면.
+- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태 알약·제목·주소·기기 버튼·"⋯"·"제어 가져오기/AI 에게 돌려주기") + 탭 칩 줄 + 화면 + 상태 줄.
+  머리 줄은 4pt 격자(줄 32pt, 알약·제어 단추 24pt, 위아래 4·가로 8). 알약은 시스템 글꼴, 글자는 늘 `textPrimary`·상태 색은 아이콘·테두리·옅은 바탕에만
+  (AI 제어 중 = `agent` 초록, 내가 조작 중 = `human` 중립, 내 조작 필요·넘겨받는 중 = `statusAttention`, 쉬는 중 = `textSecondary`). 제목은 `textPrimary`, 주소는 `textSecondary` 로 따로 두어 모자라면 주소가 먼저 줄어든다.
+  제어 단추(`PillButton`)는 가져오기 = `accentFill`+`onAccent`(그 화면의 주 버튼), 돌려주기 = `agent`+`onAgent`, 키보드 포커스 링을 그린다. 아래 상태 줄은 알약이 이미 말한 상태를 되풀이하지 않고 다음에 할 일이나 예외만 쓴다.
+  AI 가 이 탭을 쥔 동안 화면에는 초록 테두리 하나만 가만히 둔다(번지는 빛·숨 쉬기·떠 있는 알약 없음 — 제어가 바뀔 때 `Motion.standard` 로 한 번 서서히 나타나고 사라짐, 동작 줄이기면 바로).
+  제어 넘김(단추 색·글자)·알약·상태 줄 글은 `Motion.standard` 로 서서히 바뀌고, 탭 칩은 생길 때 서서히 나타나고 사라질 때 `Motion.exit` 로 걷힌다.
   위치·크기는 세션별로 기억(`AgentDeckBrowser-<세션>`). 닫아도(⌘W — 브라우저 창이 앞이면 그 창만) 브라우저·에이전트는 계속 돈다.
   창이 가려지거나(occlusion)·최소화·앱 숨김이면 스트림을 멈춘다.
 - **쓰지 않는 브라우저 쉬게 하기(0.9.1):** 브라우저 하나가 메모리를 수백 MB~1GB 넘게 쓰므로, TermModel 이 60초마다
@@ -312,7 +325,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   머리 줄의 주소·제목은 보이는 탭의 것(`Target.targetInfoChanged`).
 - **탭 칩(`BrowserTabs`, ego-browser 방식):** 탭이 둘 이상이면 머리 줄 아래에 칩 줄. 탭 목록은 CDP(`Target.targetCreated/Destroyed/InfoChanged`,
   사람이 연 탭도 바로)에 abx 의 `tabs.json`(이름·작업 공간·`openedBy`·`adopted`)을 붙인 것 — 작업 공간마다 묶고(main 먼저, 만든 순서), 사람 탭은 "내 탭"으로 뒤에.
-  abx 가 모르는 탭은 사람 탭, Chrome 내부 페이지(chrome://newtab 등)는 뺀다. ● = AI 가 마지막으로 일한 탭(abx 활성 탭).
+  abx 가 모르는 탭은 사람 탭, Chrome 내부 페이지(chrome://newtab 등)는 뺀다. 이름 앞의 초록 점(`circle.fill`, `agent`) = AI 가 마지막으로 일한 탭(abx 활성 탭), 폰·태블릿으로 보는 탭은 `iphone`·`ipad` 기호.
   칩을 누르면 그 탭을 계속 보여 준다(AI 가 다른 탭에서 일해도 따라가지 않음, "AI 따라가기" 로 되돌림, 고른 탭이 닫히면 저절로 되돌림). 칩 메뉴 "탭 닫기" = `Target.closeTarget`.
   보이는 탭과 고정 여부를 `<stateDir>/<세션>.watch.json`(`{targetId, pinned}`)에 쓴다 — `abx done` 은 고정된 탭을 닫지 않고, `abx resume` 은 그 탭에서 이어 간다. 칸을 닫으면 지운다.
 - **사람 조작:** "제어 가져오기" = `abx handoff`(에이전트 동작이 다음 단계에서 멈출 때까지 넘겨받는 중, 그 뒤 abx 가 입력 잠금을 푼다),
