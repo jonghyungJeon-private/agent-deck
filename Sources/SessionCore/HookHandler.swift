@@ -94,11 +94,14 @@ public enum HookHandler {
         record.tty = proc.tty ?? record.tty
         record.termProgram = context.environment["TERM_PROGRAM"] ?? record.termProgram
         record.pane = AgentDeckEnv.value("PANE", in: context.environment) ?? record.pane
-        record.state = "idle"
-        record.stateAt = context.now
-        record.stateMessage = nil
-        record.stateSeq = (record.stateSeq ?? 0) + 1
-        record.background = nil
+        // 대화 압축(자동 압축은 응답 도중에 온다)은 같은 세션이 이어서 일하는 것이다 — 작업 상태를 쉬는 중으로 되돌리지 않는다.
+        if event.source != "compact" || record.state == nil {
+            record.state = "idle"
+            record.stateAt = context.now
+            record.stateMessage = nil
+            record.stateSeq = (record.stateSeq ?? 0) + 1
+            record.background = nil
+        }
         try store.save(record)
         // 열라고 보낸 세션이 실제로 떴다
         reservations.release([event.session_id])

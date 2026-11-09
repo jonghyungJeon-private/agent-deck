@@ -58,6 +58,24 @@ final class OrchestrationTests: XCTestCase {
         XCTAssertNil(store.load(sid)?.background)
     }
 
+    /// 대화 압축(SessionStart source=compact)은 이어서 일하는 것 — 작업 중·오케스트레이션을 쉬는 중으로 되돌리지 않는다
+    func testCompactionKeepsWorkState() throws {
+        let store = SessionStore(dir: dir.appendingPathComponent("sessions"))
+        try send(store, #"{"hook_event_name":"UserPromptSubmit"}"#)
+        let seq = store.load(sid)?.stateSeq
+        try send(store, #"{"hook_event_name":"SessionStart","source":"compact"}"#)
+        XCTAssertEqual(store.load(sid)?.state, "working")
+        XCTAssertEqual(store.load(sid)?.stateSeq, seq)
+        try send(store, #"{"hook_event_name":"Stop","background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}"#)
+        try send(store, #"{"hook_event_name":"SessionStart","source":"compact"}"#)
+        XCTAssertEqual(store.load(sid)?.state, "done")
+        XCTAssertEqual(store.load(sid)?.background, [BackgroundTask(id: "a1", type: "subagent")])
+        // 다른 시작(resume·clear·startup)은 그대로 쉬는 중으로
+        try send(store, #"{"hook_event_name":"SessionStart","source":"clear"}"#)
+        XCTAssertEqual(store.load(sid)?.state, "idle")
+        XCTAssertNil(store.load(sid)?.background)
+    }
+
     // MARK: - 아티팩트 연결(monitor_ws)은 일이 아니다
 
     func testArtifactCommentMonitorIsNotWork() throws {

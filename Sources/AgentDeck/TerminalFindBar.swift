@@ -8,6 +8,8 @@ final class TerminalPaneSurface: NSView {
     init(terminal: TerminalView, bar: TerminalFindBar) {
         self.terminal = terminal; self.bar = bar
         super.init(frame: terminal.frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
         bar.surface = self
         addSubview(terminal)
     }
@@ -20,9 +22,19 @@ final class TerminalPaneSurface: NSView {
     static var gridInset: CGFloat { TermAppearance.scaled(Space.sm) }
 
     /// 바탕은 가장자리까지(띄운 양옆도 같은 색 — 터미널 불투명도가 낮은 작은 터미널은 그 불투명도로)
-    override func draw(_ dirtyRect: NSRect) {
-        terminal.nativeBackgroundColor.withAlphaComponent(CGFloat(terminal.backgroundOpacity)).setFill()
-        dirtyRect.fill(using: .copy)
+    /// 바탕은 가장자리까지(띄운 앞쪽 여백도 같은 색 — 작은 터미널이 투명할 때는 그 불투명도로).
+    /// 자기 레이어의 배경색으로 칠한다: draw 로 칠하면(레이어 없는 뷰는 조상 레이어에 그린다) 분할 화면의 다른 칸·테두리까지 지워진다.
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() {
+        var color: CGColor?
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            color = terminal.nativeBackgroundColor.withAlphaComponent(CGFloat(terminal.backgroundOpacity)).cgColor
+        }
+        layer?.backgroundColor = color
+    }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        needsDisplay = true
     }
 
     override func layout() {

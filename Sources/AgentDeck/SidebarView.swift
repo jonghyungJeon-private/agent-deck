@@ -703,8 +703,8 @@ struct StatusDot: View {
             case .ringedDot:
                 Circle().fill(color).padding(2).overlay(Circle().strokeBorder(color, lineWidth: 1))
             case .dottedRing:
-                // 점선 고리(돌고 있는 일들) + 가운데 작은 점(메인)
-                Circle().fill(color).padding(ui(2.6))
+                // 점선 고리(돌고 있는 일들) + 가운데 숨 쉬는 점(작업 중과 같은 시계)
+                PulsingDot(color: status.color).padding(ui(2.6))
                     .overlay(Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.2, dash: [1.8, 1.3])))
             case .errorMark:
                 // 찬 점에서 "!" 를 뚫어 낸다(막대 + 점): 겹침 방식(blendMode)이 아니라 짝수-홀수 채우기로 구멍을 낸 한 모양이라 어디서 다시 그려도 같다

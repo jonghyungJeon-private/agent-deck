@@ -54,7 +54,8 @@ enum WorkStatus: Equatable {
         }
     }
 
-    /// 상태 색(B2 역할): 입력 대기·오류 = 빨강(내 조작 필요), 완료 = 세이지 초록, 작업 중 = 주 글자색(숨 쉬는 점), 쉼·오케스트레이션·없음 = 중립.
+    /// 상태 색(B2 역할): 입력 대기·오류 = 빨강(내 조작 필요), 완료 = 세이지 초록, 작업 중·오케스트레이션 = 주 글자색(숨 쉬는 점), 쉼·없음 = 중립.
+    /// 오케스트레이션(메인은 응답을 마쳤지만 백그라운드 일이 도는 중)도 일하는 중이다 — 회색 점선 고리는 쉬는 중의 빈 고리처럼 읽혔다.
     /// 종류 색(주황·청록)은 상태에 쓰지 않는다 — 연결 전 claude·codex 는 "상태 없음"이다.
     var color: NSColor {
         switch self {
@@ -62,7 +63,7 @@ enum WorkStatus: Equatable {
         case .working: return TermAppearance.statusWorking
         case .waiting, .error: return TermAppearance.statusAttention
         case .done: return TermAppearance.statusDone
-        case .orchestrating: return TermAppearance.statusOrchestrating
+        case .orchestrating: return TermAppearance.statusWorking
         case .idle: return TermAppearance.statusIdle
         }
     }
@@ -97,8 +98,13 @@ enum WorkStatus: Equatable {
     /// 둘째 줄의 상태 말 색: 사람이 봐야 하는 상태(입력 대기·오류·완료)만 그 상태 색, 나머지는 보조 글자색. 사이드바·세션 전환이 같이 쓴다.
     var wordColor: NSColor { needsAttention ? color : TermAppearance.textSecondary }
 
-    /// 점이 숨 쉬어야 하는가(작업 중만) — `PulsingDot` / `layer.setWorkingPulse(_:)`
-    var pulses: Bool { self == .working }
+    /// 점이 숨 쉬어야 하는가(작업 중·오케스트레이션) — `PulsingDot` / `layer.setWorkingPulse(_:)`
+    var pulses: Bool {
+        switch self {
+        case .working, .orchestrating: return true
+        default: return false
+        }
+    }
 
     /// 묶음·탭에 대표로 보일 상태(먼저 볼 것부터)
     var rank: Int {

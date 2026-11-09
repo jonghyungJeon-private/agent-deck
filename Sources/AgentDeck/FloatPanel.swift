@@ -341,8 +341,9 @@ final class FloatPanel: NSView {
 
     /// 작은 터미널 뷰의 기본 바탕: 100% 면 터미널이 칠하고(예전 그대로), 아니면 투명하게 두고 clip 레이어가 칠한다(그 알파가 투명도)
     private func applyTerminalBackground() {
-        guard !isBrowser, let terminal = (content as? TerminalPaneSurface)?.terminal else { return }
-        terminal.backgroundOpacity = effectivePercent >= 100 ? 1 : 0
+        guard !isBrowser, let surface = content as? TerminalPaneSurface else { return }
+        surface.terminal.backgroundOpacity = effectivePercent >= 100 ? 1 : 0
+        surface.needsDisplay = true // 여백 바탕(레이어 배경색)도 같은 불투명도로
     }
 
     private func setOpacityPercent(_ percent: Int, persist: Bool = true) {
