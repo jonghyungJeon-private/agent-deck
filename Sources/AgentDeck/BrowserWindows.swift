@@ -42,14 +42,14 @@ enum BrowserIndicator: Equatable {
         }
     }
 
-    /// 상태마다 어두운 바탕에서 또렷한 색(쉬는 중도 회색이 아니라 청록 — 브라우저가 떠 있다는 표시).
-    /// AI 는 초록(탭 칩의 ●·AI 커서와 같은 색), 사람은 파랑, 기다림은 노랑.
+    /// 상태 색(알약의 아이콘·테두리·옅은 바탕): AI 가 쥘 때만 초록(`agent` — 테두리·커서와 같은 색), 사람이 쥐면 중립(`human`),
+    /// 사람의 조작이 필요하면 주의(`statusAttention`), 쉬는 중은 보조 글자색. 알약의 글자는 늘 `textPrimary`.
     var color: NSColor {
         switch self {
-        case .idle: return TermAppearance.cyan
-        case .agent: return TermAppearance.agentColor
-        case .user: return TermAppearance.userColor
-        case .waiting, .switching: return TermAppearance.yellow
+        case .idle: return TermAppearance.textSecondary
+        case .agent: return TermAppearance.agent
+        case .user: return TermAppearance.human
+        case .waiting, .switching: return TermAppearance.statusAttention
         }
     }
 
@@ -162,14 +162,42 @@ final class BrowserStatusStore {
     }
 }
 
+/// 브라우저 머리 줄의 높이 눈금(4pt 격자): 줄 32, 그 안의 조절 단추(알약·제어 단추) 24 — 위아래 4
+enum BrowserHeader {
+    static var rowHeight: CGFloat { TermAppearance.scaled(32) }
+    static var controlHeight: CGFloat { TermAppearance.scaled(24) }
+}
+
+extension NSView {
+    /// 곧 바뀔 내용을 이전 모습에서 서서히 바꾼다(Motion.standard, ease-out). 창에 없거나 동작 줄이기면 바로.
+    /// 바꾸기 직전에 부른다.
+    func crossFadeNextChange() {
+        guard window != nil, !Motion.reduced else { return }
+        wantsLayer = true
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = Motion.standard
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer?.add(fade, forKey: "crossFadeNextChange")
+    }
+}
+
 /// 브라우저 상태 알약(🌐 + 상태). 브라우저 창 머리 줄에서는 누를 곳 없이 상태만 보인다(onClick nil).
+/// 글자는 늘 `textPrimary`(시스템 글꼴), 상태 색은 아이콘·테두리·옅은 바탕에만(한 색 = 한 뜻).
 final class BrowserChipView: NSView {
-    var indicator: BrowserIndicator = .idle { didSet { if indicator != oldValue { invalidateIntrinsicContentSize(); needsDisplay = true } } }
+    var indicator: BrowserIndicator = .idle {
+        didSet {
+            guard indicator != oldValue else { return }
+            crossFadeNextChange()
+            invalidateIntrinsicContentSize()
+            needsDisplay = true
+        }
+    }
     var onClick: (() -> Void)?
 
     override var isFlipped: Bool { true }
 
-    private var font: NSFont { TermAppearance.scaledUIFont(11, bold: true) }
+    private var font: NSFont { TermAppearance.uiTextFont(TermAppearance.scaled(11), weight: .medium) }
     private var text: String {
         if case .waiting = indicator { return indicator.label + " !" }
         return indicator.label
@@ -177,7 +205,7 @@ final class BrowserChipView: NSView {
 
     override var intrinsicContentSize: NSSize {
         let width = (text as NSString).size(withAttributes: [.font: font]).width
-        return NSSize(width: ceil(width) + TermAppearance.scaled(32), height: TermAppearance.scaled(19))
+        return NSSize(width: ceil(width) + TermAppearance.scaled(32), height: BrowserHeader.controlHeight)
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -186,25 +214,25 @@ final class BrowserChipView: NSView {
         let pill = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
         TermAppearance.background.setFill()
         pill.fill() // 테두리 선 위에 놓이므로 바탕을 먼저
-        // 옅은 바탕(12%) — 진하면 같은 색 글자가 묻힌다(글자 대비 4.5:1 이상)
-        color.withAlphaComponent(indicator.needsAttention ? 0.2 : 0.12).setFill()
+        // 옅은 바탕(14%, 주의는 20%) — 글자는 색이 아니라 textPrimary 라 대비는 늘 충분하다
+        color.withAlphaComponent(indicator.needsAttention ? 0.2 : 0.14).setFill()
         pill.fill()
-        // 늘 테두리를 그어 바탕과 구분한다(기다림은 진하게)
+        // 늘 테두리를 그어 바탕과 구분한다(주의는 진하게)
         color.withAlphaComponent(indicator.needsAttention ? 1 : 0.6).setStroke()
         pill.lineWidth = 1
         pill.stroke()
         let side = TermAppearance.scaled(13)
         if let globe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: side, weight: .semibold).applying(.init(paletteColors: [color]))) {
-            globe.draw(in: NSRect(x: TermAppearance.scaled(7), y: (bounds.height - side) / 2, width: side, height: side))
+            .withSymbolConfiguration(.init(pointSize: side, weight: .semibold).applying(.init(paletteColors: [color.resolved(effectiveAppearance)]))) {
+            globe.draw(in: NSRect(x: TermAppearance.scaled(8), y: (bounds.height - side) / 2, width: side, height: side))
         }
-        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: TermAppearance.textPrimary.resolved(effectiveAppearance)]
         let size = (text as NSString).size(withAttributes: attributes)
-        (text as NSString).draw(at: NSPoint(x: TermAppearance.scaled(24), y: (bounds.height - size.height) / 2), withAttributes: attributes)
+        (text as NSString).draw(at: NSPoint(x: TermAppearance.scaled(26), y: (bounds.height - size.height) / 2), withAttributes: attributes)
     }
 
     override func mouseDown(with event: NSEvent) { onClick?() }
-    override func resetCursorRects() { if onClick != nil { addCursorRect(bounds, cursor: .pointingHand) } }
+    override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); needsDisplay = true }
 
     // 누를 곳이 없으면(브라우저 창 머리 줄의 상태 알약) 버튼이 아니라 상태 글자로 읽힌다
     override func accessibilityRole() -> NSAccessibility.Role? { onClick == nil ? .staticText : .button }

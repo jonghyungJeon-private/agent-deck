@@ -24,7 +24,7 @@ final class BrowserDockController: NSViewController, ToolContent {
     private let placeholder = NSStackView()
     private let message = NSTextField(wrappingLabelWithString: "")
     private let hereButton = PillButton(title: "여기서 보기", target: nil, action: nil)
-    private let windowButton = NSButton(title: "창 앞으로", target: nil, action: nil)
+    private let windowButton = PillButton(title: "창 앞으로", target: nil, action: nil)
 
     /// 보이는 칸의 세션(알림 거르기·isOpen)
     var showing: String? { visible ? hosted?.owner : nil }
@@ -34,19 +34,19 @@ final class BrowserDockController: NSViewController, ToolContent {
         root.color = TermAppearance.background
         message.alignment = .center
         message.textColor = TermAppearance.textSecondary
-        message.font = .systemFont(ofSize: TermAppearance.scaled(12.5))
-        hereButton.font = .systemFont(ofSize: TermAppearance.scaled(12), weight: .semibold)
-        hereButton.fill = TermAppearance.agentColor
+        message.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.row))
+        // 주 버튼(accentFill)과 보조 버튼은 같은 알약 모양 한 가족
+        hereButton.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.row), weight: .semibold)
         hereButton.target = self
         hereButton.action = #selector(showHere)
-        windowButton.bezelStyle = .inline
-        windowButton.font = .systemFont(ofSize: TermAppearance.scaled(11.5))
+        windowButton.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.row), weight: .semibold)
+        windowButton.style = .secondary
         windowButton.target = self
         windowButton.action = #selector(showWindow)
         let buttons = NSStackView(views: [hereButton, windowButton])
-        buttons.spacing = 8
+        buttons.spacing = Space.sm
         placeholder.orientation = .vertical
-        placeholder.spacing = 12
+        placeholder.spacing = Space.md
         placeholder.alignment = .centerX
         placeholder.addArrangedSubview(message)
         placeholder.addArrangedSubview(buttons)

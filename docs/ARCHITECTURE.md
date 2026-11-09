@@ -259,7 +259,12 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
     보이고, 🌐 알약에 "결과 있음"(초록, 약 60초 — 열거나 누르거나 그 세션으로 가서 창을 보면 거둠, 새 작업이 시작돼도 거둠). 결과를 남긴 창은 이후 자동으로 닫지 않는다.
   - **세션마다:** 백그라운드 세션의 열기·닫기는 그 세션의 열림 기록(`FloatState.setOpen`)과 알림만 바꾸고, 그 세션으로 갔을 때 보인다. 보이는 세션만 애니메이션.
   - 시험: `browser-autostate`(세션마다 `autoOpened`·`dismissed`·`lastDoneAt`·`badge`·`interacted`·`agentActive`), `browsers` 의 `browser-state` 줄 `badge=`.
-- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태·제목·주소·탭 수·"표시 ▾"·"제어 가져오기/AI 에게 돌려주기") + 화면.
+- **창(`BrowserWindowController`, 세션마다 하나):** 머리 줄(상태 알약·제목·주소·기기 버튼·"⋯"·"제어 가져오기/AI 에게 돌려주기") + 탭 칩 줄 + 화면 + 상태 줄.
+  머리 줄은 4pt 격자(줄 32pt, 알약·제어 단추 24pt, 위아래 4·가로 8). 알약은 시스템 글꼴, 글자는 늘 `textPrimary`·상태 색은 아이콘·테두리·옅은 바탕에만
+  (AI 제어 중 = `agent` 초록, 내가 조작 중 = `human` 중립, 내 조작 필요·넘겨받는 중 = `statusAttention`, 쉬는 중 = `textSecondary`). 제목은 `textPrimary`, 주소는 `textSecondary` 로 따로 두어 모자라면 주소가 먼저 줄어든다.
+  제어 단추(`PillButton`)는 가져오기 = `accentFill`+`onAccent`(그 화면의 주 버튼), 돌려주기 = `agent`+`onAgent`, 키보드 포커스 링을 그린다. 아래 상태 줄은 알약이 이미 말한 상태를 되풀이하지 않고 다음에 할 일이나 예외만 쓴다.
+  AI 가 이 탭을 쥔 동안 화면에는 초록 테두리 하나만 가만히 둔다(번지는 빛·숨 쉬기·떠 있는 알약 없음 — 제어가 바뀔 때 `Motion.standard` 로 한 번 서서히 나타나고 사라짐, 동작 줄이기면 바로).
+  제어 넘김(단추 색·글자)·알약·상태 줄 글은 `Motion.standard` 로 서서히 바뀌고, 탭 칩은 생길 때 서서히 나타나고 사라질 때 `Motion.exit` 로 걷힌다.
   위치·크기는 세션별로 기억(`AgentDeckBrowser-<세션>`). 닫아도(⌘W — 브라우저 창이 앞이면 그 창만) 브라우저·에이전트는 계속 돈다.
   창이 가려지거나(occlusion)·최소화·앱 숨김이면 스트림을 멈춘다.
 - **쓰지 않는 브라우저 쉬게 하기(0.9.1):** 브라우저 하나가 메모리를 수백 MB~1GB 넘게 쓰므로, TermModel 이 60초마다
@@ -311,7 +316,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   머리 줄의 주소·제목은 보이는 탭의 것(`Target.targetInfoChanged`).
 - **탭 칩(`BrowserTabs`, ego-browser 방식):** 탭이 둘 이상이면 머리 줄 아래에 칩 줄. 탭 목록은 CDP(`Target.targetCreated/Destroyed/InfoChanged`,
   사람이 연 탭도 바로)에 abx 의 `tabs.json`(이름·작업 공간·`openedBy`·`adopted`)을 붙인 것 — 작업 공간마다 묶고(main 먼저, 만든 순서), 사람 탭은 "내 탭"으로 뒤에.
-  abx 가 모르는 탭은 사람 탭, Chrome 내부 페이지(chrome://newtab 등)는 뺀다. ● = AI 가 마지막으로 일한 탭(abx 활성 탭).
+  abx 가 모르는 탭은 사람 탭, Chrome 내부 페이지(chrome://newtab 등)는 뺀다. 이름 앞의 초록 점(`circle.fill`, `agent`) = AI 가 마지막으로 일한 탭(abx 활성 탭), 폰·태블릿으로 보는 탭은 `iphone`·`ipad` 기호.
   칩을 누르면 그 탭을 계속 보여 준다(AI 가 다른 탭에서 일해도 따라가지 않음, "AI 따라가기" 로 되돌림, 고른 탭이 닫히면 저절로 되돌림). 칩 메뉴 "탭 닫기" = `Target.closeTarget`.
   보이는 탭과 고정 여부를 `<stateDir>/<세션>.watch.json`(`{targetId, pinned}`)에 쓴다 — `abx done` 은 고정된 탭을 닫지 않고, `abx resume` 은 그 탭에서 이어 간다. 칸을 닫으면 지운다.
 - **사람 조작:** "제어 가져오기" = `abx handoff`(에이전트 동작이 다음 단계에서 멈출 때까지 넘겨받는 중, 그 뒤 abx 가 입력 잠금을 푼다),
