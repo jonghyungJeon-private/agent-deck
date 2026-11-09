@@ -42,6 +42,37 @@ final class TabBarFitTests: XCTestCase {
         XCTAssertEqual(widths, [10, 24])
     }
 
+    // 넘칠 때 보이는 탭 구간(오버플로 메뉴가 나머지를 맡는다)
+    func testEveryTabVisibleWhenTheyFit() {
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: [100, 100, 100], selected: 2, available: 300), 0..<3)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: [], selected: nil, available: 300), 0..<0)
+    }
+
+    func testVisibleRangeFillsFromTheFrontWhenSelectionIsInside() {
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: Array(repeating: 100, count: 7), selected: 1, available: 520), 0..<5)
+    }
+
+    func testVisibleRangeSlidesToKeepSelectedTabVisible() {
+        let widths = Array(repeating: 100.0, count: 7)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 6, available: 520), 2..<7)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 5, available: 520), 1..<6)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 4, available: 520), 0..<5)
+    }
+
+    func testVisibleRangeKeepsOneTabEvenWhenNothingFits() {
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: [100, 100, 100], selected: 1, available: 50), 1..<2)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: [100, 100, 100], selected: nil, available: 50), 0..<1)
+    }
+
+    func testVisibleRangeWithUnevenWidthsAlwaysContainsSelection() {
+        let widths = [90.0, 140, 100, 120, 100, 110, 100]
+        for selected in widths.indices {
+            let range = TabBarFit.visibleRange(minWidths: widths, selected: selected, available: 400)
+            XCTAssertTrue(range.contains(selected), "selected \(selected) in \(range)")
+            XCTAssertLessThanOrEqual(widths[range].reduce(0, +), 400)
+        }
+    }
+
     func testBranchFollowsWorktreeFolderName() {
         XCTAssertTrue(GitWorktrees.branchFollowsName("side-ux-polish", name: "side-ux-polish"))
         XCTAssertTrue(GitWorktrees.branchFollowsName("side/ux-polish-20261109", name: "side-ux-polish-20261109"))

@@ -314,8 +314,24 @@ final class ToolWindowsController: NSObject {
         return width <= 0 || width - pillClusterReserve >= Double(host.tabBarMinimumContentWidth)
     }
 
+    /// 창 제목 줄과 합친 탭 줄: 신호등 오른쪽 끝(창 좌표 x, 전체 화면이면 0) — `AppDelegate` 가 창을 만든 뒤 단다
+    var lightsMaxX: () -> Double = { 0 }
+    /// 신호등과 탭 사이 여유
+    private static let lightsGap: CGFloat = 12
+
+    /// 탭 줄이 왼쪽에서 비울 폭: 왼쪽 도크가 신호등을 품으면 0, 도크가 숨었거나 오른쪽에 있으면 신호등 폭(+ 여유)
+    private func updateTabBarLeadingInset() {
+        let contentMinX = host.isViewLoaded && host.view.window != nil ? host.view.convert(host.view.bounds, to: nil).minX : 0
+        host.setTabBarLeadingInset(CGFloat(WindowChrome.leadingInset(lightsMaxX: lightsMaxX(), contentMinX: Double(contentMinX),
+                                                                    gap: Double(Self.lightsGap))))
+    }
+
+    /// 신호등 자리·전체 화면이 바뀜
+    func windowChromeChanged() { tabBarChanged() }
+
     /// 탭 줄 높이·탭·호스트 폭이 바뀜: 알약 자리(탭 줄 안 ↔ 탭 줄 아래)와 탭 줄의 오른쪽 여백을 맞춘다
     private func tabBarChanged() {
+        updateTabBarLeadingInset()
         if anchoredInTabRow != pillsInTabRow {
             anchorButtons()
             host.view.layoutSubtreeIfNeeded()
@@ -921,6 +937,9 @@ final class DockViewController: NSViewController {
     var onSelect: ((ToolID) -> Void)?
     var menuFor: ((ToolID) -> NSMenu)?
 
+    /// 왼쪽 도크 맨 위: 신호등이 앉는 빈 줄(탭 줄과 같은 높이, 끌면 창이 움직인다). 도크가 창 왼쪽 가장자리에 있을 때만 높이가 있다.
+    private let windowBand = WindowDragView()
+    private var bandHeight: NSLayoutConstraint!
     private let strip = DockStripView()
     private let container = NSView()
     private var stripHeight: NSLayoutConstraint!
@@ -939,14 +958,19 @@ final class DockViewController: NSViewController {
         root.color = TermAppearance.chrome
         strip.onSelect = { [weak self] tool in self?.onSelect?(tool) }
         strip.menuFor = { [weak self] tool in self?.menuFor?(tool) }
-        for view in [strip, container] {
+        for view in [windowBand, strip, container] {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
+        bandHeight = windowBand.heightAnchor.constraint(equalToConstant: side == .left ? TerminalHostController.tabBarHeight : 0)
         stripHeight = strip.heightAnchor.constraint(equalToConstant: 0)
         containerBottom = container.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         NSLayoutConstraint.activate([
-            strip.topAnchor.constraint(equalTo: root.topAnchor),
+            windowBand.topAnchor.constraint(equalTo: root.topAnchor),
+            windowBand.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            windowBand.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bandHeight,
+            strip.topAnchor.constraint(equalTo: windowBand.bottomAnchor),
             strip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             strip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stripHeight,
@@ -982,6 +1006,7 @@ final class DockViewController: NSViewController {
     /// 글꼴 크기 배율이 바뀜: 도구 버튼 줄 높이·글꼴
     func scaleChanged() {
         guard isViewLoaded else { return }
+        if side == .left { bandHeight.constant = TerminalHostController.tabBarHeight }
         if stripHeight.constant > 0 { stripHeight.constant = DockStripView.height }
         strip.scaleChanged()
     }
@@ -1122,8 +1147,10 @@ final class DockStripView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        if let tool = tool(at: event) { onSelect?(tool) }
+        if let tool = tool(at: event) { onSelect?(tool) } else { WindowDragging.mouseDown(event, in: window) }
     }
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let tool = tool(at: event) ?? selected else { return nil }
