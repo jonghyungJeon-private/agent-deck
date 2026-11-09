@@ -1,6 +1,7 @@
 import AppKit
 import BrowserCore
 import SwiftUI
+import TermLayout
 import TermWire
 
 /// "Chrome 로그인 가져오기…"(셸 메뉴): 사용자의 Chrome 에서 고른 사이트의 로그인 상태(쿠키)를 에이전트 브라우저로 가져온다.
@@ -285,38 +286,50 @@ final class ChromeImportModel: ObservableObject {
 
 struct ChromeImportView: View {
     @ObservedObject var model: ChromeImportModel
+    /// 글꼴 크기 배율(⌘+ ⌘−) — 설정 창·사이드바와 같이 따라간다
+    @ObservedObject private var scaling = UIScaleModel.shared
+    private var ui: UIScale { scaling.scale }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Chrome 로그인 가져오기").font(.headline)
-            Text("고른 사이트의 로그인 상태(쿠키)만 에이전트 브라우저로 가져옵니다. 비밀번호는 가져오지 않습니다. "
-                 + "가져오면 에이전트가 그 사이트에 로그인된 채로 접속합니다 — 은행·메일처럼 맡기기 어려운 사이트는 고르지 마세요. "
-                 + "가져올 때 macOS 가 키체인의 \"Chrome Safe Storage\" 사용을 묻습니다. "
-                 + "가져온 로그인은 AgentDeck 브라우저 프로필에 저장되며 키체인이 아닌 파일 권한으로만 보호됩니다.")
-                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: ui(Space.md)) {
+            intro
             if model.profiles.count > 1 {
-                Picker("Chrome 프로필", selection: $model.profileId) {
-                    ForEach(model.profiles) { Text($0.name).tag(Optional($0.id)) }
+                HStack {
+                    Text("Chrome 프로필").uiTextFont(TypeSize.emphasis).foregroundStyle(Color(TermAppearance.textPrimary))
+                    Spacer(minLength: ui(Space.sm))
+                    Picker("Chrome 프로필", selection: $model.profileId) {
+                        ForEach(model.profiles) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    .disabled(model.busy)
                 }
-                .disabled(model.busy)
             }
-            HStack {
-                TextField("사이트 검색 (예: charancha)", text: $model.search).textFieldStyle(.roundedBorder)
-                Text("\(model.selected.count)개 고름").font(.system(size: 11)).foregroundStyle(.secondary)
+            HStack(spacing: ui(Space.sm)) {
+                TextField("사이트 검색 (예: github.com)", text: $model.search).textFieldStyle(.roundedBorder)
+                Text("\(model.selected.count)개 고름")
+                    .uiTextFont(TypeSize.secondary)
+                    .monospacedDigit()
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
                 Button("선택 해제") { model.selected = [] }.disabled(model.selected.isEmpty || model.busy)
             }
             List(model.visibleSites) { site in
                 Toggle(isOn: Binding(get: { model.selected.contains(site.id) },
                                      set: { on in if on { model.selected.insert(site.id) } else { model.selected.remove(site.id) } })) {
                     HStack {
-                        Text(site.id)
+                        Text(site.id).uiFont(TypeSize.row)
                         Spacer()
-                        Text("쿠키 \(site.count)").font(.system(size: 11)).foregroundStyle(.secondary)
+                        Text("쿠키 \(site.count)")
+                            .uiTextFont(TypeSize.secondary)
+                            .monospacedDigit()
+                            .foregroundStyle(Color(TermAppearance.textSecondary))
                     }
                 }
                 .disabled(model.busy)
             }
-            .frame(minHeight: 220)
+            .frame(minHeight: ui(220))
+            .overlay { emptyState }
             status
             if model.needsDiskAccess {
                 HStack {
@@ -336,9 +349,43 @@ struct ChromeImportView: View {
                     .disabled(model.selected.isEmpty || model.busy)
             }
         }
-        .padding(16)
-        .frame(minWidth: 460, minHeight: 460)
+        .padding(ui(Space.lg))
+        .frame(minWidth: ui(480), minHeight: ui(460))
+        .background(Color(nsColor: .windowBackgroundColor)) // 시스템 창 배경(창 그림에도 보이게)
+        .environment(\.uiScale, ui)
         .onAppear { model.reload() }
+    }
+
+    /// 창 제목이 이미 이름이다 — 안에서는 하는 일 한 줄, 맡길 때 조심할 것(경고) 한 줄, 키체인 안내는 보조 글로
+    private var intro: some View {
+        VStack(alignment: .leading, spacing: ui(Space.sm)) {
+            Text("고른 사이트의 로그인 상태(쿠키)만 에이전트 브라우저로 가져옵니다. 비밀번호는 가져오지 않습니다.")
+                .uiTextFont(TypeSize.emphasis)
+                .foregroundStyle(Color(TermAppearance.textPrimary))
+            HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
+                Image(systemName: "exclamationmark.triangle.fill").accessibilityHidden(true)
+                Text("가져오면 에이전트가 그 사이트에 로그인된 채로 접속합니다 — 은행·메일처럼 맡기기 어려운 사이트는 고르지 마세요.")
+            }
+            .uiTextFont(TypeSize.row)
+            .foregroundStyle(Color(TermAppearance.warnText))
+            Text("가져올 때 macOS 가 키체인의 \"Chrome Safe Storage\" 사용을 묻습니다. "
+                 + "가져온 로그인은 AgentDeck 브라우저 프로필에 저장되며 키체인이 아닌 파일 권한으로만 보호됩니다.")
+                .uiTextFont(TypeSize.secondary)
+                .foregroundStyle(Color(TermAppearance.textSecondary))
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// 목록이 비었을 때(읽는 중이거나 실패 문구가 따로 있으면 겹쳐 쓰지 않는다)
+    @ViewBuilder
+    private var emptyState: some View {
+        if model.visibleSites.isEmpty, !model.loading {
+            if !model.search.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text("검색 결과가 없습니다").uiTextFont(TypeSize.row).foregroundStyle(Color(TermAppearance.textSecondary))
+            } else if model.profiles.isEmpty || model.phase == .idle {
+                Text("가져올 로그인 기록이 없습니다").uiTextFont(TypeSize.row).foregroundStyle(Color(TermAppearance.textSecondary))
+            }
+        }
     }
 
     @ViewBuilder
@@ -346,12 +393,23 @@ struct ChromeImportView: View {
         switch model.phase {
         case .idle: EmptyView()
         case .working(let text):
-            HStack(spacing: 6) { ProgressView().controlSize(.small); Text(text) }.font(.system(size: 11))
+            HStack(spacing: ui(Space.xs)) { ProgressView().controlSize(.small); Text(text) }
+                .uiTextFont(TypeSize.secondary)
+                .foregroundStyle(Color(TermAppearance.textSecondary))
         case .done(let text):
-            Text(text).font(.system(size: 11)).foregroundStyle(Color(TermAppearance.accent)).fixedSize(horizontal: false, vertical: true)
+            statusLine(text, symbol: "checkmark.circle.fill", color: TermAppearance.statusDone)
         case .failed(let text):
-            Text(text).font(.system(size: 11)).foregroundStyle(Color(TermAppearance.red)).fixedSize(horizontal: false, vertical: true)
+            statusLine(text, symbol: "exclamationmark.octagon.fill", color: TermAppearance.statusAttention)
         }
+    }
+
+    private func statusLine(_ text: String, symbol: String, color: NSColor) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: ui(Space.xs)) {
+            Image(systemName: symbol).accessibilityHidden(true)
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        }
+        .uiTextFont(TypeSize.secondary)
+        .foregroundStyle(Color(color))
     }
 }
 
@@ -364,13 +422,19 @@ final class ChromeImportWindowController {
 
     var windowNumber: Int? { window?.windowNumber }
 
+    /// 시험용: 창 그림(디버그 명령 `chrome-import snap <경로>`)
+    func snapshot(to url: URL) {
+        guard let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        try? rep.representation(using: .png, properties: [:])?.write(to: url, options: .atomic)
+    }
+
     func show() {
         if window == nil {
             let host = NSHostingController(rootView: ChromeImportView(model: model))
             let window = NSWindow(contentViewController: host)
             window.title = "Chrome 로그인 가져오기"
             window.styleMask = [.titled, .closable, .resizable]
-            window.backgroundColor = TermAppearance.chrome
             window.isReleasedWhenClosed = false
             window.setContentSize(NSSize(width: 520, height: 560))
             window.center()

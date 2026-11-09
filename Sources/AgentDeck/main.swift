@@ -724,6 +724,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             case "run": importer.importSelected()
             case "clear": importer.clearTemplate()
             case "state": break
+            case "snap": chromeImport.snapshot(to: URL(fileURLWithPath: v.dropFirst().joined(separator: " "))) // 시험 전용: 창 그림
             default: chromeImport.show()
             }
             print("chrome-import profiles=\(importer.profiles.map(\.name)) sites=\(importer.sites.map { "\($0.id):\($0.count)" }) "

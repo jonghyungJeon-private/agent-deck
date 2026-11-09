@@ -409,7 +409,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   연결이 안 됐거나 예전 것이면 사이드바 맨 위(머리 줄 아래, 목록 밖에 고정)에 한 줄 알림과 "연결하기/갱신하기" 버튼이 뜬다(설명은 "자세히"로 한 번에 하나만 펼치므로 알림 칸이 목록을 다 밀어내지 않는다).
   누를 때만 `~/.claude/settings.json` 을 고치고(백업을 남김), 예전 이름 hook 은 같이 뺀다. hook 이 적는 위치는 위 "이름과 예전 판 이어받기".
 - 되살릴 때 이어받는 claude 옵션은 허용 목록(권한·모델·effort·add-dir·MCP·허용 도구 등)만. 처음 질문·`--worktree`·세션 지정은 뺀다.
-- 설정 창(⌘,)은 도구 막대 아이콘 탭 넷 — 연결(Claude Code·Codex hook)·브라우저(abx 스킬·전용 브라우저·선명도·해상도·쉬게 하기·Chrome 로그인)·새 세션(아래 기본 옵션)·화면(작은 창 버튼 위치) — 이고 탭을 고르면 창 높이가 내용에 맞게 바뀐다(화면보다 길면 스크롤). 마지막 탭은 UserDefaults `AgentDeckSettingsTab` 에 기억한다.
+- 설정 창(⌘,)은 도구 막대 아이콘 탭 넷 — 연결(Claude Code·Codex hook)·브라우저(abx 스킬·전용 브라우저·선명도·해상도·쉬게 하기·Chrome 로그인)·새 세션(아래 기본 옵션)·화면(작은 창 버튼 위치) — 이고 탭을 고르면 창 높이가 창의 지금 폭에서 잰 내용 높이에 맞게 바뀐다(탭 바꿈은 겹쳐 사라짐·나타남, 창 높이는 부드럽게, 동작 줄이기면 둘 다 바로; 화면보다 길면 폼이 스크롤). 각 탭은 시스템 묶음 폼(`Form` + `.formStyle(.grouped)`: 구역 머리·꼬리, 시스템 스위치(작게)·메뉴 Picker, 쪽 제목·색 점 카드 없음)이고 글자는 `TypeSize`·`uiTextFont`(배율을 따라감), 보조 글은 `textSecondary`, 위험한 옵션은 주의 색 스위치 + 기호 경고 줄이다. 마지막 탭은 UserDefaults `AgentDeckSettingsTab` 에 기억한다.
 - 새 세션 기본 옵션(설정 창 ⌘,, `term/launch.json`, `TermLayout/LaunchOptions`): + claude·+ codex·폴더 메뉴 "여기서 … 열기"가
   `TermModel.newAgent` 로 `claude <옵션>`·`codex <옵션>` 을 셸에 넣는다. 인자는 화면 짝짓기 때 프로세스 인자에서 다시 읽어
   되살리기 정보(`claudeArgs`·`codexArgs`)에 남으므로, 되살릴 때는 그 세션을 띄운 옵션을 쓰고 지금 기본값은 넣지 않는다(허용 목록에 없는 추가 인자는 빠짐).
@@ -613,7 +613,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
   종료 시험 명령: `quit`(⌘Q 와 같은 길 — 데몬·화면이 앱과 따로 남는지 볼 때).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
-  `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호·탭)·`settings-tab <connections|browser|sessions|screen>`(설정 창 탭 고르기)·`float-corner <top|bottom>`·`settings-snap <png>`·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
+  `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호·탭)·`settings-tab <connections|browser|sessions|screen>`(설정 창 탭 고르기)·`float-corner <top|bottom>`·`settings-snap <png>`·`chrome-import snap <png>`(가져오기 창 그림)·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·
   `launch <claude|codex> <폴더>`(+ 버튼과 같은 길 — 시험 땐 셸 PATH 맨 앞에 인자만 찍는 가짜 claude·codex 를 둔다)·`rows`(인자·⚠ 포함)·`appmenu`(앱 메뉴 항목·켜짐)·`fonts`(실제로 잡힌 글꼴 파일)·
   `location`(데이터 위치·모드 standard/legacy/custom·연결·화면 수·꺼진 화면 수; 옮기기는 `alert-answer 0` 뒤 `action relocate-data`). `AGENTDECK_FAKE_LATEST=v0.3.0` 이면 gh 대신 그 태그를 최신 릴리스로 본다.
   `CLAUDE_CONFIG_DIR=<폴더>`·`CODEX_HOME=<폴더>` 로 hook 을 넣고 빼는 설정 파일을, `AGENTDECK_CODEX_SKILLS_DIR=<폴더>` 로 Codex 스킬 폴더를 시험 폴더로 돌린다(실제 `~/.claude`·`~/.codex`·`~/.agents` 를 건드리지 않게 — 앱은 시작할 때 자기가 넣은 스킬을 새 판으로 바꾼다).

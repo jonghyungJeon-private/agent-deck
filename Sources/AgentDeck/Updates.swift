@@ -78,10 +78,10 @@ final class UpdateNotifier: ObservableObject {
             switch failure {
             case .noGh:
                 self.report("업데이트를 확인하지 못했습니다",
-                            "GitHub CLI(gh)가 없습니다. 터미널에서 `brew install gh` 후 `gh auth login` 으로 로그인하세요.")
+                            "GitHub CLI(gh)가 없습니다. 터미널에서 brew install gh 를 실행한 뒤 gh auth login 으로 로그인하세요.")
             case .failed(let detail):
                 self.report("업데이트를 확인하지 못했습니다",
-                            "gh 로 \(UpdateCheck.repository) 릴리스를 읽지 못했습니다. 로그인(`gh auth status`)·저장소 초대·네트워크를 확인하세요.\n\n\(detail)")
+                            "gh 로 \(UpdateCheck.repository) 릴리스를 읽지 못했습니다. 로그인(gh auth status)·저장소 초대·네트워크를 확인하세요.\n\n\(detail)")
             }
         }
     }
@@ -96,10 +96,12 @@ final class UpdateNotifier: ObservableObject {
             지금 v\(current ?? "?") 을 쓰고 있습니다. 터미널에서 아래 명령을 실행하면 새 버전으로 바꿔 끼웁니다.
             열려 있는 셸·claude 세션은 끊기지 않습니다.
             """
+        // 명령은 데이터 — 고정폭(보조 크기)으로, 길면 줄바꿈해 높이를 내용에 맞춘다
         let field = NSTextField(wrappingLabelWithString: command)
-        field.font = TermAppearance.scaledUIFont(11)
+        field.font = TermAppearance.scaledUIFont(TypeSize.secondary)
         field.isSelectable = true
-        field.frame = NSRect(x: 0, y: 0, width: 440, height: 48)
+        field.preferredMaxLayoutWidth = 440
+        field.frame = NSRect(origin: .zero, size: field.sizeThatFits(NSSize(width: 440, height: CGFloat.greatestFiniteMagnitude)))
         alert.accessoryView = field
         alert.addButton(withTitle: "명령 복사")
         alert.addButton(withTitle: "릴리스 보기")
