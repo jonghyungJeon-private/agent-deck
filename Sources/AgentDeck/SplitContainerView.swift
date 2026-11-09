@@ -5,7 +5,7 @@ import TermLayout
 struct PaneTitle: Equatable {
     var name: String
     var status: WorkStatus = .none
-    /// 미리보기 편집기(파일 트리에서 다음 파일을 열면 바뀐다) — 기울인 제목 + "미리보기"
+    /// 미리보기 편집기(파일 트리에서 다음 파일을 열면 바뀐다) — 기울인 제목 + "임시"
     var preview = false
 
     /// 테두리에 이름 앞에 붙일 상태(쉬는 중·모름은 붙이지 않는다)
@@ -35,6 +35,13 @@ final class SplitContainerView: NSView {
     private var paneViews: [String: NSView] = [:]
     private var titles: [String: PaneTitle] = [:]
     private var focused: String?
+    /// 포커스 테두리가 옮겨 갈 때 서로 섞이는 움직임(Motion.fast): 화면마다 포커스 정도(0…1)의 시작값
+    private lazy var tween: ViewTween = {
+        let tween = ViewTween()
+        tween.onTick = { [weak self] in self?.needsDisplay = true }
+        return tween
+    }()
+    private var focusFrom: [String: CGFloat] = [:]
     private var frames: [String: CGRect] = [:]
     private var dividers: [SplitNode.Divider] = []
     /// 선을 끌었을 때 (갈래 위치, 새 비율)
@@ -45,6 +52,8 @@ final class SplitContainerView: NSView {
         self.tree = tree
         self.focused = focused
         self.titles = titles
+        tween.settle() // 배치가 바뀌는 것은 움직이지 않는다
+        focusFrom = [:]
         for (id, view) in paneViews where views[id] !== view {
             view.removeFromSuperview()
         }
@@ -59,9 +68,21 @@ final class SplitContainerView: NSView {
 
     func setFocused(_ id: String?, titles: [String: PaneTitle]) {
         guard focused != id || self.titles != titles else { return }
-        focused = id
+        let moved = focused != id
+        if moved {
+            focusFrom = Dictionary(uniqueKeysWithValues: frames.keys.map { ($0, focusAmount($0)) })
+            focused = id
+        }
         self.titles = titles
+        if moved, bordered, window?.isVisible == true { tween.run(duration: Motion.fast) } else if moved { tween.settle() }
         needsDisplay = true
+    }
+
+    /// 이 화면이 포커스인 정도(0 = 아님, 1 = 포커스). 옮겨 가는 동안 사이 값.
+    private func focusAmount(_ id: String) -> CGFloat {
+        let target: CGFloat = id == focused ? 1 : 0
+        let from = focusFrom[id] ?? target
+        return from + (target - from) * tween.eased
     }
 
     /// 글꼴 크기 배율이 바뀜: 제목 줄 높이·글꼴을 다시
@@ -105,39 +126,39 @@ final class SplitContainerView: NSView {
         dirtyRect.fill()
         if !bordered { return } // 화면이 하나면 테두리·제목 줄 없이 바탕만
         // 포커스 화면을 마지막에 그려 겹치는 데가 강조색으로 보이게
-        let order = frames.keys.filter { $0 != focused } + frames.keys.filter { $0 == focused }
+        let order = frames.keys.sorted { focusAmount($0) < focusAmount($1) }
         for id in order {
             guard let rect = frames[id] else { continue }
-            let isFocused = id == focused
-            let color = isFocused ? TermAppearance.accent : TermAppearance.border
+            let amount = focusAmount(id)
+            let color = mixColor(TermAppearance.border, TermAppearance.accent, amount)
             let box = rect.insetBy(dx: 1.5, dy: 0).offsetBy(dx: 0, dy: Self.insetTop / 2)
             let frame = CGRect(x: box.minX, y: box.minY, width: box.width,
                                height: max(0, rect.maxY - box.minY - Self.insetBottom / 2))
             let path = NSBezierPath(roundedRect: frame, xRadius: 4, yRadius: 4)
-            path.lineWidth = isFocused ? 1.5 : 1
+            path.lineWidth = 1 + 0.5 * amount
             color.setStroke()
             path.stroke()
             // 제목: 위 테두리 위에 바탕을 깔고 쓴다(herdr 처럼 ─ 제목 ───)
-            // 상태가 있으면 "입력 대기 · 이름" 처럼 앞에 상태를 그 색(굵게)으로 붙인다
+            // 상태가 있으면 "입력 대기 · 이름" 처럼 앞에 상태를 그 색으로 붙인다. 제목 두께는 포커스와 상관없이 같다(폭이 변하지 않게).
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: TermAppearance.scaledUIFont(11, bold: isFocused),
-                .foregroundColor: isFocused ? TermAppearance.accent : TermAppearance.textDim,
+                .font: TermAppearance.scaledUIFont(11),
+                .foregroundColor: mixColor(TermAppearance.textSecondary, TermAppearance.textPrimary, amount),
             ]
             let paneTitle = titles[id]
             let title = NSMutableAttributedString(string: " ", attributes: attributes)
             if let paneTitle, let label = paneTitle.statusLabel {
                 title.append(NSAttributedString(string: label, attributes: [
-                    .font: TermAppearance.scaledUIFont(11, bold: true), .foregroundColor: paneTitle.status.color,
+                    .font: TermAppearance.uiTextFont(TermAppearance.scaled(11), weight: .semibold), .foregroundColor: paneTitle.status.color,
                 ]))
                 title.append(NSAttributedString(string: " · ", attributes: attributes))
             }
             if paneTitle?.preview == true {
-                // 미리보기: 이름을 기울이고 뒤에 작게 "미리보기"(VS Code 처럼). 고치거나 제목을 두 번 누르면 고정된다.
+                // 미리보기: 이름을 기울이고 뒤에 작게 "임시"(VS Code 처럼 임시로 열림 — Markdown 미리보기와 헷갈리지 않게). 고치거나 제목을 두 번 누르면 고정된다.
                 var italic = attributes
-                italic[.font] = TermAppearance.scaledUIFont(11, bold: isFocused, italic: true)
+                italic[.font] = TermAppearance.scaledUIFont(11, italic: true)
                 title.append(NSAttributedString(string: paneTitle?.name ?? "", attributes: italic))
-                title.append(NSAttributedString(string: "  미리보기 ", attributes: [
-                    .font: TermAppearance.scaledUIFont(10), .foregroundColor: TermAppearance.textDim,
+                title.append(NSAttributedString(string: "  임시 ", attributes: [
+                    .font: TermAppearance.uiTextFont(TermAppearance.scaled(10)), .foregroundColor: TermAppearance.textSecondary,
                 ]))
             } else {
                 title.append(NSAttributedString(string: "\(paneTitle?.name ?? "") ", attributes: attributes))
