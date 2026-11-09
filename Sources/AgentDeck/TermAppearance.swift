@@ -6,7 +6,7 @@ import TermWire
 
 /// 터미널 모양. Ghostty 기본값과 맞춘다(사용자가 Ghostty 와 나란히 쓰므로 같은 느낌이 나게).
 /// - 글꼴: JetBrains Mono 13pt(Ghostty 내장 글꼴) + Nerd Font 아이콘. 앱에 넣어 두고 이 앱 안에서만 등록한다.
-/// - 색: 다크는 배경 #282c34, 글자 #ffffff, 16색 Tomorrow Night(Ghostty 기본 팔레트). 라이트는 Atom One Light 계열(`TerminalTheme.light`).
+/// - 색: B2 · Ink refined — 다크는 배경 #1c1b1a, 글자 #e4e1dc, 16색 Tomorrow Night(Ghostty 기본 팔레트). 라이트는 종이 바탕 #fdfcfa + Atom One Light 계열 16색(`TerminalTheme.light`).
 /// - 화면 모드(자동·라이트·다크, `AppearanceSetting`): 앱 테두리 색은 `NSColor(name:dynamicProvider:)` 라 창의 effectiveAppearance 를 따라
 ///   저절로 바뀐다. CGColor 로 한 번 받아 두는 곳은 `viewDidChangeEffectiveAppearance` 에서 다시 받는다(`NSColor.cg(in:)`).
 ///   터미널은 색을 직접 넣으므로 모양이 바뀔 때마다 `apply(to:)` 를 다시 부른다(`ThemedTerminalView`).
@@ -109,24 +109,56 @@ enum TermAppearance {
     static let chromeRaised = NSColor.palette(.chromeRaised)
     static let textPrimary = NSColor.palette(.textPrimary)
     static let textDim = NSColor.palette(.textDim)
-    /// 포커스·지금 탭
+    // 아래 색은 B2 · Ink refined(PaletteColor 주석 참고): 색 하나 = 뜻 하나. 이름이 같은 것은 새 값을 자동으로 받는다.
+
+    /// 포커스 링·포커스 분할 테두리·고른 탭 2pt 줄(잉크 블루). 앱 강조색이기도 하다.
     static let accent = NSColor.palette(.accent)
+    /// 포커스 분할 제목 같은 "글자" 용 잉크 블루(바탕 대비 4.5:1)
+    static let accentText = NSColor.palette(.accentText)
+    /// 하나뿐인 주 버튼 바탕 — 그 위 글자는 `onAccent`
+    static let accentFill = NSColor.palette(.accentFill)
+    static let onAccent = NSColor.palette(.onAccent)
     /// 포커스 없는 화면 테두리
     static let border = NSColor.palette(.border)
-    static let codexColor = NSColor.palette(.codex)
-    static let claudeColor = NSColor.palette(.claude)
-    static let green = NSColor.palette(.green)
-    static let yellow = NSColor.palette(.yellow)
-    static let red = NSColor.palette(.red)
-    static let cyan = NSColor.palette(.cyan)
-    /// 오케스트레이션 중(포커스 테두리 강조색보다 붉은 보라 — 둘이 섞여 보이지 않게)
-    static let purple = NSColor.palette(.purple)
-    /// AI 표시(브라우저 탭 칩의 ●, AI 커서 이름표) — 바탕에서 또렷한 초록
-    static let agentColor = green
-    /// 사람이 조작 중(브라우저 "내가 조작 중")
-    static let userColor = NSColor.palette(.user)
-    /// 보조 글자(브라우저 창): textDim(다크 #7f848e, 바탕 대비 3.7:1)보다 진하게 — 두 모드 모두 바탕 대비 5.8:1 이상
+
+    /// 세션 종류: ✻ Claude(주황) · ‹› Codex(청록) · ›_ 셸(중립) — 아이콘·프로그램 단어·푸터 사용량 이름표. 상태에는 쓰지 않는다.
+    static let typeClaude = NSColor.palette(.typeClaude)
+    static let typeCodex = NSColor.palette(.typeCodex)
+    static let typeShell = NSColor.palette(.typeShell)
+
+    /// 상태: 작업 중(중립 잉크, 숨 쉬는 점 — `WorkingPulse`)
+    static let statusWorking = NSColor.palette(.statusWorking)
+    /// 내 조작 필요(입력 대기 ◉·오류 !) — 상태에서 주의를 끄는 빨강
+    static let statusAttention = NSColor.palette(.statusAttention)
+    /// 결과가 나옴(끝 ●) — 세이지 초록
+    static let statusDone = NSColor.palette(.statusDone)
+    /// 쉼 ○ · 오케스트레이션 ◌ · 상태 없음 — 중립(모양으로 구분)
+    static let statusIdle = NSColor.palette(.statusIdle)
+    static let statusOrchestrating = NSColor.palette(.statusOrchestrating)
+    static let statusNone = NSColor.palette(.statusNone)
+
+    /// 경고 ▲ 아이콘·사용량 80% 이상 막대(호박색) / 그 글자
+    static let warning = NSColor.palette(.warning)
+    static let warnText = NSColor.palette(.warnText)
+
+    /// 브라우저: AI 가 조작 중(테두리·알약·커서·AI 칩) / 그 바탕 위 글자 / 내가 조작 중(중립)
+    static let agent = NSColor.palette(.agent)
+    static let onAgent = NSColor.palette(.onAgent)
+    static let human = NSColor.palette(.human)
+    /// 보조 글자: 두 모드 모두 사이드바·고른 줄 바탕에서 4.5:1 이상
     static let textSecondary = NSColor.palette(.textSecondary)
+
+    // MARK: legacy alias — 화면 작업자가 새 이름으로 옮기면 지운다(옮기는 곳: PALETTE.md §5 "Map the removed cases")
+
+    static let codexColor = typeCodex // legacy alias → typeCodex
+    static let claudeColor = typeClaude // legacy alias → typeClaude
+    static let green = agent // legacy alias → agent(브라우저) 또는 statusDone(작업 상태·"됨" 표시), 자리마다 골라 옮긴다
+    static let yellow = warning // legacy alias → warning(아이콘·막대) / warnText(글자). 작업 중에는 쓰지 않는다(statusWorking)
+    static let red = statusAttention // legacy alias → statusAttention
+    static let cyan = textSecondary // legacy alias → textSecondary(끝 ●이었다면 statusDone)
+    static let purple = statusOrchestrating // legacy alias → statusOrchestrating
+    static let agentColor = agent // legacy alias → agent
+    static let userColor = human // legacy alias → human
 
     /// 사이드바·탭 줄 글꼴(터미널과 같은 JetBrains Mono). 크기를 그대로 쓴다 — 글꼴 크기를 따라가려면 `scaledUIFont`.
     static func uiFont(_ size: CGFloat, bold: Bool = false, italic: Bool = false) -> NSFont {

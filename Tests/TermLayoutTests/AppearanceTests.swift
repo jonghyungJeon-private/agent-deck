@@ -78,26 +78,99 @@ final class PaletteTests: XCTestCase {
         return (hi + 0.05) / (lo + 0.05)
     }
 
-    /// 다크 값은 이 설정이 생기기 전 색 그대로
-    func testDarkValuesAreTheOriginalOnes() {
-        XCTAssertEqual(PaletteColor.background.hex(dark: true), 0x282c34)
-        XCTAssertEqual(PaletteColor.chrome.hex(dark: true), 0x21252b)
-        XCTAssertEqual(PaletteColor.chromeRaised.hex(dark: true), 0x2c313a)
-        XCTAssertEqual(PaletteColor.textPrimary.hex(dark: true), 0xdcdfe4)
-        XCTAssertEqual(PaletteColor.textDim.hex(dark: true), 0x7f848e)
-        XCTAssertEqual(PaletteColor.textSecondary.hex(dark: true), 0xa0a7b3)
-        XCTAssertEqual(PaletteColor.accent.hex(dark: true), 0xc099ff)
-        XCTAssertEqual(PaletteColor.border.hex(dark: true), 0x3e4451)
-        XCTAssertEqual(PaletteColor.syntaxKeyword.hex(dark: true), 0xcf8e6d)
-        XCTAssertEqual(PaletteColor.editorText.hex(dark: true), 0xc9ccd3)
+    /// B2 · Ink refined(최종) 값 — 순수 값 확인(PALETTE.md §5 표)
+    func testFinalInkValues() {
+        let expected: [(PaletteColor, UInt32, UInt32)] = [
+            (.background, 0x1c1b1a, 0xfdfcfa), (.chrome, 0x141312, 0xf4f2ee), (.chromeRaised, 0x292725, 0xe7e4dd),
+            (.border, 0x383530, 0xd1cdc7), (.selection, 0x3a3733, 0xe3ded3),
+            (.textPrimary, 0xe7e4de, 0x1c1a18), (.textSecondary, 0xa8a49c, 0x585550), (.textDim, 0x97938b, 0x66625d),
+            (.accent, 0x73a1dc, 0x346aac), (.accentText, 0x8ab4ea, 0x285e9f), (.accentFill, 0x3a6ea5, 0x255b9c), (.onAccent, 0xffffff, 0xffffff),
+            (.typeClaude, 0xe3975a, 0xa04f18), (.typeCodex, 0x64c3c6, 0x006f73), (.typeShell, 0xa8a49c, 0x585550),
+            (.statusWorking, 0xe7e4de, 0x1c1a18), (.statusAttention, 0xe56c7f, 0xb12b4c), (.statusDone, 0xa3cb96, 0x29672e),
+            (.statusIdle, 0xa8a49c, 0x585550), (.statusOrchestrating, 0xa8a49c, 0x585550), (.statusNone, 0x97938b, 0x66625d),
+            (.warning, 0xedcf6f, 0x9e7b0b), (.warnText, 0xedcf6f, 0x815c0a),
+            (.agent, 0x84d17c, 0x367b30), (.onAgent, 0x141312, 0xffffff), (.human, 0xa8a49c, 0x585550),
+            (.editorText, 0xe4e1dc, 0x2b2925), (.syntaxKeyword, 0xcf8e6d, 0x0033b3),
+            (.markdownQuote, 0xa8a49c, 0x585550), (.markdownTableStripe, 0x232120, 0xf2f0ec), (.markdownHighlight, 0x50482f, 0xe8e0c5),
+        ]
+        for (token, dark, light) in expected {
+            XCTAssertEqual(token.hex(dark: true), dark, "\(token) dark")
+            XCTAssertEqual(token.hex(dark: false), light, "\(token) light")
+        }
     }
 
+    /// 색 하나 = 뜻 하나: 중립으로 정한 상태는 보조 글자와 같은 값, 작업 중은 주 글자와 같은 값(숨 쉬는 모양으로만 구분)
+    func testNeutralStatusRolesShareTextValues() {
+        for dark in [true, false] {
+            XCTAssertEqual(PaletteColor.statusIdle.hex(dark: dark), PaletteColor.textSecondary.hex(dark: dark))
+            XCTAssertEqual(PaletteColor.statusOrchestrating.hex(dark: dark), PaletteColor.textSecondary.hex(dark: dark))
+            XCTAssertEqual(PaletteColor.typeShell.hex(dark: dark), PaletteColor.textSecondary.hex(dark: dark))
+            XCTAssertEqual(PaletteColor.human.hex(dark: dark), PaletteColor.textSecondary.hex(dark: dark))
+            XCTAssertEqual(PaletteColor.statusNone.hex(dark: dark), PaletteColor.textDim.hex(dark: dark))
+            XCTAssertEqual(PaletteColor.statusWorking.hex(dark: dark), PaletteColor.textPrimary.hex(dark: dark))
+        }
+    }
+
+    /// 두 모드 값이 서로 다르다(글자 위 흰색 `onAccent` 만 두 모드 모두 흰색)
     func testLookupDiffersByModeForEveryToken() {
         for token in PaletteColor.allCases {
-            XCTAssertNotEqual(token.hex(dark: true), token.hex(dark: false), "\(token)")
+            if token != .onAccent {
+                XCTAssertNotEqual(token.hex(dark: true), token.hex(dark: false), "\(token)")
+            }
             XCTAssertLessThanOrEqual(token.hex(dark: false), 0xffffff)
         }
-        XCTAssertEqual(PaletteColor.background.hex(dark: false), 0xfafafa)
+        XCTAssertEqual(PaletteColor.background.hex(dark: false), 0xfdfcfa)
+    }
+
+    /// 대비 하한(PALETTE.md §5): 글자 4.5:1, 점·아이콘·포커스 3:1 — 사이드바(chrome)·고른 줄(chromeRaised) 위에서, 두 모드 모두
+    func testContrastFloorsOnChromeSurfaces() {
+        for dark in [true, false] {
+            let chrome = PaletteColor.chrome.hex(dark: dark), raised = PaletteColor.chromeRaised.hex(dark: dark)
+            let background = PaletteColor.background.hex(dark: dark)
+            let text: [PaletteColor] = [.textPrimary, .textSecondary, .textDim, .accentText, .typeClaude, .typeCodex, .typeShell,
+                                        .statusAttention, .warnText, .gitModified, .gitAdded, .gitUntracked, .gitConflicted, .gitChangedFolder]
+            for token in text {
+                for surface in [chrome, raised] {
+                    XCTAssertGreaterThanOrEqual(contrast(token.hex(dark: dark), surface), 4.5, "\(token) dark=\(dark)")
+                }
+            }
+            let marks: [PaletteColor] = [.accent, .statusWorking, .statusDone, .statusIdle, .statusOrchestrating, .statusNone, .warning, .agent, .human]
+            for token in marks {
+                for surface in [chrome, raised, background] {
+                    XCTAssertGreaterThanOrEqual(contrast(token.hex(dark: dark), surface), 3.0, "\(token) dark=\(dark)")
+                }
+            }
+            XCTAssertGreaterThanOrEqual(contrast(PaletteColor.onAccent.hex(dark: dark), PaletteColor.accentFill.hex(dark: dark)), 4.5)
+            XCTAssertGreaterThanOrEqual(contrast(PaletteColor.onAgent.hex(dark: dark), PaletteColor.agent.hex(dark: dark)), 4.5)
+            XCTAssertGreaterThanOrEqual(contrast(PaletteColor.editorText.hex(dark: dark), background), 4.5)
+            // 작업 중 점이 가장 옅을 때(55%)도 3:1
+            for surface in [chrome, raised] {
+                let low = blend(PaletteColor.statusWorking.hex(dark: dark), over: surface, alpha: WorkingPulseSpec.minOpacity)
+                XCTAssertGreaterThanOrEqual(contrast(low, surface), 3.0, "pulse low dark=\(dark)")
+            }
+        }
+    }
+
+    private func blend(_ fg: UInt32, over bg: UInt32, alpha: Double) -> UInt32 {
+        func ch(_ v: UInt32, _ s: UInt32) -> Double { Double(v >> s & 0xff) }
+        func mix(_ s: UInt32) -> UInt32 { UInt32((ch(fg, s) * alpha + ch(bg, s) * (1 - alpha)).rounded()) }
+        return mix(16) << 16 | mix(8) << 8 | mix(0)
+    }
+
+    /// 숨 쉬기 곡선: 주기 0 에서 1.0, 절반에서 0.55, 주기가 끝나면 다시 1.0(시계가 같으면 모든 점이 같은 값)
+    func testWorkingPulseCurve() {
+        XCTAssertEqual(WorkingPulseSpec.period, 1.6)
+        XCTAssertEqual(WorkingPulseSpec.opacity(at: 0), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(WorkingPulseSpec.opacity(at: 0.8), 0.55, accuracy: 1e-9)
+        XCTAssertEqual(WorkingPulseSpec.opacity(at: 1.6), 1.0, accuracy: 1e-9)
+        XCTAssertEqual(WorkingPulseSpec.opacity(at: 1000.0 * 1.6 + 0.4), WorkingPulseSpec.opacity(at: 0.4), accuracy: 1e-6)
+        for step in 0...160 {
+            let value = WorkingPulseSpec.opacity(at: Double(step) / 100)
+            XCTAssertLessThanOrEqual(value, 1.0 + 1e-9)
+            XCTAssertGreaterThanOrEqual(value, 0.55 - 1e-9)
+        }
+        XCTAssertEqual(WorkingPulseSpec.alignedBegin(now: 5.0), 4.8, accuracy: 1e-9)
+        XCTAssertEqual(WorkingPulseSpec.alignedBegin(now: 3.2), 3.2, accuracy: 1e-9)
     }
 
     /// 라이트는 바탕이 밝고, 글자는 바탕과 충분히 대비된다(다크의 반대 방향)
@@ -109,7 +182,7 @@ final class PaletteTests: XCTestCase {
         XCTAssertGreaterThan(luminance(PaletteColor.chromeRaised.hex(dark: false)), 0.6)
         XCTAssertGreaterThan(contrast(PaletteColor.textPrimary.hex(dark: false), chrome), 10)
         XCTAssertGreaterThan(contrast(PaletteColor.textSecondary.hex(dark: false), chrome), 5.5)
-        for token in [PaletteColor.textDim, .accent, .codex, .claude, .green, .yellow, .red, .purple, .user] {
+        for token in [PaletteColor.textDim, .accent, .typeClaude, .typeCodex, .statusDone, .statusAttention, .agent, .warnText] {
             XCTAssertGreaterThanOrEqual(contrast(token.hex(dark: false), chrome), 4.0, "\(token)")
         }
         // 편집기: 글자·키워드·문자열·주석이 편집기 바탕에서 읽힌다
@@ -133,10 +206,16 @@ final class PaletteTests: XCTestCase {
             XCTAssertEqual(theme.palette.count, 16)
             XCTAssertEqual(Set(theme.palette).count, 16) // 16색이 서로 다르다
         }
-        // 다크는 Ghostty 기본(예전 그대로)
-        XCTAssertEqual(TerminalTheme.dark.background, 0x282c34)
-        XCTAssertEqual(TerminalTheme.dark.foreground, 0xffffff)
+        // 다크: 바탕·글자·선택은 B2, 16색은 Ghostty 기본(Tomorrow Night, 예전 그대로)
+        XCTAssertEqual(TerminalTheme.dark.background, 0x1c1b1a)
+        XCTAssertEqual(TerminalTheme.dark.foreground, 0xe4e1dc)
         XCTAssertEqual(TerminalTheme.dark.palette[1], 0xcc6666)
+        // 라이트: 종이 바탕, 파랑(4번)만 잉크 블루에 맞춰 #2f68b8
+        XCTAssertEqual(TerminalTheme.light.background, 0xfdfcfa)
+        XCTAssertEqual(TerminalTheme.light.foreground, 0x2b2925)
+        XCTAssertEqual(TerminalTheme.light.palette[4], 0x2f68b8)
+        XCTAssertEqual(TerminalTheme.dark.foreground, PaletteColor.editorText.hex(dark: true))
+        XCTAssertEqual(TerminalTheme.light.foreground, PaletteColor.editorText.hex(dark: false))
         // 터미널 바탕은 앱 바탕과 같다(두 모드 모두)
         XCTAssertEqual(TerminalTheme.dark.background, PaletteColor.background.hex(dark: true))
         XCTAssertEqual(TerminalTheme.light.background, PaletteColor.background.hex(dark: false))

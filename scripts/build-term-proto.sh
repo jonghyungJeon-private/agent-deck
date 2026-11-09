@@ -20,6 +20,17 @@ BIN_DIR="$(swift build -c "$CONFIG" --show-bin-path)"
 APP=dist/AgentDeck.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+# 앱 강조색(AccentColor: 잉크 블루, 다크 #73a1dc / 라이트 #346aac) — 기본 강조색 "다중 색"일 때 스위치·선택·포커스 링 같은 기본 컨트롤이 쓴다.
+# Resources/Assets.xcassets 를 actool 로 Assets.car 에 넣고 Info.plist 의 NSAccentColorName 으로 가리킨다. actool(Xcode)이 없으면 건너뛴다(시스템 강조색 그대로).
+ACCENT_PLIST_KEY=""
+if actool_out="$(xcrun --find actool 2>/dev/null)" && [[ -n "$actool_out" ]]; then
+  xcrun actool Resources/Assets.xcassets --compile "$APP/Contents/Resources" --platform macosx --minimum-deployment-target 13.0 \
+    --output-partial-info-plist /dev/null >/dev/null
+  [[ -f "$APP/Contents/Resources/Assets.car" ]] || { echo "actool 이 Assets.car 를 만들지 못했습니다" >&2; exit 1; }
+  ACCENT_PLIST_KEY='<key>NSAccentColorName</key><string>AccentColor</string>'
+else
+  echo "경고: actool(Xcode)이 없어 앱 강조색을 건너뜁니다" >&2
+fi
 cp "$BIN_DIR/AgentDeck" "$BIN_DIR/AgentDeckDaemon" "$APP/Contents/MacOS/"
 # 예전 이름 → 새 데몬. 이미 떠 있던 claude 세션은 시작할 때 읽은 hook 명령(…/ClaudeTermDaemon hook)을 계속 쓰므로,
 # 업데이트 뒤에도 그 세션들의 상태 기록이 끊기지 않게 둔다(새 hook 은 AgentDeckDaemon 을 가리킨다). 나중 판에서 뺀다.
@@ -43,6 +54,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>LSMinimumSystemVersion</key><string>13.0</string>
 	<key>CFBundleIconFile</key><string>AppIcon</string>
 	<key>NSHighResolutionCapable</key><true/>
+	$ACCENT_PLIST_KEY
 	<key>LSArchitecturePriority</key><array><string>arm64</string></array>
 	<key>NSHumanReadableCopyright</key><string>사내 배포용</string>
 </dict>
