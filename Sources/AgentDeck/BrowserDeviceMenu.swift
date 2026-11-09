@@ -46,7 +46,7 @@ final class DeviceButton: NSButton {
         image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)?
             .withSymbolConfiguration(.init(pointSize: TermAppearance.scaled(TypeSize.row), weight: .medium))
         let sizeText = device.map { " · \(Int($0.width))×\(Int($0.height))" } ?? ""
-        toolTip = "이 탭을 어떤 기기로 볼지 — 지금: \(name)\(sizeText)\n폰·태블릿 크기, 터치, 그 기기의 사용자 에이전트로 페이지를 다시 읽습니다(이 탭만)\nChrome으로 크기·사용자 에이전트·터치를 흉내 내는 것이라 진짜 Safari나 실제 기기는 아닙니다"
+        toolTip = "이 탭을 어떤 기기로 볼지 — 지금: \(name)\(sizeText)\n폰·태블릿 크기, 터치, 그 기기의 User-Agent로 페이지를 다시 읽습니다(이 탭만)\nChrome으로 크기·User-Agent·터치를 흉내 내는 것이라 진짜 Safari나 실제 기기는 아닙니다"
         setAccessibilityLabel(toolTip)
         isEnabled = !busy
     }
@@ -247,7 +247,7 @@ enum DeviceMenu {
         }
     }
 
-    /// "직접 크기 입력…": 가로·세로(CSS 픽셀)·배율·모바일(터치·모바일 화면·안드로이드 사용자 에이전트). 취소면 nil.
+    /// "직접 크기 입력…": 가로·세로(CSS 픽셀)·배율·모바일(터치·모바일 화면·안드로이드 User-Agent). 취소면 nil.
     static func askCustomSize(window: NSWindow?, completion: @escaping (String?) -> Void) {
         let alert = NSAlert()
         alert.messageText = "직접 크기 입력"

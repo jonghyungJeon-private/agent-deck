@@ -16,10 +16,20 @@ final class TerminalPaneSurface: NSView {
         super.setFrameSize(newSize)
         needsLayout = true
     }
+    /// 글자가 창·구분선 가장자리에 붙어 보이지 않게 터미널 격자 양옆을 띄우는 폭(글꼴 배율을 따른다). 바탕은 가장자리까지 그대로 칠한다.
+    static var gridInset: CGFloat { TermAppearance.scaled(Space.sm) }
+
+    /// 바탕은 가장자리까지(띄운 양옆도 같은 색 — 터미널 불투명도가 낮은 작은 터미널은 그 불투명도로)
+    override func draw(_ dirtyRect: NSRect) {
+        terminal.nativeBackgroundColor.withAlphaComponent(CGFloat(terminal.backgroundOpacity)).setFill()
+        dirtyRect.fill(using: .copy)
+    }
+
     override func layout() {
         super.layout()
         let height = bar.superview == nil ? 0 : min(TerminalFindBar.height, bounds.height)
-        terminal.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        let inset = min(Self.gridInset, bounds.width / 4)
+        terminal.frame = NSRect(x: inset, y: 0, width: max(0, bounds.width - 2 * inset), height: bounds.height)
         bar.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
     }
 }

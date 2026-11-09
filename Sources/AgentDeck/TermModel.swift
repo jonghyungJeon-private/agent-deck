@@ -1480,7 +1480,7 @@ final class TermModel: ObservableObject {
             alert.messageText = "\(row.title) 세션을 닫을까요?"
             alert.informativeText = row.isClaude
                 ? "이 세션의 claude가 종료됩니다. 대화는 나중에 이어 열 수 있습니다."
-                : row.pane.foreground.map { "이 세션에서 실행 중인 프로그램: \($0). 닫으면 종료됩니다." } ?? "이 세션에서 프로그램이 실행 중입니다. 닫으면 종료됩니다."
+                : row.pane.foreground.map { "이 세션에서 \($0) 프로그램이 실행 중입니다. 닫으면 함께 종료됩니다." } ?? "이 세션에서 프로그램이 실행 중입니다. 닫으면 함께 종료됩니다."
             alert.addButton(withTitle: "닫기")
             alert.addButton(withTitle: "취소")
             guard alert.runModal() == .alertFirstButtonReturn else { return }

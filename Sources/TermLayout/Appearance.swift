@@ -50,7 +50,7 @@ public enum AppearanceMode: String, CaseIterable, Codable, Sendable {
 /// - `status*` = 상태. 색을 쓰는 건 둘뿐 — 빨강 `statusAttention`(내 조작 필요: 입력 대기·오류), 초록 `statusDone`(결과가 나옴).
 ///   작업 중·쉼·오케스트레이션·없음은 중립 모양(작업 중은 천천히 숨 쉬는 점)이라 색으로 주의를 끌지 않는다.
 /// - `warning`/`warnText` 호박색 = 경고와 사용량 70% 이상만(작업 중에는 쓰지 않는다).
-/// - `danger*` 난초색(자주) = 안전장치를 약하게 하는 설정 전용(권한 확인·승인·샌드박스 건너뛰기 같은 옵션의 스위치·경고 줄·명령 미리보기).
+/// - `danger*` 자주색(어두운 모드는 낮은 채도의 연한 자주 — 없앤 연보라 #c099ff 와 ΔE 8 이상 떨어진다) = 안전장치를 약하게 하는 설정 전용(권한 확인·승인·샌드박스 건너뛰기 같은 옵션의 스위치·경고 줄·명령 미리보기).
 ///   빨강(내 조작 필요)·호박(경고)·종류 색과 겹치지 않는 빈 색상환 자리를 쓰며, 다른 뜻에는 쓰지 않는다.
 /// - `agent` 초록 = 브라우저에서 AI 가 조작 중(테두리·알약·커서). `human` = 내가 조작 중(중립).
 /// 대비 하한: 글자(12pt 이하) 4.5:1, 점·아이콘·포커스 표시 3:1 — 각 표면(chrome·chromeRaised·background)에서.
@@ -111,9 +111,9 @@ public enum PaletteColor: String, CaseIterable, Sendable {
         case .statusNone: return (0x97938b, 0x66625d)
         case .warning: return (0xedcf6f, 0x9e7b0b)
         case .warnText: return (0xedcf6f, 0x815c0a)
-        case .danger: return (0xdb8ef2, 0x731a8a)
-        case .dangerText: return (0xdb8ef2, 0x731a8a)
-        case .dangerFill: return (0xb459cf, 0x8e32a7)
+        case .danger: return (0xcf88c8, 0x731a8a)
+        case .dangerText: return (0xcf88c8, 0x731a8a)
+        case .dangerFill: return (0xab61a5, 0x8e32a7)
         case .agent: return (0x84d17c, 0x367b30)
         case .onAgent: return (0x141312, 0xffffff)
         case .human: return (0xa8a49c, 0x585550)
@@ -166,19 +166,19 @@ public struct TerminalTheme: Equatable, Sendable {
     /// 엔진(SwiftTerm `minimumContrast`)이 같은 색조에서 명도만 옮겨 맞춘다.
     public var minimumContrast: Double = 1.0
 
-    /// 다크: 바탕 #1c1b1a, 글자 #e4e1dc(따뜻한 흰색), 16색은 Tomorrow Night(Ghostty 기본 — 예전 그대로)
+    /// 다크: 바탕 #1c1b1a, 글자 #e4e1dc(따뜻한 흰색), 커서는 앱 강조색(잉크 블루 `accent`), 16색은 Tomorrow Night(Ghostty 기본 — 예전 그대로)
     public static let dark = TerminalTheme(
-        background: 0x1c1b1a, foreground: 0xe4e1dc, caret: 0xc5c8c6, selection: 0x3a3733,
+        background: 0x1c1b1a, foreground: 0xe4e1dc, caret: 0x73a1dc, selection: 0x3a3733,
         palette: [
             0x1d1f21, 0xcc6666, 0xb5bd68, 0xf0c674, 0x81a2be, 0xb294bb, 0x8abeb7, 0xc5c8c6,
             0x666666, 0xd54e53, 0xb9ca4a, 0xe7c547, 0x7aa6da, 0xc397d8, 0x70c0b1, 0xeaeaea,
         ],
         minimumContrast: 1.0) // 다크: 끔(모양 그대로)
 
-    /// 라이트: Atom One Light 계열 16색 + 종이 바탕 #fdfcfa, 글자 #2b2925. 밝은 바탕에서 읽히도록 흰색 계열(7·15)은 어두운 회색으로 둔다.
+    /// 라이트: Atom One Light 계열 16색 + 종이 바탕 #fdfcfa, 글자 #2b2925, 커서는 앱 강조색(`accent` #346aac — 예전 연보라 계열 #526fff 는 팔레트 밖). 밝은 바탕에서 읽히도록 흰색 계열(7·15)은 어두운 회색으로 둔다.
     /// 파랑(4번)만 앱 잉크 블루와 어울리게 #2f68b8(종이 위 5.4:1).
     public static let light = TerminalTheme(
-        background: 0xfdfcfa, foreground: 0x2b2925, caret: 0x526fff, selection: 0xe3ded3,
+        background: 0xfdfcfa, foreground: 0x2b2925, caret: 0x346aac, selection: 0xe3ded3,
         palette: [
             0x383a42, 0xd0473b, 0x3f8f3d, 0xa57000, 0x2f68b8, 0xa626a4, 0x0184bc, 0x8a8c93,
             0x696c77, 0xc93a2f, 0x378535, 0x8a5c00, 0x3d63f0, 0xa62aa8, 0x0a85a0, 0x202226,

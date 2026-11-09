@@ -89,7 +89,7 @@ final class PaletteTests: XCTestCase {
             (.statusWorking, 0xe7e4de, 0x1c1a18), (.statusAttention, 0xe56c7f, 0xb12b4c), (.statusDone, 0xa3cb96, 0x29672e),
             (.statusIdle, 0xa8a49c, 0x585550), (.statusOrchestrating, 0xa8a49c, 0x585550), (.statusNone, 0x97938b, 0x66625d),
             (.warning, 0xedcf6f, 0x9e7b0b), (.warnText, 0xedcf6f, 0x815c0a),
-            (.danger, 0xdb8ef2, 0x731a8a), (.dangerText, 0xdb8ef2, 0x731a8a), (.dangerFill, 0xb459cf, 0x8e32a7),
+            (.danger, 0xcf88c8, 0x731a8a), (.dangerText, 0xcf88c8, 0x731a8a), (.dangerFill, 0xab61a5, 0x8e32a7),
             (.agent, 0x84d17c, 0x367b30), (.onAgent, 0x141312, 0xffffff), (.human, 0xa8a49c, 0x585550),
             (.editorText, 0xe4e1dc, 0x2b2925), (.syntaxKeyword, 0xcf8e6d, 0x0033b3),
             (.markdownQuote, 0xa8a49c, 0x585550), (.markdownTableStripe, 0x232120, 0xf2f0ec), (.markdownHighlight, 0x50482f, 0xe8e0c5),
@@ -173,7 +173,9 @@ final class PaletteTests: XCTestCase {
     }
 
     /// 위험한 설정 색(PALETTE.md §5 `danger*`): 글자 4.5:1·표시 3:1 을 앱 바탕과 시스템 설정 창 카드 위에서,
-    /// 스위치 켜짐 바탕은 카드와 흰 손잡이 양쪽에 3:1, 그리고 다른 역할 색과 ΔE 14 이상 떨어진다(한눈에 구분).
+    /// 스위치 켜짐 바탕은 카드와 흰 손잡이 양쪽에 3:1, 그리고 다른 역할 색과 떨어진다(한눈에 구분): 대부분 ΔE 14 이상, 같은 계열에 가까운 잉크 파랑은 13.5,
+    /// 어두운 모드의 빨강(주의)·보조 글자색은 10·12(어두운 값을 연보라에서 떼어 내느라 낮췄다 — 빨강과는 ⚠ 기호와 글이 함께 구분한다).
+    /// 없앤 연보라 #c099ff 와는 ΔE 8 이상(그 색으로 돌아가지 않게).
     func testDangerRoleIsReadableAndDistinct() {
         let systemCards: [Bool: [UInt32]] = [true: [0x2b2b2b, 0x1e1e1e], false: [0xffffff, 0xececec]]
         for dark in [true, false] {
@@ -190,10 +192,22 @@ final class PaletteTests: XCTestCase {
             let others: [PaletteColor] = [.statusAttention, .warning, .warnText, .typeClaude, .typeCodex, .accent, .accentText,
                                           .agent, .statusDone, .textPrimary, .textSecondary]
             for other in others {
+                let floor: Double
+                switch other {
+                case .accent, .accentText: floor = 13.5
+                case .statusAttention where dark: floor = 10
+                case .textSecondary where dark: floor = 12
+                default: floor = 14
+                }
                 for danger in [PaletteColor.danger, .dangerText] {
-                    XCTAssertGreaterThanOrEqual(deltaE(danger.hex(dark: dark), other.hex(dark: dark)), 14,
+                    XCTAssertGreaterThanOrEqual(deltaE(danger.hex(dark: dark), other.hex(dark: dark)), floor,
                                                 "\(danger) vs \(other) dark=\(dark)")
                 }
+            }
+            // 없앤 연보라(AI 느낌)로 돌아가지 않는다
+            for danger in [PaletteColor.danger, .dangerText, .dangerFill] {
+                XCTAssertGreaterThanOrEqual(deltaE(danger.hex(dark: dark), 0xc099ff), danger == .dangerFill ? 14 : 8,
+                                            "\(danger) vs retired lavender dark=\(dark)")
             }
         }
     }
@@ -268,6 +282,13 @@ final class PaletteTests: XCTestCase {
         XCTAssertEqual(TerminalTheme.light.background, PaletteColor.background.hex(dark: false))
         XCTAssertEqual(TerminalTheme.dark.selection, PaletteColor.selection.hex(dark: true))
         XCTAssertEqual(TerminalTheme.light.selection, PaletteColor.selection.hex(dark: false))
+    }
+
+    /// 터미널 커서는 팔레트의 강조색(두 모드 모두) — 팔레트 밖 색(예전 연보라 계열)이 아니다
+    func testTerminalCaretIsThePaletteAccent() {
+        XCTAssertEqual(TerminalTheme.light.caret, PaletteColor.accent.hex(dark: false))
+        XCTAssertEqual(TerminalTheme.dark.caret, PaletteColor.accent.hex(dark: true))
+        XCTAssertGreaterThanOrEqual(contrast(TerminalTheme.dark.caret, TerminalTheme.dark.background), 3)
     }
 
     /// 라이트 터미널: 글자는 진하게, 색 글자(빨강~청록·밝은 쪽)는 밝은 바탕에서 읽힌다

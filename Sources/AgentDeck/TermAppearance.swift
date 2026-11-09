@@ -211,6 +211,7 @@ enum TermAppearance {
         // 스크롤 막대는 늘 보이게(겹쳐 보이는 기본 막대는 위치가 안 보인다). 막대 모양(밝음·어두움)은 뷰의 모양을 따라간다.
         view.scrollerStyle = .legacy
         view.needsDisplay = true
+        view.superview?.needsDisplay = true // 격자 양옆 여백(TerminalPaneSurface)도 새 바탕색으로
     }
 }
 

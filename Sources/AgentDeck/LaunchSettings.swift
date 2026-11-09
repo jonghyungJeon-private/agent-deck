@@ -244,7 +244,7 @@ private struct SettingsPage: View {
     }
 }
 
-/// 행의 상태 말: 색은 뜻이다(됨 = 초록, 주의 = 호박, 오류 = 빨강, 안전장치를 약하게 하는 설정 = 난초색 `danger`, 그 밖 = 중립). 색만으로 알리지 않게 기호와 글이 같이 간다.
+/// 행의 상태 말: 색은 뜻이다(됨 = 초록, 주의 = 호박, 오류 = 빨강, 안전장치를 약하게 하는 설정 = 자주색 `danger`, 그 밖 = 중립). 색만으로 알리지 않게 기호와 글이 같이 간다.
 private struct SettingStatus {
     enum Tone { case ok, warn, bad, danger, neutral }
     let text: String
@@ -354,20 +354,35 @@ private struct SettingRow<Control: View>: View {
     }
 }
 
-/// 한 줄 경고(켜진 위험 옵션 바로 아래): 기호 + 글, 위험(`danger`) 색. 색만으로 알리지 않는다.
+/// 한 줄 경고(켜진 위험 옵션 바로 아래): 기호 + 글. 색은 ⚠ 와 옵션 이름(`flags`, 고정폭)에만 — 문장은 으뜸 글자색으로 읽히게 둔다
+/// (색만으로 알리지 않고, 어두운 모드에서 문장 전체가 연보라로 칠해지지 않게).
 private struct WarningLine: View {
     @Environment(\.uiScale) private var ui
     let text: String
     var tone: SettingStatus.Tone = .danger
+    /// 문장 안에서 위험 색·고정폭으로 보일 옵션 이름
+    var flags: [String] = []
+
+    private var message: Text {
+        let color = Color(SettingStatus(text: "", tone: tone).color)
+        let flagFont = Font(TermAppearance.uiFont(ui(TypeSize.secondary)))
+        var rest = Substring(text)
+        var result = Text("")
+        while let hit = flags.compactMap({ flag in rest.range(of: flag).map { (flag, $0) } }).min(by: { $0.1.lowerBound < $1.1.lowerBound }) {
+            result = result + Text(String(rest[..<hit.1.lowerBound])) + Text(hit.0).font(flagFont).foregroundColor(color)
+            rest = rest[hit.1.upperBound...]
+        }
+        return result + Text(String(rest))
+    }
 
     var body: some View {
         let color = SettingStatus(text: "", tone: tone).color
         HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
-            Image(systemName: "exclamationmark.triangle.fill").accessibilityHidden(true)
-            Text(text).fixedSize(horizontal: false, vertical: true)
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color(color)).accessibilityHidden(true)
+            message.fixedSize(horizontal: false, vertical: true)
         }
         .uiTextFont(TypeSize.secondary)
-        .foregroundStyle(Color(color))
+        .foregroundStyle(Color(TermAppearance.textPrimary))
     }
 }
 
@@ -517,7 +532,7 @@ private struct ConnectionsSection: View {
                            help: "키보드를 가져가지 않고 엽니다. 내가 열었거나 눌러 본 창은 닫지 않고, 작은 창으로 보는 세션에만 적용됩니다.") {
                     SettingSwitch(title: "에이전트가 브라우저를 쓰면 작은 창 자동 열기", isOn: $autoOpen.enabled)
                 }
-                SettingRow(title: "선명도", detail: "칸에 받아 보이는 최대 크기입니다. 열린 세션에도 바로 적용됩니다.",
+                SettingRow(title: "선명도", detail: "브라우저 칸에 보이는 최대 크기입니다. 열린 세션에도 바로 적용됩니다.",
                            help: "브라우저는 화면 배율(레티나 2배)로 그리고, 칸에는 이 크기까지 받아 보입니다.") {
                     SettingPicker("선명도", selection: $view.options.sharpness, [(.standard, "표준 · 1440까지(가벼움)"),
                                                                                  (.sharp, "선명 · 2560까지"),
@@ -648,7 +663,7 @@ private struct ClaudeCard: View {
                     .disabled(launch.skipPermissions)
             }
             if !launch.skipPermissions, launch.permissionMode == "bypassPermissions" {
-                WarningLine(text: "bypassPermissions는 모든 권한 확인을 건너뜁니다(권한 확인 건너뛰기와 같음).")
+                WarningLine(text: "bypassPermissions는 모든 권한 확인을 건너뜁니다(권한 확인 건너뛰기와 같음).", flags: ["bypassPermissions"])
             }
             OptionRow(title: "모델", flag: "--model") {
                 ModelField(title: "모델", value: $launch.model, suggestions: ClaudeLaunch.modelSuggestions, placeholder: "기본")
@@ -691,7 +706,7 @@ private struct CodexCard: View {
                     .disabled(launch.bypassApprovalsAndSandbox)
             }
             if !launch.bypassApprovalsAndSandbox, launch.sandbox == "danger-full-access" {
-                WarningLine(text: "danger-full-access는 샌드박스 없이 디스크·네트워크 전체에 접근합니다.")
+                WarningLine(text: "danger-full-access는 샌드박스 없이 디스크·네트워크 전체에 접근합니다.", flags: ["danger-full-access"])
             }
             OptionRow(title: "모델", flag: "--model") {
                 ModelField(title: "모델", value: $launch.model, suggestions: [], placeholder: "기본 (config.toml)")

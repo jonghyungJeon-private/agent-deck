@@ -296,7 +296,7 @@ public enum ChromeImport {
     /// 만료된 영구 쿠키와 분할 쿠키(top_frame_site_key)는 건너뛴다.
     static func readRows(profile: URL, now: Date) throws -> [Row] {
         guard let source = cookieFile(profile) else { throw ImportError.noCookies(profile.lastPathComponent) }
-        var lastError: Error = ImportError.database("복사하는 동안 쿠키 파일이 계속 바뀌었습니다 — Chrome을 잠시 멈춘 뒤 다시 시도하세요")
+        var lastError: Error = ImportError.database("복사하는 동안 쿠키 파일이 계속 바뀌었습니다 — Chrome을 직접 종료한 뒤 다시 시도하세요(앱이 Chrome을 끄지는 않습니다)")
         for _ in 0..<3 {
             do {
                 if let rows = try readSnapshot(source, now: now) { return rows }
