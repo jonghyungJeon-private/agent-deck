@@ -46,7 +46,7 @@ final class DeviceButton: NSButton {
         image = NSImage(systemSymbolName: symbol, accessibilityDescription: name)?
             .withSymbolConfiguration(.init(pointSize: TermAppearance.scaled(TypeSize.row), weight: .medium))
         let sizeText = device.map { " · \(Int($0.width))×\(Int($0.height))" } ?? ""
-        toolTip = "이 탭을 어떤 기기로 볼지 — 지금: \(name)\(sizeText)\n폰·태블릿 크기, 터치, 그 기기의 사용자 에이전트로 페이지를 다시 읽어요(이 탭만)"
+        toolTip = "이 탭을 어떤 기기로 볼지 — 지금: \(name)\(sizeText)\n폰·태블릿 크기, 터치, 그 기기의 사용자 에이전트로 페이지를 다시 읽습니다(이 탭만)\nChrome으로 크기·사용자 에이전트·터치를 흉내 내는 것이라 진짜 Safari나 실제 기기는 아닙니다"
         setAccessibilityLabel(toolTip)
         isEnabled = !busy
     }
@@ -125,7 +125,7 @@ enum DeviceMenu {
         }
         if !recent.isEmpty {
             menu.addItem(.separator())
-            menu.addItem(note("최근"))
+            menu.addItem(sectionHeader("최근"))
             for (id, device) in recent {
                 let item = deviceItem(id: id, name: device?.name ?? id, size: device?.sizeText, detail: device?.detail,
                                       current: current, enabled: enabled, pick: pick)
@@ -167,13 +167,12 @@ enum DeviceMenu {
         landscape.image = icon("rectangle.landscape.rotate")
         landscape.state = current?.landscape == true ? .on : .off
         landscape.isEnabled = enabled && current?.isMobile == true
-        landscape.toolTip = current?.isMobile == true ? nil : "폰·태블릿을 고르면 쓸 수 있어요"
+        landscape.toolTip = current?.isMobile == true ? nil : "폰·태블릿을 고르면 쓸 수 있습니다"
         menu.addItem(landscape)
         let customItem = ActionItem("직접 크기 입력…") { custom() }
         customItem.image = icon("rectangle.dashed")
         customItem.isEnabled = enabled
         menu.addItem(customItem)
-        menu.addItem(note("Chrome 으로 그 크기·사용자 에이전트·터치를 흉내 내요(진짜 Safari·기기는 아님)"))
         return menu
     }
 
@@ -184,9 +183,11 @@ enum DeviceMenu {
     private static func deviceItem(id: String, name: String, size: String?, detail: String?, current: AbxStatus.Tab.Device?,
                                    enabled: Bool, pick: @escaping Pick) -> NSMenuItem {
         // 같은 기기를 다시 고르면 방향은 그대로(가로로 보던 것을 세로로 돌리지 않는다)
-        let item = ActionItem(name) { pick(id, current?.id == id ? current!.landscape : false) }
-        let title = NSMutableAttributedString(string: name, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-        let extra = [size, detail].compactMap { $0 }.joined(separator: " · ")
+        let shownName = Self.sizeNotation(name)
+        let item = ActionItem(shownName) { pick(id, current?.id == id ? current!.landscape : false) }
+        let title = NSMutableAttributedString(string: shownName, attributes: [.font: NSFont.menuFont(ofSize: 0)])
+        // 이름에 크기가 이미 들어 있으면("Laptop 1280×800") 같은 크기를 한 번 더 적지 않는다
+        let extra = [shownName.contains(size ?? "\u{0}") ? nil : size, detail].compactMap { $0 }.joined(separator: " · ")
         if !extra.isEmpty {
             title.append(NSAttributedString(string: "   " + extra, attributes: [
                 .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor]))
@@ -195,6 +196,17 @@ enum DeviceMenu {
         item.state = current?.id == id ? .on : .off
         item.isEnabled = enabled
         return item
+    }
+
+    /// 이름 속 "1280x800" 의 x 를 크기 표기와 같은 ×(곱하기)로: 한 메뉴에서 두 가지 글자가 섞이지 않게
+    static func sizeNotation(_ name: String) -> String {
+        name.replacingOccurrences(of: #"(?<=\d)x(?=\d)"#, with: "×", options: .regularExpression)
+    }
+
+    /// 구역 머리("최근"): macOS 14 부터는 시스템 구역 머리, 13 은 꺼진 작은 글 줄
+    private static func sectionHeader(_ text: String) -> NSMenuItem {
+        if #available(macOS 14.0, *) { return NSMenuItem.sectionHeader(title: text) }
+        return note(text)
     }
 
     private static func note(_ text: String) -> NSMenuItem {
@@ -239,7 +251,7 @@ enum DeviceMenu {
     static func askCustomSize(window: NSWindow?, completion: @escaping (String?) -> Void) {
         let alert = NSAlert()
         alert.messageText = "직접 크기 입력"
-        alert.informativeText = "페이지가 보는 화면 크기(CSS 픽셀)예요. 배율은 비워 두면 데스크톱은 이 화면 그대로, 모바일은 3배."
+        alert.informativeText = "페이지가 보는 화면 크기(CSS 픽셀)입니다. 배율은 비워 두면 데스크톱은 이 화면 그대로, 모바일은 3배입니다.\nChrome으로 흉내 내는 것이라 진짜 Safari나 실제 기기는 아닙니다."
         alert.addButton(withTitle: "적용")
         alert.addButton(withTitle: "취소")
         func field(_ placeholder: String, _ value: String) -> NSTextField {

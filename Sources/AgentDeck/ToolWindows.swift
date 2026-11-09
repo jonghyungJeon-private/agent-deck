@@ -880,9 +880,9 @@ final class ToolWindowsController: NSObject {
     func menu(for tool: ToolID) -> NSMenu {
         let menu = NSMenu()
         let side = layout.side(of: tool)
-        let left = ClosureMenuItem(title: "왼쪽으로 옮기기") { [weak self] in self?.move(tool, to: .left) }
+        let left = ClosureMenuItem(title: "왼쪽에 두기") { [weak self] in self?.move(tool, to: .left) }
         left.state = side == .left ? .on : .off
-        let right = ClosureMenuItem(title: "오른쪽으로 옮기기") { [weak self] in self?.move(tool, to: .right) }
+        let right = ClosureMenuItem(title: "오른쪽에 두기") { [weak self] in self?.move(tool, to: .right) }
         right.state = side == .right ? .on : .off
         var floatItem: NSMenuItem?
         if tool == .browser {
@@ -891,11 +891,7 @@ final class ToolWindowsController: NSObject {
             floatItem = item
         }
         let hide = ClosureMenuItem(title: "숨기기") { [weak self] in self?.move(tool, to: .hidden) }
-        // ⌘⇧B 는 "브라우저 보기"(보는 곳에 열기) — 숨기기 단축키로 쓰지 않는다
-        if tool != .browser {
-            hide.keyEquivalent = tool == .files ? "e" : "s"
-            hide.keyEquivalentModifierMask = [.command, .shift]
-        }
+        // 오른쪽 클릭 메뉴에는 단축키를 적지 않는다(보기 메뉴에 있다) — ⌘⇧B 는 "브라우저 보기"라 숨기기 단축키가 아니다
         // 브라우저는 옆으로 옮기는 항목 없이 작은 창 + 숨기기만
         let moves = tool == .browser ? [] : [left, right]
         for item in [floatItem] + moves + [NSMenuItem.separator(), hide] { if let item { menu.addItem(item) } }
