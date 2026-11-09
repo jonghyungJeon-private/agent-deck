@@ -30,12 +30,16 @@ public enum BrowserTabs {
         public var shown: Bool
         public var url: String
         public var title: String
+        /// 흉내 내는 기기(abx 가 적은 것) — 없으면 보통 창
+        public var device: AbxStatus.Tab.Device? = nil
     }
 
     public static let main = "main"
 
     /// keep: 주소는 about:blank 지만 내용이 있는 탭(document.write 등) — 빈 탭으로 치지 않는다
-    public static func chips(pages: [Page], tabs: [AbxStatus.Tab], shown: String?, keep: Set<String> = []) -> [Chip] {
+    /// devices: 기기 홀더가 적은 탭마다의 기기(있으면 탭 목록의 것보다 새것 — AbxStatus.devices)
+    public static func chips(pages: [Page], tabs: [AbxStatus.Tab], shown: String?, keep: Set<String> = [],
+                             devices: [String: AbxStatus.Tab.Device]? = nil) -> [Chip] {
         let known = Dictionary(tabs.map { ($0.targetId, $0) }, uniquingKeysWith: { a, _ in a })
         // Chrome 이 스스로 띄우는 내부 페이지(chrome://newtab 등)는 abx 도 탭으로 치지 않는다
         // AI 의 빈 탭(about:blank, 이름 없음 — abx 가 다음 `tab new`·`open` 에 다시 쓰는 탭)은 보고 있는 탭이 아니면
@@ -52,7 +56,8 @@ public enum BrowserTabs {
             let group: String? = users && tab?.adopted != true ? nil : (tab?.space?.name ?? main)
             return Chip(targetId: page.targetId, tabId: tab?.id, text: text(label: tab?.label, page: page), group: group,
                         users: users, agentHere: tab?.active == true,
-                        shown: page.targetId == shown, url: page.url, title: page.title)
+                        shown: page.targetId == shown, url: page.url, title: page.title,
+                        device: devices.map { $0[page.targetId] } ?? tab?.device)
         }
         let spaceOrder = tabs.compactMap(\.space).reduce(into: [Int: String]()) { $0[$1.id] = $1.name }
             .sorted { $0.key < $1.key }.map(\.value)

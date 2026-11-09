@@ -1151,6 +1151,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "browser-watch":
             // browser-watch <targetId 앞부분|t3|이름|follow>: 탭 칩 누르기
             model.browserWindows.targetPane?.debugWatch(argument)
+        case "browser-device":
+            // browser-device <기기 id|desktop> [landscape]: 머리 줄 기기 메뉴에서 고른 것과 같은 길(보고 있는 탭)
+            let v = argument.split(separator: " ").map(String.init)
+            guard let id = v.first else { return }
+            model.browserWindows.targetPane?.debugDevice(id, landscape: v.contains("landscape"))
+        case "browser-device-menu":
+            print(model.browserWindows.targetPane?.debugDeviceMenu ?? "no browser window")
+            print("browser-device-menu end")
+            fflush(stdout)
+        case "browser-device-state":
+            // 기기 목록을 읽었는지·보는 탭의 기기·바꾸는 중·버튼 숨김·바꿀 수 없는 까닭
+            print("browser-device " + (model.browserWindows.targetPane?.debugDeviceState ?? "no browser window"))
+            fflush(stdout)
         case "browsers":
             // 브라우저: 화면마다 칩 상태, 열린 창마다 주인·창 보임·스트림·받은 프레임 수·제어·페이지 크기
             for (id, status) in model.browserStates.sorted(by: { $0.key < $1.key }) {

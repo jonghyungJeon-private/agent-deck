@@ -43,8 +43,30 @@ public struct AbxStateReader {
             .flatMap({ try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }) {
             resting = AbxStatus.Resting(at: (rest["at"] as? Double) ?? 0, tabs: (rest["tabs"] as? [Any])?.count ?? 0)
         }
+        // 기기 홀더가 쓰는 파일(없으면 흉내 내는 탭이 없다 — 새 브라우저는 지우고 시작한다). 기기를 모르는 예전 abx 면 탭 목록의 것
+        let devicesFile = stateDir.appendingPathComponent("\(name).devices.json")
+        let devices: [String: AbxStatus.Tab.Device]? = FileManager.default.fileExists(atPath: devicesFile.path)
+            ? ((try? Data(contentsOf: devicesFile)).flatMap { Self.decodeDevices($0, fallback: tabs) } ?? [:]) : nil
         return AbxStatus(session: name, running: running, headless: (launch?["headed"] as? Bool).map { !$0 },
-                         cdpUrl: cdpUrl, control: control, handoff: handoff, tabs: tabs, resting: resting)
+                         cdpUrl: cdpUrl, control: control, handoff: handoff, tabs: tabs, resting: resting, devices: devices)
+    }
+
+    /// `{ "<target>": {id, landscape?, name, width, height, scale, kind} }`. 이름·크기가 없는 기록(홀더가 바꿔 쓰기 전의 예전 꼴)은
+    /// 탭 목록(fallback)에 그 탭의 기기가 있으면 그것, 없으면 뺀다
+    static func decodeDevices(_ data: Data, fallback: [AbxStatus.Tab] = []) -> [String: AbxStatus.Tab.Device]? {
+        guard let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: [String: Any]] else { return nil }
+        var out: [String: AbxStatus.Tab.Device] = [:]
+        for (target, d) in raw {
+            if let device = decodeDevice(d) ?? fallback.first(where: { $0.targetId == target })?.device { out[target] = device }
+        }
+        return out
+    }
+
+    private static func decodeDevice(_ d: [String: Any]) -> AbxStatus.Tab.Device? {
+        guard let id = d["id"] as? String, let name = d["name"] as? String,
+              let width = (d["width"] as? NSNumber)?.doubleValue, let height = (d["height"] as? NSNumber)?.doubleValue else { return nil }
+        return AbxStatus.Tab.Device(id: id, name: name, width: width, height: height, scale: (d["scale"] as? NSNumber)?.doubleValue ?? 0,
+                                    landscape: d["landscape"] as? Bool ?? false, kind: d["kind"] as? String ?? "phone")
     }
 
     /// abx 가 이 브라우저를 마지막으로 쓴 때: 엔진을 부를 때마다 쓰는 `<stateDir>/<세션>.used`, 그 전 abx 면

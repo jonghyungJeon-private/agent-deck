@@ -8,16 +8,20 @@ public struct ViewportTransform: Equatable {
     public var bounds: CGSize
     /// 페이지 viewport(CSS 픽셀)
     public var viewport: CGSize
+    /// 둘레에 비워 둘 폭(점) — 폰·태블릿 화면은 기기 테두리를 그릴 자리를 남긴다
+    public var inset: CGFloat
 
-    public init(bounds: CGSize, viewport: CGSize) {
+    public init(bounds: CGSize, viewport: CGSize, inset: CGFloat = 0) {
         self.bounds = bounds
         self.viewport = viewport
+        self.inset = inset
     }
 
     /// 프레임을 그릴 자리(가운데, 비율 유지, 남는 곳은 여백). 위가 0인 좌표.
     public var imageRect: CGRect {
-        guard viewport.width > 0, viewport.height > 0, bounds.width > 0, bounds.height > 0 else { return .zero }
-        let scale = min(bounds.width / viewport.width, bounds.height / viewport.height)
+        let area = CGSize(width: bounds.width - 2 * inset, height: bounds.height - 2 * inset)
+        guard viewport.width > 0, viewport.height > 0, area.width > 0, area.height > 0 else { return .zero }
+        let scale = min(area.width / viewport.width, area.height / viewport.height)
         let size = CGSize(width: viewport.width * scale, height: viewport.height * scale)
         return CGRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2,
                       width: size.width, height: size.height)

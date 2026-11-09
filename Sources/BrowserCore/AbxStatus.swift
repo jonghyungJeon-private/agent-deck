@@ -51,6 +51,27 @@ public struct AbxStatus: Codable, Equatable, Sendable {
         public var adopted: Bool?
         /// 작업 공간(`abx space`) — 없으면 main(AI 탭) 또는 사람 탭
         public var space: Space?
+        /// 흉내 내는 기기(`abx device` — 폰·태블릿·창 크기). 없으면 보통 창(데스크톱)
+        public var device: Device? = nil
+
+        public struct Device: Codable, Equatable, Sendable {
+            /// abx 기기 목록의 id(`iphone-16-pro`) 또는 직접 준 크기(`390x844@3,mobile`)
+            public var id: String
+            public var name: String
+            /// 화면 CSS 크기(가로로 보기면 이미 바꾼 값)
+            public var width: Double
+            public var height: Double
+            public var scale: Double
+            public var landscape: Bool
+            /// "phone" | "tablet" | "desktop"
+            public var kind: String
+            public init(id: String, name: String, width: Double, height: Double, scale: Double, landscape: Bool, kind: String) {
+                self.id = id; self.name = name; self.width = width; self.height = height
+                self.scale = scale; self.landscape = landscape; self.kind = kind
+            }
+            /// 폰·태블릿(터치·모바일 화면) — 창 크기만 바꾼 데스크톱 크기는 아니다
+            public var isMobile: Bool { kind != "desktop" }
+        }
 
         public struct Space: Codable, Equatable, Sendable {
             public var id: Int
@@ -70,6 +91,15 @@ public struct AbxStatus: Codable, Equatable, Sendable {
     public var tabs: [Tab]
     /// `abx rest` 로 쉬게 한 브라우저(꺼져 있다 — 다음 abx 호출이나 `abx up` 이 이 탭들을 다시 연다)
     public var resting: Resting? = nil
+    /// 탭마다 흉내 내는 기기(CDP target id → 기기, abx 기기 홀더가 쓰는 `<세션>.devices.json`). 파일로 읽을 때만 있다.
+    /// 탭 목록(`tabs`)보다 새것: abx 가 아직 적지 않은 탭(사람이 연 팝업 — 연 탭의 기기를 물려받는다)도 있다
+    public var devices: [String: Tab.Device]? = nil
+
+    /// 그 탭의 기기(nil = 보통 창)
+    public func device(of targetId: String) -> Tab.Device? {
+        if let devices { return devices[targetId] }
+        return tabs.first(where: { $0.targetId == targetId })?.device
+    }
 
     public struct Resting: Codable, Equatable, Sendable {
         /// 쉬게 한 때(ms, abx 의 Date.now())
@@ -176,6 +206,14 @@ public struct AbxRunner {
         guard result.status == 0, let text = String(data: result.output, encoding: .utf8),
               text.hasPrefix("---\n") else { return nil }
         return text
+    }
+
+    /// abx 의 기기 목록(`abx device list --json`). 기기를 모르는 예전 abx 면 nil.
+    /// 예전 abx 는 모르는 명령을 엔진에 넘기며 브라우저를 띄울 수 있어 띄우지 않게(ABX_AUTOSTART=0) 묻는다.
+    public func deviceCatalog(_ session: AbxSession) throws -> DeviceCatalog? {
+        let result = try run(["device", "list", "--json"], session: session, extraEnvironment: ["ABX_AUTOSTART": "0"])
+        guard result.status == 0 else { return nil }
+        return try? JSONDecoder().decode(DeviceCatalog.self, from: result.output)
     }
 
     public func status(_ session: AbxSession) throws -> AbxStatus {

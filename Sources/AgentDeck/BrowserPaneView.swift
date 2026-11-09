@@ -31,7 +31,7 @@ final class BrowserPaneView: NSView {
     }
 
     /// 글꼴 크기 배율이 바뀜: "⋯" 버튼 크기·그림
-    func scaleChanged() { displayButton.scaleChanged() }
+    func scaleChanged() { displayButton.scaleChanged(); deviceButton.scaleChanged(); updateDeviceButton() }
 
     /// 사람이 이 칸 안을 눌렀거나 제어를 가져왔다(작은 창 자동 닫기를 막는다 — 보기만 한 것은 아님)
     var onUserInteraction: (() -> Void)?
@@ -45,7 +45,32 @@ final class BrowserPaneView: NSView {
     }
     private var pendingTab: String?
 
-    private func updateDisplayButton() { displayButton.isHidden = displayMenu == nil || docked }
+    private func updateDisplayButton() {
+        displayButton.isHidden = displayMenu == nil || docked
+        // 기기 버튼은 "⋯" 가 숨으면 그 자리까지 붙는다
+        deviceAfterDisplay.isActive = !displayButton.isHidden
+        deviceAtControl.isActive = displayButton.isHidden
+    }
+
+    /// 머리 줄의 기기 버튼(데스크톱·iPhone 16 Pro…): 보고 있는 탭을 어떤 기기로 볼지 고른다(abx device --user — 그 탭만)
+    private let deviceButton = DeviceButton()
+    private var deviceAfterDisplay: NSLayoutConstraint!
+    private var deviceAtControl: NSLayoutConstraint!
+    /// abx 의 기기 목록(앱에 하나 — 처음 칸이 뜰 때 읽는다). 못 읽으면(기기를 모르는 abx) 버튼을 숨긴다
+    private static var catalog: DeviceCatalog?
+    private static var catalogRequested = false
+    private static var catalogWaiters: [() -> Void] = []
+    /// 보고 있는 탭의 기기(abx 가 적은 것)
+    private var shownDevice: AbxStatus.Tab.Device?
+    /// 기기를 바꾸는 중(abx 의 답을 기다림)
+    private var deviceBusy = false
+    /// 상태 줄에 잠깐 보일 말(기기를 바꾸지 못함 등)
+    private var transientNote: (text: String, until: Date)?
+    private static let recentsKey = "browser.recentDevices"
+    private static var recents: RecentDevices {
+        get { RecentDevices(ids: UserDefaults.standard.stringArray(forKey: recentsKey) ?? []) }
+        set { UserDefaults.standard.set(newValue.ids, forKey: recentsKey) }
+    }
     private let screen = BrowserScreenView()
     /// 탭 칩 줄: 브라우저의 탭들(AI 작업 공간마다 묶음, 사람 탭은 뒤). 누르면 그 탭을 계속 보여 준다.
     private let tabBar = NSStackView()
@@ -108,6 +133,9 @@ final class BrowserPaneView: NSView {
         displayButton.target = self
         displayButton.action = #selector(showDisplayMenu)
         displayButton.isHidden = true
+        deviceButton.target = self
+        deviceButton.action = #selector(showDeviceMenu)
+        deviceButton.isHidden = true
         screen.pane = self
         placeholder.alignment = .center
         placeholder.textColor = TermAppearance.textSecondary
@@ -127,7 +155,7 @@ final class BrowserPaneView: NSView {
         tabScroll.horizontalScrollElasticity = .allowed
         tabScroll.verticalScrollElasticity = .none
         tabScroll.isHidden = true
-        for view in [statePill, header, displayButton, controlButton, tabScroll, screen, statusBar, placeholder, wakeButton] {
+        for view in [statePill, header, deviceButton, displayButton, controlButton, tabScroll, screen, statusBar, placeholder, wakeButton] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -139,7 +167,8 @@ final class BrowserPaneView: NSView {
             statePill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             header.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             headerAtEdge,
-            header.trailingAnchor.constraint(lessThanOrEqualTo: displayButton.leadingAnchor, constant: -8),
+            header.trailingAnchor.constraint(lessThanOrEqualTo: deviceButton.leadingAnchor, constant: -8),
+            deviceButton.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             displayButton.centerYAnchor.constraint(equalTo: controlButton.centerYAnchor),
             displayButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -4),
             controlButton.topAnchor.constraint(equalTo: topAnchor, constant: 3),
@@ -168,6 +197,9 @@ final class BrowserPaneView: NSView {
             wakeButton.centerXAnchor.constraint(equalTo: screen.centerXAnchor),
             wakeButton.topAnchor.constraint(equalTo: placeholder.bottomAnchor, constant: 14),
         ])
+        deviceAfterDisplay = deviceButton.trailingAnchor.constraint(equalTo: displayButton.leadingAnchor, constant: -4)
+        deviceAtControl = deviceButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -6)
+        updateDisplayButton()
         show(.waiting("브라우저를 찾는 중…"))
     }
 
@@ -282,6 +314,7 @@ final class BrowserPaneView: NSView {
         self.feed = feed
         feed.setDocked(docked)
         feed.start()
+        loadCatalog(feed)
         feed.fit(to: screen.bounds.size)
         if let tab = pendingTab { pendingTab = nil; feed.watch(tab) }
     }
@@ -349,10 +382,14 @@ final class BrowserPaneView: NSView {
             placeholder.attributedStringValue = Self.placeholderText("브라우저를 쉬게 했어요",
                 detail: "쓰지 않아 \(ago) 전에 껐어요(메모리 절약)\(tabs)\nAI 가 abx 를 쓰면 저절로 켜져요")
             restingHeadless = headless
+            deviceButton.isHidden = true
             wakeButton.isHidden = false
             if !waking { wakeButton.title = wakeFailed ? "켜지 못했어요 · 다시 시도" : "다시 켜기"; wakeButton.isEnabled = true }
         case .waiting(let text):
             setPill(nil)
+            shownDevice = nil
+            screen.deviceKind = nil
+            updateDeviceButton()
             header.stringValue = "브라우저"
             blankPage = false
             // 브라우저가 없다: 예전 상태(AI 가 쓰는 중 등)를 상태 줄에 남기지 않는다
@@ -402,6 +439,7 @@ final class BrowserPaneView: NSView {
             header.stringValue = blank ? "빈 탭" + tabs : [control, title, shown?.0].compactMap { $0?.isEmpty == false ? $0 : nil }
                 .joined(separator: " · ") + tabs
             setControl(status.control)
+            updateDeviceButton()
         }
     }
 
@@ -429,8 +467,8 @@ final class BrowserPaneView: NSView {
         let onShown = active != nil && active == shownTarget
         agentElsewhere = onShown || active == nil ? nil
             : chipsForStatus.first(where: { $0.targetId == active })?.text ?? "빈 탭"
-        let text: String
-        let color: NSColor
+        var text: String
+        var color: NSColor
         switch indicator {
         case _ where requesting:
             // 누른 뒤 답을 기다리는 중: 입력은 이미 막혔거나 아직이다 — 그렇다고 말한다
@@ -458,6 +496,9 @@ final class BrowserPaneView: NSView {
         case nil:
             text = ""
             color = TermAppearance.textSecondary
+        }
+        if let note = transientNote {
+            if note.until > Date() { text = note.text; color = TermAppearance.yellow } else { transientNote = nil }
         }
         statusLine.stringValue = text
         statusLine.textColor = color
@@ -537,6 +578,11 @@ final class BrowserPaneView: NSView {
 
     private func showTabs(_ chips: [BrowserTabs.Chip], pinned: Bool) {
         let shown = chips.first(where: \.shown)?.targetId
+        let device = chips.first(where: \.shown)?.device
+        if device != shownDevice || shown != shownTarget {
+            shownDevice = device
+            screen.deviceKind = device?.isMobile == true ? device?.kind : nil
+        }
         if shown != shownTarget {
             shownTarget = shown
             populatedBlank = nil
@@ -548,6 +594,7 @@ final class BrowserPaneView: NSView {
         }
         self.chipsForStatus = chips
         updateStatusLine()
+        updateDeviceButton()
         guard chips != self.chips || tabBar.arrangedSubviews.last?.identifier?.rawValue != (pinned ? "follow" : "chip") else { return }
         self.chips = chips
         tabBar.arrangedSubviews.forEach { $0.removeFromSuperview() }
@@ -567,8 +614,10 @@ final class BrowserPaneView: NSView {
                 tabBar.addArrangedSubview(label)
             }
             let text = chip.text.count > 22 ? String(chip.text.prefix(21)) + "…" : chip.text
-            let button = NSButton(title: (chip.agentHere ? "● " : "") + text, target: self, action: #selector(chipClicked(_:)))
-            if chip.agentHere { Self.markAgent(button, text: text) }
+            // 폰·태블릿으로 보는 탭은 이름 앞에 📱
+            let device = chip.device?.isMobile == true ? "📱 " : ""
+            let button = NSButton(title: (chip.agentHere ? "● " : "") + device + text, target: self, action: #selector(chipClicked(_:)))
+            if chip.agentHere { Self.markAgent(button, text: device + text) }
             button.identifier = NSUserInterfaceItemIdentifier("chip")
             button.tag = i
             button.bezelStyle = .recessed
@@ -578,7 +627,8 @@ final class BrowserPaneView: NSView {
             button.state = chip.shown ? .on : .off
             let owner = chip.users ? "사람이 연 탭" + (chip.group != nil ? " · AI 가 맡아 쓰는 중" : "") : "AI 탭 · 작업 공간 \(chip.group ?? BrowserTabs.main)"
             button.toolTip = [chip.title, chip.url, [chip.tabId, owner].compactMap { $0 }.joined(separator: " · "),
-                              chip.agentHere ? "● AI 가 마지막으로 일한 탭" : nil].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
+                              chip.agentHere ? "● AI 가 마지막으로 일한 탭" : nil,
+                              chip.device.map { "기기: \($0.name)\($0.landscape ? " · 가로" : "") · \(Int($0.width))×\(Int($0.height))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
             let menu = NSMenu()
             let close = NSMenuItem(title: "탭 닫기", action: #selector(closeChip(_:)), keyEquivalent: "")
             close.target = self
@@ -690,6 +740,90 @@ final class BrowserPaneView: NSView {
         }
     }
 
+    // MARK: - 기기(폰·태블릿·창 크기)
+
+    private func loadCatalog(_ feed: BrowserFeed) {
+        Self.catalogWaiters.append { [weak self] in self?.updateDeviceButton() }
+        guard !Self.catalogRequested else { return }
+        Self.catalogRequested = true
+        feed.loadDevices { catalog in
+            Self.catalog = catalog
+            Self.catalogRequested = catalog != nil // 못 읽었으면 다음 칸이 다시 묻는다
+            let waiters = Self.catalogWaiters
+            Self.catalogWaiters = []
+            waiters.forEach { $0() }
+        }
+    }
+
+    private func updateDeviceButton() {
+        guard Self.catalog != nil, let status = lastStatus, status.running, shownTarget != nil else {
+            deviceButton.isHidden = true
+            return
+        }
+        deviceButton.isHidden = false
+        deviceButton.show(shownDevice, busy: deviceBusy)
+    }
+
+    /// 기기를 바꿀 수 없는 까닭: AI 가 바로 이 탭에서 일하는 중(그 페이지를 다시 읽으면 AI 동작이 깨진다)
+    private var deviceLock: String? {
+        guard control == .agent || control == .switching, let active = lastStatus?.activeTab?.targetId, active == shownTarget else { return nil }
+        return "AI 가 이 탭에서 작업 중이라 바꿀 수 없어요 — \u{201C}제어 가져오기\u{201D} 뒤에 바꾸세요"
+    }
+
+    @objc private func showDeviceMenu() {
+        guard let catalog = Self.catalog, !deviceBusy else { return }
+        onUserInteraction?()
+        let menu = DeviceMenu.build(catalog: catalog, current: shownDevice, recents: Self.recents.ids, locked: deviceLock,
+            pick: { [weak self] id, landscape in self?.pickDevice(id, landscape: landscape) },
+            custom: { [weak self] in
+                DeviceMenu.askCustomSize(window: self?.window) { id in
+                    if let id { self?.pickDevice(id, landscape: false) }
+                }
+            })
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: deviceButton.bounds.height + 2), in: deviceButton)
+    }
+
+    /// 보고 있는 탭을 그 기기로(nil = 데스크톱). abx 가 그 탭만 바꾸고 페이지를 다시 읽는다.
+    private func pickDevice(_ id: String?, landscape: Bool) {
+        guard let feed, let target = shownTarget, !deviceBusy, deviceLock == nil else { return }
+        if let id { var recents = Self.recents; recents.use(id); Self.recents = recents }
+        deviceBusy = true
+        updateDeviceButton()
+        feed.setDevice(id ?? "desktop", landscape: landscape, target: target) { [weak self] error in
+            guard let self else { return }
+            self.deviceBusy = false
+            if let error {
+                self.transientNote = ("기기를 바꾸지 못했어요: \(error)", Date().addingTimeInterval(5))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5.1) { [weak self] in self?.updateStatusLine() }
+                self.updateStatusLine()
+            }
+            self.updateDeviceButton()
+        }
+    }
+
+    /// 시험 명령 `browser-device-menu`: 기기 메뉴를 글로(들여쓰기 = 하위 메뉴, ✓ 지금 기기, – 그 기기가 든 곳, ✗ 꺼진 항목)
+    var debugDeviceMenu: String {
+        guard let catalog = Self.catalog else { return "no catalog" }
+        let menu = DeviceMenu.build(catalog: catalog, current: shownDevice, recents: Self.recents.ids, locked: deviceLock,
+                                    pick: { _, _ in }, custom: {})
+        func walk(_ menu: NSMenu, _ depth: Int) -> [String] {
+            menu.items.flatMap { item -> [String] in
+                if item.isSeparatorItem { return [String(repeating: "  ", count: depth) + "----"] }
+                let mark = item.state == .on ? "✓ " : item.state == .mixed ? "– " : ""
+                let off = item.isEnabled || item.submenu != nil ? "" : " ✗"
+                let line = String(repeating: "  ", count: depth) + mark + item.title + off
+                return [line] + (item.submenu.map { walk($0, depth + 1) } ?? [])
+            }
+        }
+        return walk(menu, 0).joined(separator: "\n")
+    }
+
+    /// 시험 명령 `browser-device <id|desktop> [landscape]`
+    func debugDevice(_ id: String, landscape: Bool) { pickDevice(id == "desktop" ? nil : id, landscape: landscape) }
+    var debugDeviceState: String {
+        "catalog=\(Self.catalog.map { "\($0.groups.count) groups" } ?? "nil") shown=\(shownDevice?.id ?? "desktop")\(shownDevice?.landscape == true ? " landscape" : "") busy=\(deviceBusy) hidden=\(deviceButton.isHidden) lock=\(deviceLock ?? "-")"
+    }
+
     @objc private func showDisplayMenu() {
         guard let menu = displayMenu?() else { return }
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: displayButton.bounds.height + 2), in: displayButton)
@@ -725,12 +859,12 @@ final class BrowserPaneView: NSView {
 
     /// 화면 뷰의 점(위가 0) → 페이지 CSS 좌표
     func cssPoint(_ point: CGPoint) -> CGPoint? {
-        ViewportTransform(bounds: screen.bounds.size, viewport: viewport).cssPoint(point)
+        screen.transform(viewport).cssPoint(point)
     }
 
     /// 페이지 CSS 좌표 → 창 좌표(시험 명령 `browser-click` 이 실제 마우스 이벤트를 만들 때)
     func windowPoint(css: CGPoint) -> NSPoint? {
-        let rect = ViewportTransform(bounds: screen.bounds.size, viewport: viewport).imageRect
+        let rect = screen.transform(viewport).imageRect
         guard rect.width > 0 else { return nil }
         let local = NSPoint(x: rect.minX + css.x * rect.width / viewport.width, y: rect.minY + css.y * rect.height / viewport.height)
         return screen.convert(local, to: nil)
@@ -852,6 +986,11 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         wantsLayer = true
         imageLayer.contentsGravity = .resize // 자리를 이미 비율대로 정했으니 그 자리에 꼭 맞게
         imageLayer.magnificationFilter = .linear
+        bezelLayer.backgroundColor = NSColor(srgbRed: 0.08, green: 0.08, blue: 0.09, alpha: 1).cgColor
+        bezelLayer.borderColor = NSColor(srgbRed: 0.42, green: 0.42, blue: 0.45, alpha: 1).cgColor
+        bezelLayer.borderWidth = 1
+        bezelLayer.isHidden = true
+        layer?.addSublayer(bezelLayer)
         layer?.addSublayer(imageLayer)
         setUpCursor()
         setUpAgentMark()
@@ -962,11 +1101,17 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
 
     /// 표시는 페이지 그림 자리(imageRect)를 따라간다
     private func placeAgentMark() {
-        let rect = ViewportTransform(bounds: bounds.size, viewport: imageViewport).imageRect
+        let rect = transform(imageViewport).imageRect
         let area = rect.isEmpty ? bounds : rect
         agentOutline.frame = area
         agentFrame.frame = area.insetBy(dx: 1, dy: 1)
         agentGlow.frame = area
+        // 폰·태블릿 화면이면 테두리·빛도 그 둥근 모서리를 따른다
+        let radius = rect.isEmpty ? 0 : imageLayer.cornerRadius
+        agentOutline.cornerRadius = radius
+        agentFrame.cornerRadius = max(0, radius - 1)
+        agentGlow.cornerRadius = radius
+        agentGlow.masksToBounds = radius > 0
         let w = area.width, h = area.height
         let g = min(TermAppearance.scaled(40), w / 5, h / 5)
         // 이 뷰는 위가 0 — 위 변은 y 0, 그라디언트의 시작점(0)도 위
@@ -1027,7 +1172,7 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
     @discardableResult
     func showCursor(_ cursor: AgentCursor) -> Bool {
         let css = CGPoint(x: cursor.x, y: cursor.y)
-        guard let point = ViewportTransform(bounds: bounds.size, viewport: imageViewport).viewPoint(css) else { return false }
+        guard let point = transform(imageViewport).viewPoint(css) else { return false }
         let appearing = cursorCSS == nil || cursorLayer.opacity == 0
         cursorCSS = css
         let scale = window?.backingScaleFactor ?? 2
@@ -1118,9 +1263,42 @@ final class BrowserScreenView: NSView, NSTextInputClient, NSMenuItemValidation {
         CATransaction.commit()
     }
 
+    /// 칸 안 그림 자리(마우스 좌표 변환·커서·AI 표시가 모두 이것을 쓴다 — 기기 테두리 자리를 빼고)
+    func transform(_ viewport: CGSize) -> ViewportTransform {
+        ViewportTransform(bounds: bounds.size, viewport: viewport, inset: deviceKind != nil ? TermAppearance.scaled(14) : 0)
+    }
+
+    /// 폰·태블릿을 흉내 내는 탭("phone"·"tablet"): 둥근 모서리 기기 테두리 안에 그린다. nil = 보통 창(꽉 채움)
+    var deviceKind: String? {
+        didSet {
+            guard deviceKind != oldValue else { return }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            placeImage()
+            CATransaction.commit()
+        }
+    }
+    /// 기기 테두리(그림 뒤의 검은 둥근 판)
+    private let bezelLayer = CALayer()
+
     private func placeImage() {
-        let transform = ViewportTransform(bounds: bounds.size, viewport: imageViewport)
-        imageLayer.frame = transform.imageRect
+        let transform = transform(imageViewport)
+        let rect = transform.imageRect
+        imageLayer.frame = rect
+        if let kind = deviceKind, rect.width > 0 {
+            let short = min(rect.width, rect.height)
+            let radius = kind == "phone" ? short * 0.11 : short * 0.04
+            let pad = min(TermAppearance.scaled(12), max(5, short * 0.025))
+            imageLayer.cornerRadius = radius
+            imageLayer.masksToBounds = true
+            bezelLayer.frame = rect.insetBy(dx: -pad, dy: -pad)
+            bezelLayer.cornerRadius = radius + pad
+            bezelLayer.isHidden = false
+        } else {
+            imageLayer.cornerRadius = 0
+            imageLayer.masksToBounds = false
+            bezelLayer.isHidden = true
+        }
         // 칸 크기가 바뀌면 커서·AI 표시도 같은 페이지 자리로
         if let css = cursorCSS, let point = transform.viewPoint(css) { cursorLayer.position = point }
         if agentActive { placeAgentMark() }
@@ -1430,6 +1608,12 @@ final class BrowserFeed {
     private var pages: [BrowserTabs.Page] = []
     /// abx 가 마지막으로 적은 탭 정보(이름·작업 공간·누가 열었는지)
     private var abxTabs: [AbxStatus.Tab] = []
+    /// 탭마다 흉내 내는 기기(abx 기기 홀더의 기록 — 탭 목록보다 새것). nil = 기기를 모르는 abx
+    private var devices: [String: AbxStatus.Tab.Device]?
+    private func device(of target: String) -> AbxStatus.Tab.Device? {
+        if let devices { return devices[target] }
+        return abxTabs.first(where: { $0.targetId == target })?.device
+    }
     /// 마지막으로 쓴 watch 파일 내용(같으면 다시 쓰지 않는다 — 상태 폴더를 보고 있어 쓰면 다시 읽게 된다)
     private var lastWatch: String?
     /// 마지막으로 보낸 AI 커서
@@ -1596,9 +1780,16 @@ final class BrowserFeed {
         let wasControlled = control == .agent || control == .switching
         control = status.control
         if control != .user { userTarget = nil }
+        let deviceBefore = stream?.currentTarget.flatMap(device(of:))
         abxTabs = status.tabs
+        devices = status.devices
         // AI 가 쥐고 있는 동안 미뤄 둔 크기 맞추기를 이제 한다
         if wasControlled, control == .user || control == .idle { applySize() }
+        // 보는 탭이 기기에서 보통 창으로 돌아왔다: 그동안 맞추지 않은 창을 칸에 맞춘다
+        else if deviceBefore != nil, let target = stream?.currentTarget, device(of: target) == nil {
+            sizedFor[target] = nil
+            applySize()
+        }
         publish(.live(status))
         if url != connectedURL { connect(url, status: status) }
         else { follow(wanted) }
@@ -1656,7 +1847,7 @@ final class BrowserFeed {
 
     private func publishTabs() {
         let shown = stream?.currentTarget
-        let chips = BrowserTabs.chips(pages: pages, tabs: abxTabs, shown: shown, keep: populatedBlanks)
+        let chips = BrowserTabs.chips(pages: pages, tabs: abxTabs, shown: shown, keep: populatedBlanks, devices: devices)
         let isPinned = pinned != nil
         DispatchQueue.main.async { [weak self] in self?.onTabs?(chips, isPinned) }
         // abx 에 알린다: 사람이 보는 탭과, 사람이 골랐는지
@@ -1841,6 +2032,9 @@ final class BrowserFeed {
         guard !halted else { return }
         guard !fitting else { fitAgain = true; return }
         guard let stream, let size, let target = stream.currentTarget else { return }
+        // 기기(폰·태블릿·창 크기)를 흉내 내는 탭: 페이지 크기는 abx 가 정했고 창 크기와 상관없다. 창을 바꾸면 Chrome 이
+        // 다음 그리기까지 창 크기 그림을 보내므로 맞추지 않는다(데스크톱으로 돌아오면 refresh 가 다시 맞춘다)
+        if device(of: target) != nil { return }
         let first = sizedFor[target] == nil
         guard control == .user || control == .idle || (first && control == .agent) else { return }
         let session = self.session
@@ -1925,6 +2119,37 @@ final class BrowserFeed {
                 let ok = (try? runner.run(["up"] + (headless ? ["--headless"] : []), session: session, timeout: 300))?.status == 0
                 self?.queue.async { self?.refresh() }
                 DispatchQueue.main.async { completion(ok) }
+            }
+        }
+    }
+
+    /// abx 의 기기 목록(못 읽으면 nil)
+    func loadDevices(completion: @escaping (DeviceCatalog?) -> Void) {
+        queue.async { [self] in
+            guard let runner else { DispatchQueue.main.async { completion(nil) }; return }
+            let session = self.session
+            DispatchQueue.global(qos: .utility).async {
+                let catalog = (try? runner.deviceCatalog(session)) ?? nil
+                DispatchQueue.main.async { completion(catalog) }
+            }
+        }
+    }
+
+    /// 사람이 고른 기기로 탭 하나를(`abx device <id> --tab <target> --user` — 탭을 옮기지 않고 그 자리에서 다시 읽는다).
+    /// 끝나면 실패한 까닭(성공이면 nil)
+    func setDevice(_ id: String, landscape: Bool, target: String, completion: @escaping (String?) -> Void) {
+        queue.async { [self] in
+            guard let runner else { DispatchQueue.main.async { completion("abx 를 찾지 못했어요") }; return }
+            let session = self.session
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let args = ["device", id, "--tab", target, "--user"] + (landscape ? ["--landscape"] : [])
+                let result = try? runner.run(args, session: session, timeout: 30)
+                let text = result.flatMap { String(data: $0.output, encoding: .utf8) }?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let error: String? = result == nil ? "시간 안에 끝나지 않았어요"
+                    : result!.status == 0 ? nil : (text.hasPrefix("error: ") ? String(text.dropFirst(7)) : text)
+                self?.queue.async { self?.refresh() }
+                DispatchQueue.main.async { completion(error) }
             }
         }
     }
