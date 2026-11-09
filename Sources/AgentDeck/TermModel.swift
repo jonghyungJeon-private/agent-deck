@@ -236,7 +236,7 @@ final class TermModel: ObservableObject {
     func connectCodexHooks() {
         do {
             _ = try codexHookInstaller.install()
-            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks 에서 AgentDeckDaemon 훅을 검토·신뢰한 뒤 사용하세요(갱신했으면 다시 신뢰)."
+            notice = "Codex 상태 연결을 추가했습니다. Codex의 /hooks에서 AgentDeckDaemon hook을 검토·신뢰한 뒤 사용하세요(갱신했으면 다시 신뢰하세요)."
         } catch { notice = "Codex 연결 실패: \(error.localizedDescription)" }
         checkHooks()
     }
@@ -255,17 +255,17 @@ final class TermModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "\(label) 연결을 해제할까요?"
         alert.informativeText = """
-            \(file) 에서 이 앱이 넣은 hook(AgentDeckDaemon, 예전 이름 포함 \(installer.eventNames.count)개 이벤트)만 뺍니다. \
+            \(file)에서 이 앱이 넣은 hook(AgentDeckDaemon, 예전 이름 포함 \(installer.eventNames.count)개 이벤트)만 뺍니다. \
             다른 hook·설정은 그대로이고, 바꾸기 전에 백업을 남깁니다.
 
-            \(effect) 이미 열린 세션은 계속 돌고, 언제든 다시 연결할 수 있습니다.
+            \(effect) 이미 열린 세션은 계속 실행되고, 언제든 다시 연결할 수 있습니다.
             """
         alert.addButton(withTitle: "연결 해제")
         alert.addButton(withTitle: "취소")
         guard AppAlert.run(alert) == .alertFirstButtonReturn else { return }
         do {
             let result = try installer.uninstall()
-            notice = result.removed == 0 ? "\(label): 뺄 hook 이 없습니다."
+            notice = result.removed == 0 ? "\(label): 뺄 hook이 없습니다."
                 : "\(label) 연결을 해제했습니다(hook \(result.removed)개)."
                     + (result.backup.map { "\n이전 설정 백업: \(($0.path as NSString).abbreviatingWithTildeInPath)" } ?? "")
         } catch {
@@ -335,7 +335,7 @@ final class TermModel: ObservableObject {
                 self?.browserSkillState = state
                 self?.browserSkillRemovable = removable
                 if !updated.isEmpty {
-                    self?.notice = "abx 스킬을 지금 abx 판으로 바꿨습니다(\(updated.joined(separator: "·"))). 새로 시작하는 claude·codex 세션부터 적용됩니다."
+                    self?.notice = "abx 스킬을 지금 abx 버전으로 바꿨습니다(\(updated.joined(separator: "·"))). 새로 시작하는 claude·codex 세션부터 적용됩니다."
                 }
                 // 받는 중·실패 표시는 받기가 끝날 때 바꾼다
                 if let self, ![.unknown, .ready, .missing].contains(self.browserChrome) { return }
@@ -352,7 +352,7 @@ final class TermModel: ObservableObject {
             var message: String?
             do {
                 guard let runner = AbxRunner.locate(bundleHelpers: helpers), let content = try runner.skill() else {
-                    throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "abx 를 찾지 못했습니다"])
+                    throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "abx를 찾지 못했습니다"])
                 }
                 var done: [String] = []
                 for (label, installer) in Self.skillInstallers()
@@ -361,11 +361,11 @@ final class TermModel: ObservableObject {
                     done.append("\(label) (\((installer.skillDir.path as NSString).abbreviatingWithTildeInPath))")
                 }
                 if !done.isEmpty {
-                    message = "브라우저 스킬을 넣었습니다: " + done.joined(separator: ", ")
-                        + ". 새로 시작하는 claude·codex 세션부터 abx 로 브라우저를 씁니다."
+                    message = "브라우저 스킬을 연결했습니다: " + done.joined(separator: ", ")
+                        + ". 새로 시작하는 claude·codex 세션부터 abx로 브라우저를 씁니다."
                 }
             } catch {
-                message = "브라우저 스킬을 넣지 못했습니다: \(error.localizedDescription)"
+                message = "브라우저 스킬을 연결하지 못했습니다: \(error.localizedDescription)"
             }
             DispatchQueue.main.async {
                 if let message { self?.notice = message }
@@ -423,7 +423,7 @@ final class TermModel: ObservableObject {
             이 앱이 넣은 abx 스킬 폴더를 지웁니다:
             \(paths.joined(separator: "\n"))
 
-            새로 시작하는 claude·codex 세션은 abx 를 모르게 됩니다. 직접 둔 스킬은 그대로이고, 언제든 다시 연결할 수 있습니다.
+            새로 시작하는 claude·codex 세션은 abx를 모르게 됩니다. 직접 둔 스킬은 그대로이고, 언제든 다시 연결할 수 있습니다.
             """
         alert.addButton(withTitle: "연결 해제")
         alert.addButton(withTitle: "취소")
@@ -447,7 +447,7 @@ final class TermModel: ObservableObject {
     func connectHooks() {
         do {
             let backup = try hookInstaller.install()
-            notice = "Claude Code 에 연결했습니다. 새로 시작하는 claude 세션부터 적용됩니다."
+            notice = "Claude Code에 연결했습니다. 새로 시작하는 claude 세션부터 적용됩니다."
                 + (backup.map { "\n이전 설정 백업: \(($0.path as NSString).abbreviatingWithTildeInPath)" } ?? "")
         } catch {
             notice = "연결하지 못했습니다: \(error.localizedDescription)"
@@ -589,10 +589,10 @@ final class TermModel: ObservableObject {
         alert.messageText = "지금 새 위치로 옮길까요?"
         alert.informativeText = """
             예전 데몬을 끄고 데이터(세션 기록·탭 배치·이름·spaces·설정)를 \
-            ~/Library/Application Support/\(DataLocation.folderName) 으로 옮깁니다.
+            ~/Library/Application Support/\(DataLocation.folderName)으로 옮깁니다.
 
-            지금 화면에서 돌고 있는 셸·claude·codex 가 모두 멈춥니다(셸에서 돌던 작업도 끝납니다). \
-            화면은 "꺼짐"으로 남고, 탭을 열면 claude·codex 는 같은 대화로 되살아납니다(--resume).
+            지금 실행 중인 셸·claude·codex가 모두 멈춥니다(셸에서 실행 중이던 작업도 끝납니다). \
+            세션은 "꺼짐"으로 남고, 탭을 열면 claude·codex는 같은 대화로 되살아납니다(--resume).
 
             옮기지 않아도 앱을 다시 켤 때 예전 데몬이 끝나 있으면(재부팅 등) 자동으로 옮깁니다.
             """
@@ -867,10 +867,10 @@ final class TermModel: ObservableObject {
             if next.recipes[id] != nil {
                 next.dormant.insert(id)
                 reviveFailedAt[id] = Date()
-                lastError = "화면을 되살리지 못했습니다. 잠시 뒤 탭을 다시 열면 다시 시도합니다."
+                lastError = "세션을 되살리지 못했습니다. 잠시 뒤 탭을 다시 열면 다시 시도합니다."
             } else {
                 next.forget(pane: id)
-                lastError = "새 화면을 만들지 못했습니다."
+                lastError = "새 세션을 만들지 못했습니다."
             }
         }
         var changed = next.reconcile(live: live, keep: Set(awaiting.keys), ignore: closing,
@@ -1273,7 +1273,7 @@ final class TermModel: ObservableObject {
             browserNotified[id] = message
             // 그 브라우저 창을 보고 있으면 알리지 않는다
             if browserPrimed, !browserWindows.isWatching(id) {
-                notifier.post(title: "브라우저 · \(row(id)?.title ?? "")", body: message.isEmpty ? "에이전트가 브라우저 조작을 넘겼어요" : message,
+                notifier.post(title: "브라우저 · \(row(id)?.title ?? "")", body: message.isEmpty ? "에이전트가 브라우저 조작을 넘겼습니다" : message,
                               paneId: "browser:" + id, key: message)
             }
         }
@@ -1477,10 +1477,10 @@ final class TermModel: ObservableObject {
         let row = row(id)
         if confirm, let row, !row.isShell, !row.dormant {
             let alert = NSAlert()
-            alert.messageText = "\(row.title) 화면을 닫을까요?"
+            alert.messageText = "\(row.title) 세션을 닫을까요?"
             alert.informativeText = row.isClaude
-                ? "이 화면의 claude 가 종료됩니다. 대화는 나중에 이어 열 수 있습니다."
-                : "이 화면에서 \(row.pane.foreground ?? "프로그램")이(가) 실행 중입니다. 닫으면 종료됩니다."
+                ? "이 세션의 claude가 종료됩니다. 대화는 나중에 이어 열 수 있습니다."
+                : row.pane.foreground.map { "이 세션에서 실행 중인 프로그램: \($0). 닫으면 종료됩니다." } ?? "이 세션에서 프로그램이 실행 중입니다. 닫으면 종료됩니다."
             alert.addButton(withTitle: "닫기")
             alert.addButton(withTitle: "취소")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -1506,7 +1506,7 @@ final class TermModel: ObservableObject {
         let busy = rows.filter { !$0.isShell }
         if !busy.isEmpty {
             let alert = NSAlert()
-            alert.messageText = "탭을 닫을까요? 화면 \(tab.root.panes.count)개가 종료됩니다."
+            alert.messageText = "탭을 닫을까요? 세션 \(tab.root.panes.count)개가 종료됩니다."
             alert.informativeText = "실행 중: " + busy.map(\.title).joined(separator: ", ")
             alert.addButton(withTitle: "닫기")
             alert.addButton(withTitle: "취소")

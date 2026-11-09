@@ -73,7 +73,7 @@ public final class BrowserInstaller: @unchecked Sendable {
             case .download(let detail): return "받지 못했습니다: \(detail)"
             case .checksum: return "받은 파일이 예상과 다릅니다(해시 불일치) — 다시 시도하세요"
             case .unpack(let detail): return "풀지 못했습니다: \(detail)"
-            case .launch(let detail): return "받은 브라우저가 뜨지 않습니다: \(detail)"
+            case .launch(let detail): return "받은 브라우저가 시작되지 않습니다: \(detail)"
             }
         }
     }
@@ -205,7 +205,7 @@ public final class BrowserInstaller: @unchecked Sendable {
             guard process.isRunning else { throw InstallError.launch("종료 코드 \(process.terminationStatus)") }
             usleep(100_000)
         }
-        throw InstallError.launch("\(Int(timeout))초 안에 뜨지 않았습니다")
+        throw InstallError.launch("\(Int(timeout))초 안에 시작되지 않았습니다")
     }
 
     private func run(_ tool: String, _ arguments: [String], error: (String) -> InstallError) throws {

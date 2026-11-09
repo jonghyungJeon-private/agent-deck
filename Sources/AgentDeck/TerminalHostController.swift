@@ -232,7 +232,7 @@ final class TerminalHostController: NSViewController {
         onTabBarHeightChanged?()
         updateTabBar()
         placeholder.isHidden = tab != nil
-        placeholderLabel.stringValue = model.connectionStatusText ?? "왼쪽 위 버튼이나 ⌘T 로 새 화면을 여세요"
+        placeholderLabel.stringValue = model.connectionStatusText ?? "왼쪽 위 버튼이나 ⌘T로 새 세션을 여세요"
         focusTerminal()
     }
 

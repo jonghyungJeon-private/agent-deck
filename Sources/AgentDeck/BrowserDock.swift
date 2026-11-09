@@ -112,13 +112,13 @@ final class BrowserDockController: NSViewController, ToolContent {
         if let owner {
             let name = titleFor?(owner).map { "“\($0)” " } ?? ""
             let open = windowOpen?(owner) == true
-            message.stringValue = open ? "\(name)세션의 브라우저는 별도 창에서 보는 중이에요"
-                                       : "\(name)세션의 브라우저는 별도 창으로 보도록 되어 있어요"
+            message.stringValue = open ? "\(name)세션의 브라우저는 별도 창에서 보는 중입니다"
+                                       : "\(name)세션의 브라우저는 별도 창으로 보도록 되어 있습니다"
             windowButton.title = open ? "창 앞으로" : "창 열기"
             hereButton.isHidden = false
             windowButton.isHidden = false
         } else {
-            message.stringValue = "세션을 고르면 그 세션의 브라우저가 여기에 보여요"
+            message.stringValue = "세션을 고르면 그 세션의 브라우저가 여기에 보입니다"
             hereButton.isHidden = true
             windowButton.isHidden = true
         }

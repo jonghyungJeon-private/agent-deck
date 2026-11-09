@@ -34,7 +34,7 @@ public struct SkillInstaller {
 
         public var errorDescription: String? {
             switch self {
-            case .userManaged(let path): return "\(path) 는 직접 둔 스킬이라 고치지 않습니다"
+            case .userManaged(let path): return "직접 둔 스킬이라 고치지 않습니다: \(path)"
             }
         }
     }
@@ -71,7 +71,7 @@ public struct SkillInstaller {
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) } // 놓았으면 이미 없다
         try Data(content.utf8).write(to: staging.appendingPathComponent("SKILL.md"))
-        try Data("AgentDeck 이 넣은 스킬입니다. 앱 메뉴의 \"브라우저 스킬 연결 해제\"로 뺄 수 있습니다.\n".utf8)
+        try Data("AgentDeck이 넣은 스킬입니다. 앱 메뉴의 \"브라우저 스킬 연결 해제\"로 뺄 수 있습니다.\n".utf8)
             .write(to: staging.appendingPathComponent(Self.marker))
         var old: URL?
         if current == .outdated {

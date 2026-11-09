@@ -222,7 +222,7 @@ final class CodeNavigator {
     private func resolve(_ name: String, _ candidates: [NavigationCandidate], from path: String, imports: [ImportHint],
                          qualified: Bool, receiverType: String?, editor: EditorPaneView, root: String?, generation: Int) {
         guard !candidates.isEmpty else {
-            hint(editor, "‘\(name)’ 의 선언을 찾지 못했습니다")
+            hint(editor, "‘\(name)’의 선언을 찾지 못했습니다")
             return
         }
         let ranked = CandidateRanker.rank(candidates, from: path, name: name, imports: imports, receiverType: receiverType)
@@ -292,7 +292,7 @@ final class CodeNavigator {
                     }
                     let usageCount = hits.filter { !isDeclaration($0) }.count
                     if usageCount == 0 {
-                        self.hint(editor, "‘\(name)’ 의 사용 위치가 없습니다")
+                        self.hint(editor, "‘\(name)’의 사용 위치가 없습니다")
                         return
                     }
                     let rows = hits.map { hit -> NavigatorRow in
@@ -320,7 +320,7 @@ final class CodeNavigator {
         _ = newRequest()
         guard let index = focusedProject() else {
             let popup = NavigatorPopupView(title: "심볼로 이동", searchable: true)
-            present(popup, rows: [], targets: [], anchor: nil, empty: "프로젝트 폴더(git 저장소)의 화면에서 쓸 수 있습니다")
+            present(popup, rows: [], targets: [], anchor: nil, empty: "프로젝트 폴더(git 저장소)의 세션에서 쓸 수 있습니다")
             return
         }
         let popup = NavigatorPopupView(title: "심볼로 이동 · \(index.name)", searchable: true,
@@ -377,7 +377,7 @@ final class CodeNavigator {
             }
             popup.setStatus(results.isEmpty ? "없음" : "\(results.count)\(results.count >= 200 ? "+" : "")개")
             self.setRows(popup, rows, targets: results.map { Target(path: index.absolute($0.hit.path), line: $0.hit.line, column: nil, name: $0.hit.name) },
-                         empty: "‘\(query)’ 와 맞는 선언이 없습니다")
+                         empty: "‘\(query)’에 맞는 선언이 없습니다")
         }
     }
 

@@ -442,7 +442,7 @@ private struct ScreenSection: View {
         } header: {
             SectionTitle(title: "모양")
         } footer: {
-            SectionNote("자동은 macOS 의 라이트·다크를 따라갑니다. 터미널·편집기·도구 창·설정 창에 모두 바로 적용됩니다.")
+            SectionNote("자동은 macOS의 라이트·다크를 따라갑니다. 터미널·편집기·도구 창·설정 창에 모두 바로 적용됩니다.")
         }
         Section {
             SettingRow(title: "작은 창 버튼 위치") {
@@ -489,36 +489,36 @@ private struct ConnectionsSection: View {
         }
         if part == .agents {
             Section {
-                hookRow(title: "Claude Code", detail: "세션 이름·되살리기·작업 상태·알림 (~/.claude/settings.json 의 hook)",
+                hookRow(title: "Claude Code", detail: "세션 이름·되살리기·작업 상태·알림 (~/.claude/settings.json의 hook)",
                         state: model.hookState, connect: model.connectHooks, disconnect: model.disconnectHooks)
-                hookRow(title: "Codex", detail: "권한 요청·완료 알림 (~/.codex/hooks.json — 연결 후 Codex /hooks 에서 신뢰)",
+                hookRow(title: "Codex", detail: "권한 요청·완료 알림 (~/.codex/hooks.json — 연결 후 Codex /hooks에서 신뢰)",
                         state: model.codexHookState, connect: model.connectCodexHooks, disconnect: model.disconnectCodexHooks)
             } header: {
                 SectionTitle(title: "에이전트")
             } footer: {
-                SectionNote("Claude Code·Codex 를 이 앱에 잇습니다. 바꾼 것은 새로 시작하는 세션부터 적용됩니다.")
+                SectionNote("Claude Code·Codex를 이 앱에 연결합니다. 바꾼 내용은 새로 시작하는 세션부터 적용됩니다.")
             }
         }
         if part == .browser {
             Section {
                 if !model.daemonHasBrowser {
-                    WarningLine(text: "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜세요.", tone: .warn)
+                    WarningLine(text: "세션 데몬이 예전 버전이라 세션에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜세요.", tone: .warn)
                 }
                 skillRow
                 chromeRow
             } header: {
                 SectionTitle(title: "브라우저")
             } footer: {
-                SectionNote("에이전트가 abx 로 쓰는 전용 브라우저입니다. 스킬·설치는 새로 시작하는 세션부터, 화면 설정은 열린 화면에도 바로 적용됩니다.")
+                SectionNote("에이전트가 abx로 쓰는 전용 브라우저입니다. 스킬·설치는 새로 시작하는 세션부터, 화면 설정은 열린 세션에도 바로 적용됩니다.")
             }
             Section {
-                SettingRow(title: "에이전트가 브라우저를 쓰면 작은 창 자동으로 열기",
-                           detail: "에이전트가 abx 를 쓰기 시작하면 그 세션의 작은 브라우저 창을 열고, 결과를 남기지 않고 끝내면 닫습니다.",
+                SettingRow(title: "에이전트가 브라우저를 쓰면 작은 창 자동 열기",
+                           detail: "에이전트가 abx를 쓰기 시작하면 그 세션의 작은 브라우저 창을 열고, 결과를 남기지 않고 끝내면 닫습니다.",
                            help: "키보드를 가져가지 않고 엽니다. 내가 열었거나 눌러 본 창은 닫지 않고, 작은 창으로 보는 세션에만 적용됩니다.") {
-                    SettingSwitch(title: "에이전트가 브라우저를 쓰면 작은 창 자동으로 열기", isOn: $autoOpen.enabled)
+                    SettingSwitch(title: "에이전트가 브라우저를 쓰면 작은 창 자동 열기", isOn: $autoOpen.enabled)
                 }
-                SettingRow(title: "선명도", detail: "화면 칸에 받아 보이는 최대 크기입니다. 열린 화면에도 바로 적용됩니다.",
-                           help: "브라우저는 화면 배율(레티나 2배)로 그리고, 화면 칸에는 이 크기까지 받아 보입니다.") {
+                SettingRow(title: "선명도", detail: "칸에 받아 보이는 최대 크기입니다. 열린 세션에도 바로 적용됩니다.",
+                           help: "브라우저는 화면 배율(레티나 2배)로 그리고, 칸에는 이 크기까지 받아 보입니다.") {
                     SettingPicker("선명도", selection: $view.options.sharpness, [(.standard, "표준 · 1440까지(가벼움)"),
                                                                                  (.sharp, "선명 · 2560까지"),
                                                                                  (.max, "최고 · 3840까지(무거움)")])
@@ -533,8 +533,8 @@ private struct ConnectionsSection: View {
                     SettingSwitch(title: "데스크톱 화면 유지", isOn: $view.options.keepDesktop)
                         .disabled(view.options.resolution != .fit)
                 }
-                SettingRow(title: "쓰지 않으면 쉬게 하기", detail: "AI 가 이만큼 abx 를 쓰지 않고 화면에도 보이지 않으면 브라우저를 꺼서 메모리를 돌려줍니다.",
-                           help: "탭은 남겨 두었다가 AI 가 다시 쓰거나 \"다시 켜기\"를 누르면 그대로 열립니다(로그인 유지).") {
+                SettingRow(title: "쓰지 않으면 쉬게 하기", detail: "에이전트가 이만큼 abx를 쓰지 않고 화면에도 보이지 않으면 브라우저를 꺼서 메모리를 돌려줍니다.",
+                           help: "탭은 남겨 두었다가 에이전트가 다시 쓰거나 \"다시 켜기\"를 누르면 그대로 열립니다(로그인 유지).") {
                     SettingPicker("쓰지 않으면 쉬게 하기", selection: $view.options.idleRest, [(.m15, "15분"), (.m30, "30분"), (.h1, "1시간"),
                                                                                               (.h2, "2시간"), (.never, "끄지 않음")])
                 }
@@ -543,7 +543,7 @@ private struct ConnectionsSection: View {
             }
             Section {
                 SettingRow(title: "Chrome 로그인 가져오기",
-                           detail: "Chrome 에서 고른 사이트의 로그인(쿠키)을 에이전트 브라우저로 — 비밀번호는 가져오지 않습니다",
+                           detail: "Chrome에서 고른 사이트의 로그인(쿠키)을 에이전트 전용 브라우저로 가져옵니다. 비밀번호는 가져오지 않습니다",
                            status: templateStatus) {
                     Button("가져오기…", action: openChromeImport)
                 }
@@ -566,7 +566,7 @@ private struct ConnectionsSection: View {
         }()
         return SettingRow(title: title, detail: detail, status: status) {
             switch state {
-            case .ok: Button("연결 해제", action: disconnect)
+            case .ok: Button("연결 해제…", action: disconnect)
             case .update: Button("갱신하기", action: connect)
             case .missing: Button("연결하기", action: connect)
             default: EmptyView()
@@ -578,18 +578,18 @@ private struct ConnectionsSection: View {
         let state = model.browserSkillState
         let status: SettingStatus = {
             switch state {
-            case .unknown: return SettingStatus(text: "abx 를 찾지 못함", tone: .neutral)
-            case .ok: return SettingStatus(text: "Claude Code·Codex 에 있음", tone: .ok)
-            case .missing(let targets): return SettingStatus(text: "\(targets.joined(separator: "·")) 에 없음", tone: .warn)
-            case .updateFailed(let detail): return SettingStatus(text: "새 판으로 바꾸지 못함: \(detail)", tone: .bad)
+            case .unknown: return SettingStatus(text: "abx를 찾지 못함", tone: .neutral)
+            case .ok: return SettingStatus(text: "Claude Code·Codex에 있음", tone: .ok)
+            case .missing(let targets): return SettingStatus(text: "\(targets.joined(separator: "·"))에 없음", tone: .warn)
+            case .updateFailed(let detail): return SettingStatus(text: "새 버전으로 바꾸지 못함: \(detail)", tone: .bad)
             }
         }()
-        return SettingRow(title: "abx 스킬", detail: "에이전트가 abx 로 브라우저를 쓰는 법 (~/.claude/skills/abx · ~/.agents/skills/abx)",
+        return SettingRow(title: "abx 스킬", detail: "에이전트가 abx로 브라우저를 쓰는 법 (~/.claude/skills/abx · ~/.agents/skills/abx)",
                           status: status) {
             switch state {
-            case .missing: Button("넣기") { model.connectBrowserSkill(chrome: false) }
+            case .missing: Button("연결하기") { model.connectBrowserSkill(chrome: false) }
             case .updateFailed: Button("다시 시도") { model.checkBrowserSkill() }
-            case .ok where model.browserSkillRemovable: Button("연결 해제") { model.disconnectBrowserSkill() }
+            case .ok where model.browserSkillRemovable: Button("연결 해제…") { model.disconnectBrowserSkill() }
             default: EmptyView()
             }
         }
@@ -602,12 +602,12 @@ private struct ConnectionsSection: View {
             switch state {
             case .unknown: return SettingStatus(text: "확인 중", tone: .neutral)
             case .ready: return SettingStatus(text: "받음 (\(version))", tone: .ok)
-            case .missing: return SettingStatus(text: "없음 — 그동안 설치된 Chrome 을 씁니다", tone: .warn)
+            case .missing: return SettingStatus(text: "없음 — 그동안은 설치된 Chrome을 씁니다", tone: .warn)
             case .installing(let percent): return SettingStatus(text: "받는 중… \(percent)%", tone: .neutral)
             case .failed(let detail): return SettingStatus(text: "받지 못함: \(detail)", tone: .bad)
             }
         }()
-        return SettingRow(title: "전용 브라우저", detail: "Chrome for Testing (약 190MB, ~/.abx/browsers) — 평소 쓰는 Chrome 과 따로 돕니다",
+        return SettingRow(title: "전용 브라우저", detail: "Chrome for Testing (약 190MB, ~/.abx/browsers) — 평소 쓰는 Chrome과 따로 실행됩니다",
                           status: status) {
             switch state {
             case .missing: Button("받기") { model.installBrowserChrome() }
@@ -648,7 +648,7 @@ private struct ClaudeCard: View {
                     .disabled(launch.skipPermissions)
             }
             if !launch.skipPermissions, launch.permissionMode == "bypassPermissions" {
-                WarningLine(text: "bypassPermissions 는 모든 권한 확인을 건너뜁니다(권한 확인 건너뛰기와 같음).")
+                WarningLine(text: "bypassPermissions는 모든 권한 확인을 건너뜁니다(권한 확인 건너뛰기와 같음).")
             }
             OptionRow(title: "모델", flag: "--model") {
                 ModelField(title: "모델", value: $launch.model, suggestions: ClaudeLaunch.modelSuggestions, placeholder: "기본")
@@ -691,7 +691,7 @@ private struct CodexCard: View {
                     .disabled(launch.bypassApprovalsAndSandbox)
             }
             if !launch.bypassApprovalsAndSandbox, launch.sandbox == "danger-full-access" {
-                WarningLine(text: "danger-full-access 는 샌드박스 없이 디스크·네트워크 전체에 접근합니다.")
+                WarningLine(text: "danger-full-access는 샌드박스 없이 디스크·네트워크 전체에 접근합니다.")
             }
             OptionRow(title: "모델", flag: "--model") {
                 ModelField(title: "모델", value: $launch.model, suggestions: [], placeholder: "기본 (config.toml)")

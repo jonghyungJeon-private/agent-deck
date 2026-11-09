@@ -114,14 +114,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "tool-toggle":
             guard parts.count == 2, let tool = ToolID(rawValue: parts[1]), let layout = toolWindows?.layout else { return }
             if tool == .browser {
-                menuItem.title = layout.isBrowserShown ? "브라우저 숨기기" : "브라우저 보기"
+                menuItem.title = layout.isBrowserShown ? "브라우저 숨기기" : "브라우저 보이기"
             } else {
                 menuItem.title = "\(parts[1]) " + (layout.isVisible(tool) ? "숨기기" : "보이기")
             }
         case "scratch-toggle":
             menuItem.title = toolWindows?.layout.terminalFloat.shown == true ? "작은 터미널 숨기기" : "작은 터미널 보이기"
         case "zoom":
-            menuItem.title = model.workspace.selectedTab?.zoomed == true ? "화면 되돌리기" : "화면 크게 보기"
+            menuItem.title = model.workspace.selectedTab?.zoomed == true ? "세션 크기 되돌리기" : "세션 크게 보기"
         case "tool-move":
             guard parts.count == 3, let tool = ToolID(rawValue: parts[1]), let side = DockSide(rawValue: parts[2]),
                   let layout = toolWindows?.layout else { return }
@@ -225,7 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         appMenu.addItem(.separator())
         let quit = appMenu.addItem(withTitle: "AgentDeck 종료", action: #selector(NSApplication.terminate(_:)),
                                    keyEquivalent: "q")
-        quit.toolTip = "앱을 꺼도 세션은 계속 돕니다"
+        quit.toolTip = "앱을 꺼도 세션은 계속 실행됩니다"
         appItem.submenu = appMenu
 
         // 파일(편집기): 저장 ⌘S — 편집기 화면일 때만 켜진다
@@ -264,16 +264,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(shell, "새 탭", "new-tab", "t")
         addAction(shell, "오른쪽으로 나누기", "split-right", "d")
         addAction(shell, "아래로 나누기", "split-down", "d", [.command, .shift])
-        addAction(shell, "브라우저 보기", "browser", "b", [.command, .shift])
+        addAction(shell, "브라우저 보이기", "browser", "b", [.command, .shift])
         addAction(shell, "Chrome 로그인 가져오기…", "chrome-import", "")
         shell.addItem(.separator())
-        addAction(shell, "화면 닫기", "close", "w")
+        addAction(shell, "세션 닫기", "close", "w")
         addAction(shell, "탭 닫기", "close-tab", "w", [.command, .option])
         shell.addItem(.separator())
         addAction(shell, "화면 지우기", "clear-screen", "k")
         shell.addItem(.separator())
         addAction(shell, "이름 바꾸기…", "rename", "")
-        addAction(shell, "화면을 새 탭으로 꺼내기", "extract-pane", "")
+        addAction(shell, "세션을 새 탭으로 꺼내기", "extract-pane", "")
         addSubmenu(main, shell)
 
         // 이동(IntelliJ 식). ⌘[ ⌘] 는 편집기 화면에서만 뒤로·앞으로(터미널에선 이전·다음 화면)
@@ -293,17 +293,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         // Markdown 파일: 편집 ↔ 미리보기(Markdown 편집기 화면일 때만 켜진다)
         addAction(view, "Markdown 미리보기", "markdown-preview", "v", [.command, .shift])
         view.addItem(.separator())
-        addAction(view, "이전 화면", "previous-split", "[")
-        addAction(view, "다음 화면", "next-split", "]")
+        addAction(view, "이전 세션", "previous-split", "[")
+        addAction(view, "다음 세션", "next-split", "]")
         for (direction, key, name) in arrows {
-            addAction(view, "\(name) 화면으로", "focus:\(direction.rawValue)", key, [.command, .option])
+            addAction(view, "\(name) 세션으로", "focus:\(direction.rawValue)", key, [.command, .option])
         }
         view.addItem(.separator())
         addAction(view, "글자 크게", "font:bigger", "+")
         addAction(view, "글자 작게", "font:smaller", "-")
         addAction(view, "기본 크기", "font:reset", "0")
         view.addItem(.separator())
-        addAction(view, "화면 크게 보기", "zoom", "\r", [.command, .shift])
+        addAction(view, "세션 크게 보기", "zoom", "\r", [.command, .shift])
         addAction(view, "분할 크기 같게", "equalize", "=", [.command, .control])
         for (direction, key, name) in arrows {
             // 조사: 왼쪽·오른쪽 → "으로", 위·아래 → "로"
@@ -324,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         view.addItem(.separator())
         addAction(view, "files 보이기", "tool-toggle:files", "e", [.command, .shift])
         addAction(view, "spaces 보이기", "tool-toggle:spaces", "s", [.command, .shift])
-        addAction(view, "브라우저 보기", "tool-toggle:browser", "")
+        addAction(view, "브라우저 보이기", "tool-toggle:browser", "")
         addAction(view, "작은 터미널 보이기", "scratch-toggle", "`", [.control])
         // 도구가 놓일 자리: 지금 자리에 ✓. 브라우저는 옆 도크가 없어 따로 두지 않는다(위 항목이 작은 창 켜기·끄기)
         for tool in ["files", "spaces"] {

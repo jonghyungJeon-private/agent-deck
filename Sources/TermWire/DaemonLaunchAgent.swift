@@ -167,7 +167,7 @@ public enum DaemonLaunchAgent {
         do {
             try writePrivate(plistData(full), to: plistURL)
         } catch {
-            return .failed("plist 를 쓰지 못함: \(error)")
+            return .failed("plist를 쓰지 못함: \(error)")
         }
         // 올린 뒤(또는 실패해도) 환경은 파일에 남기지 않는다. 남는 파일은 이름·경로 기록(삭제 스크립트가 Label 을 읽는다).
         defer { try? writePrivate(plistData(bare), to: plistURL) }

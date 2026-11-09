@@ -402,7 +402,7 @@ enum MarkdownPage {
     }()
 
     static let missingConverter = "<p class=\"notice\">Markdown 변환기(Resources/Markdown/marked.umd.js)를 찾지 못했습니다. "
-        + "scripts/build-term-proto.sh 로 만든 앱에서 열어 주세요.</p>"
+        + "scripts/build-term-proto.sh로 만든 앱에서 열어 주세요.</p>"
 
     static func document(body: String) -> String {
         "<!doctype html><html lang=\"ko\"><head><meta charset=\"utf-8\">"

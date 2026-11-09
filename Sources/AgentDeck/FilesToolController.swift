@@ -94,7 +94,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     var onOpenFiles: (([String]) -> Void)?
     /// ⌘두 번 클릭·"새 탭으로 열기"
     var onOpenFileInTab: ((String) -> Void)?
-    /// 오른쪽 클릭 "오른쪽에 분할로 열기"(horizontal)·"아래로 분할로 열기"(vertical)
+    /// 오른쪽 클릭 "오른쪽에 분할로 열기"(horizontal)·"아래에 분할로 열기"(vertical)
     var onOpenFileSplit: ((String, SplitAxis) -> Void)?
     /// 머리 줄 오른쪽 클릭 메뉴(옮기기·숨기기, 도구 창 관리자가 채운다)
     var dockMenu: (() -> NSMenu)?
@@ -328,7 +328,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         outline.reloadData()
         guard let target else {
             header.update(name: nil, branch: nil, changes: 0, isGit: false)
-            showEmpty("열린 화면이 없습니다.\n화면을 고르면 그 프로젝트 파일이 보입니다.")
+            showEmpty("열린 세션이 없습니다.\n세션을 고르면 그 프로젝트의 파일이 보입니다.")
             return
         }
         header.update(name: (target.path as NSString).lastPathComponent, branch: nil, changes: 0, isGit: target.isGit)
@@ -710,11 +710,11 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
             if let inTab = onOpenFileInTab { add(menu, "새 탭으로 열기") { inTab(node.path) } }
             if let split = onOpenFileSplit {
                 add(menu, "오른쪽에 분할로 열기") { split(node.path, .horizontal) }
-                add(menu, "아래로 분할로 열기") { split(node.path, .vertical) }
+                add(menu, "아래에 분할로 열기") { split(node.path, .vertical) }
             }
             menu.addItem(.separator())
         }
-        add(menu, "Finder 에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)]) }
+        add(menu, "Finder에서 보기") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: node.path)]) }
         add(menu, "경로 복사") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(node.path, forType: .string)

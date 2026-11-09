@@ -1175,7 +1175,7 @@ final class EditorBannerView: NSView {
         isHidden = conflict == nil
         switch conflict {
         case .changed?:
-            label.stringValue = "디스크에서 바뀌었습니다 (내 편집은 아직 저장 안 됨)"
+            label.stringValue = "디스크에서 바뀌었습니다 (내 편집은 아직 저장되지 않았습니다)"
             reload.isHidden = false
             overwrite.title = "내 것으로 덮어쓰기"
         case .deleted?:
@@ -1227,7 +1227,7 @@ final class EditorNoticeView: NSView {
         self.detailLabel = detailLabel
         detailLabel.textColor = TermAppearance.textSecondary
         detailLabel.alignment = .center
-        let reveal = NSButton(title: "Finder 에서 보기", target: self, action: #selector(revealInFinder))
+        let reveal = NSButton(title: "Finder에서 보기", target: self, action: #selector(revealInFinder))
         reveal.bezelStyle = .rounded
         let stack = NSStackView(views: [icon, titleLabel, detailLabel, reveal])
         stack.orientation = .vertical

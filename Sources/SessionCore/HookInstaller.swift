@@ -38,7 +38,7 @@ public struct HookInstaller {
 
         public var errorDescription: String? {
             switch self {
-            case .invalidSettings(let detail): return "settings.json 을 읽을 수 없습니다: \(detail)"
+            case .invalidSettings(let detail): return "settings.json을 읽을 수 없습니다: \(detail)"
             }
         }
     }

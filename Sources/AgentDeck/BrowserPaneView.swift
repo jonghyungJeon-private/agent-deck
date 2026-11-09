@@ -389,13 +389,13 @@ final class BrowserPaneView: NSView {
             show(.waiting(""))
             let minutes = max(1, Int((Date().timeIntervalSince1970 * 1000 - rest.at) / 60_000))
             let ago = minutes < 60 ? "\(minutes)분" : "\(minutes / 60)시간"
-            let tabs = rest.tabs > 0 ? " · 탭 \(rest.tabs)개는 켜면 그대로 열려요" : ""
-            placeholder.attributedStringValue = Self.placeholderText("브라우저를 쉬게 했어요",
-                detail: "쓰지 않아 \(ago) 전에 껐어요(메모리 절약)\(tabs)\nAI 가 abx 를 쓰면 저절로 켜져요")
+            let tabs = rest.tabs > 0 ? " · 탭 \(rest.tabs)개는 켜면 그대로 열립니다" : ""
+            placeholder.attributedStringValue = Self.placeholderText("브라우저를 쉬게 했습니다",
+                detail: "쓰지 않아 \(ago) 전에 껐습니다(메모리 절약)\(tabs)\n에이전트가 abx를 쓰면 저절로 켜집니다")
             restingHeadless = headless
             deviceButton.isHidden = true
             wakeButton.isHidden = false
-            if !waking { wakeButton.title = wakeFailed ? "켜지 못했어요 · 다시 시도" : "다시 켜기"; wakeButton.isEnabled = true }
+            if !waking { wakeButton.title = wakeFailed ? "켜지 못함 · 다시 시도" : "다시 켜기"; wakeButton.isEnabled = true }
         case .waiting(let text):
             setPill(nil)
             shownDevice = nil
@@ -428,7 +428,7 @@ final class BrowserPaneView: NSView {
                     screen.show(nil, viewport: viewport)
                     screen.hideCursor()
                     checkBlank(shownTarget)
-                    placeholder.attributedStringValue = Self.placeholderText("열린 페이지가 없어요", detail: "AI 가 브라우저를 쓰면 여기에 보여요")
+                    placeholder.attributedStringValue = Self.placeholderText("열린 페이지가 없습니다", detail: "에이전트가 브라우저를 쓰면 여기에 보입니다")
                 }
                 placeholder.isHidden = !blank
                 // 빈 탭에서 나왔다: 그사이 온 새 페이지 그림을 바로(멈춘 페이지는 다음 그림이 늦게 올 수 있다)
@@ -475,19 +475,19 @@ final class BrowserPaneView: NSView {
         switch indicator {
         case _ where requesting:
             // 누른 뒤 답을 기다리는 중: 입력은 이미 막혔거나 아직이다 — 그렇다고 말한다
-            text = givingBack ? "AI에게 넘기는 중…" : "제어 가져오는 중… AI 가 하던 동작이 끝나면 넘어와요"
+            text = givingBack ? "에이전트에게 넘기는 중…" : "제어 가져오는 중… 에이전트가 하던 동작이 끝나면 넘어옵니다"
         case .agent?:
             if let other = agentElsewhere {
-                text = "AI 가 다른 탭(\(other))에서 작업 중 · 이 탭은 보기만 돼요"
+                text = "에이전트가 다른 탭(\(other))에서 작업 중 · 이 탭은 보기만 할 수 있습니다"
             } else {
-                text = "보기만 돼요 — 직접 하려면 \u{201C}제어 가져오기\u{201D}"
+                text = "보기만 할 수 있습니다 — 직접 하려면 \u{201C}제어 가져오기\u{201D}"
             }
         case .user?:
-            text = "끝나면 \u{201C}AI에게 돌려주기\u{201D}"
+            text = "끝나면 \u{201C}에이전트에게 돌려주기\u{201D}"
         case .waiting(let message)?:
-            text = (message.isEmpty ? "" : message + " — ") + "끝나면 \u{201C}AI에게 돌려주기\u{201D}"
+            text = (message.isEmpty ? "" : message + " — ") + "끝나면 \u{201C}에이전트에게 돌려주기\u{201D}"
         case .switching?:
-            text = "AI 가 하던 동작이 끝나길 기다려요"
+            text = "에이전트가 하던 동작이 끝나기를 기다립니다"
         case .idle?:
             text = "페이지를 눌러 보려면 \u{201C}제어 가져오기\u{201D}"
         case nil:
@@ -664,9 +664,9 @@ final class BrowserPaneView: NSView {
             button.controlSize = .small
             button.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
             button.state = chip.shown ? .on : .off
-            let owner = chip.users ? "사람이 연 탭" + (chip.group != nil ? " · AI 가 맡아 쓰는 중" : "") : "AI 탭 · 작업 공간 \(chip.group ?? BrowserTabs.main)"
+            let owner = chip.users ? "직접 연 탭" + (chip.group != nil ? " · 에이전트가 맡아 쓰는 중" : "") : "에이전트 탭 · 작업 공간 \(chip.group ?? BrowserTabs.main)"
             button.toolTip = [chip.title, chip.url, [chip.tabId, owner].compactMap { $0 }.joined(separator: " · "),
-                              chip.agentHere ? "AI 가 마지막으로 일한 탭" : nil,
+                              chip.agentHere ? "에이전트가 마지막으로 일한 탭" : nil,
                               chip.device.map { "기기: \($0.name)\($0.landscape ? " · 가로" : "") · \(Int($0.width))×\(Int($0.height))" }].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: "\n")
             let menu = NSMenu()
             let close = NSMenuItem(title: "탭 닫기", action: #selector(closeChip(_:)), keyEquivalent: "")
@@ -686,12 +686,12 @@ final class BrowserPaneView: NSView {
             }
         }
         if pinned {
-            let follow = NSButton(title: "AI 따라가기", target: self, action: #selector(followAgent))
+            let follow = NSButton(title: "에이전트 따라가기", target: self, action: #selector(followAgent))
             follow.identifier = NSUserInterfaceItemIdentifier("follow")
             follow.bezelStyle = .inline
             follow.controlSize = .small
             follow.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
-            follow.toolTip = "AI 가 일하는 탭을 다시 따라 보여 주기"
+            follow.toolTip = "에이전트가 일하는 탭을 다시 따라가며 보기"
             tabBar.addArrangedSubview(follow)
         }
     }
@@ -701,7 +701,7 @@ final class BrowserPaneView: NSView {
         let size = TermAppearance.scaled(TypeSize.secondary)
         let dot = NSTextAttachment()
         let side = TermAppearance.scaled(6)
-        dot.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "AI 가 마지막으로 일한 탭")?
+        dot.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "에이전트가 마지막으로 일한 탭")?
             .withSymbolConfiguration(.init(pointSize: side, weight: .regular).applying(.init(paletteColors: [TermAppearance.agent.resolved(button.effectiveAppearance)])))
         dot.bounds = CGRect(x: 0, y: (size * 0.7 - side) / 2, width: side, height: side)
         let title = NSMutableAttributedString(attachment: dot)
@@ -742,8 +742,8 @@ final class BrowserPaneView: NSView {
         controlButton.isHidden = control == nil
         controlButton.isEnabled = !requesting && control != .switching
         // 누른 뒤 답을 기다리는 동안은 그렇다고 보인다
-        controlButton.title = requesting ? (givingBack ? "AI에게 넘기는 중…" : "제어 가져오는 중…")
-            : control == .user ? "AI에게 돌려주기" : "제어 가져오기"
+        controlButton.title = requesting ? (givingBack ? "에이전트에게 넘기는 중…" : "제어 가져오는 중…")
+            : control == .user ? "에이전트에게 돌려주기" : "제어 가져오기"
         // 버튼 색 = 누르면 넘어갈 쪽: 가져오기는 주 버튼 색(accentFill), 돌려주기는 AI 색(agent)
         controlButton.style = control == .user ? .agent : .primary
     }
@@ -785,7 +785,7 @@ final class BrowserPaneView: NSView {
         feed.wake(headless: restingHeadless) { [weak self] ok in
             self?.waking = false
             self?.wakeFailed = !ok
-            self?.wakeButton.title = ok ? "다시 켜기" : "켜지 못했어요 · 다시 시도"
+            self?.wakeButton.title = ok ? "다시 켜기" : "켜지 못함 · 다시 시도"
             self?.wakeButton.isEnabled = true
         }
     }
@@ -817,7 +817,7 @@ final class BrowserPaneView: NSView {
     /// 기기를 바꿀 수 없는 까닭: AI 가 바로 이 탭에서 일하는 중(그 페이지를 다시 읽으면 AI 동작이 깨진다)
     private var deviceLock: String? {
         guard control == .agent || control == .switching, let active = lastStatus?.activeTab?.targetId, active == shownTarget else { return nil }
-        return "AI 가 이 탭에서 작업 중이라 바꿀 수 없어요 — \u{201C}제어 가져오기\u{201D} 뒤에 바꾸세요"
+        return "에이전트가 이 탭에서 작업 중이라 바꿀 수 없습니다 — \u{201C}제어 가져오기\u{201D} 뒤에 바꾸세요"
     }
 
     @objc private func showDeviceMenu() {
@@ -843,7 +843,7 @@ final class BrowserPaneView: NSView {
             guard let self else { return }
             self.deviceBusy = false
             if let error {
-                self.transientNote = ("기기를 바꾸지 못했어요: \(error)", Date().addingTimeInterval(5))
+                self.transientNote = ("기기를 바꾸지 못했습니다: \(error)", Date().addingTimeInterval(5))
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5.1) { [weak self] in self?.updateStatusLine() }
                 self.updateStatusLine()
             }
@@ -1678,7 +1678,7 @@ final class BrowserFeed {
             runner = AbxRunner.locate(bundleHelpers: Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers"))
         }
         guard runner != nil else {
-            publish(.waiting("abx 를 찾지 못했어요 — abx 를 설치하거나 AGENTDECK_ABX 로 경로를 알려 주세요"))
+            publish(.waiting("abx를 찾지 못했습니다 — abx를 설치하거나 AGENTDECK_ABX로 경로를 알려 주세요"))
             return false
         }
         return true
@@ -1793,7 +1793,7 @@ final class BrowserFeed {
         guard status.running, let url = status.cdpUrl else {
             disconnect()
             if let rest = status.resting, !status.running { publish(.resting(rest, headless: status.headless ?? true)) }
-            else { publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았어요\n(이 화면의 claude·codex 가 abx 를 쓰면 여기에 보여요)")) }
+            else { publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았습니다\n(이 세션의 claude·codex가 abx를 쓰면 여기에 보입니다)")) }
             return
         }
         let wasControlled = control == .agent || control == .switching
@@ -2158,14 +2158,14 @@ final class BrowserFeed {
     /// 끝나면 실패한 까닭(성공이면 nil)
     func setDevice(_ id: String, landscape: Bool, target: String, completion: @escaping (String?) -> Void) {
         queue.async { [self] in
-            guard let runner else { DispatchQueue.main.async { completion("abx 를 찾지 못했어요") }; return }
+            guard let runner else { DispatchQueue.main.async { completion("abx를 찾지 못했습니다") }; return }
             let session = self.session
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let args = ["device", id, "--tab", target, "--user"] + (landscape ? ["--landscape"] : [])
                 let result = try? runner.run(args, session: session, timeout: 30)
                 let text = result.flatMap { String(data: $0.output, encoding: .utf8) }?
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                let error: String? = result == nil ? "시간 안에 끝나지 않았어요"
+                let error: String? = result == nil ? "시간 안에 끝나지 않았습니다"
                     : result!.status == 0 ? nil : (text.hasPrefix("error: ") ? String(text.dropFirst(7)) : text)
                 self?.queue.async { self?.refresh() }
                 DispatchQueue.main.async { completion(error) }

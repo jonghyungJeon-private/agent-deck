@@ -11,9 +11,9 @@ final class UsageStore: ObservableObject {
 
     static let claudeMissingHelp = """
         Claude 사용량 기록을 찾지 못했습니다.
-        Claude Code 는 사용량 한도를 상태 줄(status line)·플러그인에만 알려 줍니다.
+        Claude Code는 사용량 한도를 상태 줄(status line)·플러그인에만 알려 줍니다.
         한도를 파일로 남기는 상태 줄·플러그인(예: cc-dash → ~/.claude/cc-dash/usage.json)이 있으면 그 값을,
-        없으면 Claude Code 에서 /usage 를 열었을 때 남는 캐시(~/.claude.json)를 보여 줍니다.
+        없으면 Claude Code에서 /usage를 열었을 때 남는 캐시(~/.claude.json)를 보여 줍니다.
         """
 
     private let queue = DispatchQueue(label: "AgentDeck.usage", qos: .utility)

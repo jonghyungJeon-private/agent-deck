@@ -64,7 +64,7 @@ public enum ChromeImport {
             switch self {
             case .noCookies(let profile): return "\(profile) 프로필에 쿠키 파일이 없습니다"
             case .database(let detail): return "Chrome 쿠키를 읽지 못했습니다: \(detail)"
-            case .keychain(let detail): return "키체인의 Chrome Safe Storage 를 읽지 못했습니다: \(detail)"
+            case .keychain(let detail): return "키체인의 Chrome Safe Storage를 읽지 못했습니다: \(detail)"
             }
         }
     }
@@ -296,7 +296,7 @@ public enum ChromeImport {
     /// 만료된 영구 쿠키와 분할 쿠키(top_frame_site_key)는 건너뛴다.
     static func readRows(profile: URL, now: Date) throws -> [Row] {
         guard let source = cookieFile(profile) else { throw ImportError.noCookies(profile.lastPathComponent) }
-        var lastError: Error = ImportError.database("복사하는 동안 쿠키 파일이 계속 바뀌었습니다 — Chrome 을 잠시 쉬게 한 뒤 다시 시도하세요")
+        var lastError: Error = ImportError.database("복사하는 동안 쿠키 파일이 계속 바뀌었습니다 — Chrome을 잠시 멈춘 뒤 다시 시도하세요")
         for _ in 0..<3 {
             do {
                 if let rows = try readSnapshot(source, now: now) { return rows }

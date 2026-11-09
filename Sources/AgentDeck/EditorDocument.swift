@@ -155,7 +155,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
             if let decoded = result.decoded {
                 install(decoded)
             } else {
-                content = .notice(title: "UTF-8 이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
+                content = .notice(title: "UTF-8이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
             }
         case .binary:
             content = .notice(title: "바이너리 파일이라 편집기로 열지 않습니다", detail: path)
@@ -163,7 +163,7 @@ final class EditorDocument: NSObject, NSTextStorageDelegate {
             content = .notice(title: "파일이 너무 커서 열지 않습니다 (\(Self.megabytes(size)), 한도 \(Self.megabytes(TextFile.maxEditableBytes)))",
                               detail: path)
         case .notUTF8:
-            content = .notice(title: "UTF-8 이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
+            content = .notice(title: "UTF-8이 아닌 파일이라 편집기로 열지 않습니다", detail: path)
         }
     }
 
@@ -597,7 +597,7 @@ final class EditorManager {
         } else {
             let alert = NSAlert()
             if dirty.count == 1 {
-                alert.messageText = "\(dirty[0].name) 의 바뀐 내용을 저장할까요?"
+                alert.messageText = "\(dirty[0].name)의 바뀐 내용을 저장할까요?"
                 alert.informativeText = "저장하지 않으면 바뀐 내용은 사라집니다."
             } else {
                 alert.messageText = "저장하지 않은 파일이 \(dirty.count)개 있습니다. 저장할까요?"

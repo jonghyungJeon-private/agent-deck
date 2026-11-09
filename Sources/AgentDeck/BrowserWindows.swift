@@ -35,7 +35,7 @@ enum BrowserIndicator: Equatable {
     var label: String {
         switch self {
         case .idle: return "브라우저 대기"
-        case .agent: return "AI 제어 중"
+        case .agent: return "에이전트 제어 중"
         case .user: return "내가 조작 중"
         case .waiting: return "내 조작 필요"
         case .switching: return "넘겨받는 중"

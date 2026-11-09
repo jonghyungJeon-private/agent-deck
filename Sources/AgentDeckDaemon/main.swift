@@ -285,7 +285,7 @@ final class Daemon {
                 try create(request)
                 broadcastState()
             } catch {
-                client.send(Frame(.error, Array("화면을 만들지 못함: \(error)".utf8)))
+                client.send(Frame(.error, Array("세션을 만들지 못함: \(error)".utf8)))
             }
         case .attach:
             guard let pane = panes[frame.text] else {

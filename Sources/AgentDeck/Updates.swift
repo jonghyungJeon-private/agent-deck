@@ -35,7 +35,7 @@ final class UpdateNotifier: ObservableObject {
     /// 메뉴 "업데이트 확인…": 바로 확인하고 결과를 알린다
     func checkNow() {
         guard current != nil else {
-            report("개발 빌드라 버전을 비교할 수 없습니다", "scripts/build-term-proto.sh 로 만든 앱에서 확인하세요.")
+            report("개발 빌드라 버전을 비교할 수 없습니다", "scripts/build-term-proto.sh로 만든 앱에서 확인하세요.")
             return
         }
         guard !checking else { return }
@@ -71,17 +71,17 @@ final class UpdateNotifier: ObservableObject {
             if available != nil {
                 presentUpdate()
             } else {
-                self.report("최신 버전입니다", "지금 쓰는 v\(current) 이 가장 새 버전입니다(최신 릴리스 \(Self.display(release.tag))).")
+                self.report("최신 버전입니다", "지금 쓰는 버전(v\(current))이 가장 새 버전입니다(최신 릴리스 \(Self.display(release.tag))).")
             }
         case .failure(let failure):
             guard report else { return }
             switch failure {
             case .noGh:
                 self.report("업데이트를 확인하지 못했습니다",
-                            "GitHub CLI(gh)가 없습니다. 터미널에서 brew install gh 를 실행한 뒤 gh auth login 으로 로그인하세요.")
+                            "GitHub CLI(gh)가 없습니다. 터미널에서 brew install gh를 실행한 뒤 gh auth login으로 로그인하세요.")
             case .failed(let detail):
                 self.report("업데이트를 확인하지 못했습니다",
-                            "gh 로 \(UpdateCheck.repository) 릴리스를 읽지 못했습니다. 로그인(gh auth status)·저장소 초대·네트워크를 확인하세요.\n\n\(detail)")
+                            "gh로 \(UpdateCheck.repository) 릴리스를 읽지 못했습니다. 로그인(gh auth status)·저장소 초대·네트워크를 확인하세요.\n\n\(detail)")
             }
         }
     }
@@ -93,7 +93,7 @@ final class UpdateNotifier: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "새 버전 \(Self.display(release.tag))"
         alert.informativeText = """
-            지금 v\(current ?? "?") 을 쓰고 있습니다. 터미널에서 아래 명령을 실행하면 새 버전으로 바꿔 끼웁니다.
+            지금 쓰는 버전은 v\(current ?? "?")입니다. 터미널에서 아래 명령을 실행하면 새 버전으로 바꿉니다.
             열려 있는 셸·claude 세션은 끊기지 않습니다.
             """
         // 명령은 데이터 — 고정폭(보조 크기)으로, 길면 줄바꿈해 높이를 내용에 맞춘다

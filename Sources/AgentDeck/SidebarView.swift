@@ -141,7 +141,7 @@ struct SidebarView: View {
                 }
                 .contextMenu {
                     Button("이름 바꾸기…") { model.rename(pane: row.id) }
-                    Button("화면 닫기(셸·에이전트 종료)") { model.close(pane: row.id) }
+                    Button("세션 닫기(셸·에이전트 종료)") { model.close(pane: row.id) }
                     Divider()
                     openMenu(row.cwd)
                 }
@@ -242,7 +242,7 @@ struct SidebarView: View {
                 HStack(spacing: ui(Space.xs)) {
                     agentButton(.claude)
                     agentButton(.codex)
-                    ChromeButton(title: "셸", symbol: "plus", help: "홈 폴더에서 새 셸 탭 (지금 화면 폴더는 ⌘T)") {
+                    ChromeButton(title: "셸", symbol: "plus", help: "홈 폴더에서 새 셸 탭 (지금 세션의 폴더는 ⌘T)") {
                         model.newPane(cwd: NSHomeDirectory())
                     }
                 }
@@ -314,12 +314,12 @@ struct SidebarView: View {
         case .missing:
             out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.warning,
                                      title: "Claude Code 연결 필요",
-                                     detail: "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다.",
+                                     detail: "Claude Code와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다.",
                                      action: claudeHookAction("연결하기")))
         case .update:
             out.append(SidebarNotice(id: "claude-hook", symbol: "arrow.triangle.2.circlepath", tint: TermAppearance.textSecondary,
                                      title: "Claude Code 연결 갱신 필요",
-                                     detail: "Claude Code 연결이 예전 판(예전 이름 ClaudeTerm·ClaudeSessions 포함)이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다.",
+                                     detail: "Claude Code 연결이 예전 버전(예전 이름 ClaudeTerm·ClaudeSessions 포함)이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱을 가리키도록 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다.",
                                      action: claudeHookAction("갱신하기")))
         case .error(let detail):
             out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.statusAttention,
@@ -330,8 +330,8 @@ struct SidebarView: View {
         if model.codexHookState != .unknown && model.codexHookState != .ok {
             let update = model.codexHookState == .update
             let message = update
-                ? "Codex 연결이 예전 판이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks 에서 훅을 다시 신뢰하세요."
-                : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요."
+                ? "Codex 연결이 예전 버전이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks에서 hook을 다시 신뢰하세요."
+                : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks에서 hook을 검토·신뢰하세요."
             if case .error(let detail) = model.codexHookState {
                 out.append(SidebarNotice(id: "codex-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.statusAttention,
                                          title: "Codex 연결 오류", detail: message + "\n" + detail, action: nil))
@@ -352,7 +352,7 @@ struct SidebarView: View {
 
     private func claudeHookAction(_ title: String) -> SidebarNotice.Action {
         SidebarNotice.Action(title: title,
-                             help: "~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로). 앱을 지우면 hook 은 아무것도 하지 않습니다.") {
+                             help: "~/.claude/settings.json에 세션 기록·작업 상태 hook을 넣습니다(바꾸기 전 백업, 다른 hook은 그대로). 앱을 지우면 hook은 아무것도 하지 않습니다.") {
             model.connectHooks()
         }
     }
@@ -362,19 +362,19 @@ struct SidebarView: View {
     private var browserNotice: SidebarNotice? {
         let skill = model.browserSkillState
         let chrome = model.browserChrome
-        let help = "abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣고(직접 둔 스킬은 그대로), 에이전트 전용 브라우저를 ~/.abx/browsers 에 받습니다."
+        let help = "abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣고(직접 둔 스킬은 그대로), 에이전트 전용 브라우저를 ~/.abx/browsers에 받습니다."
         let prompt: (title: String, text: String, button: String?, symbol: String, tint: NSColor)? = {
             guard skill != .unknown else { return nil }
             if !model.daemonHasBrowser {
-                return ("세션 데몬이 예전 판", "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 뜹니다.",
+                return ("세션 데몬이 예전 버전", "세션 데몬이 예전 버전이라 세션에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 시작됩니다.",
                         nil, "exclamationmark.triangle.fill", TermAppearance.warning)
             }
             if case .updateFailed(let detail) = skill {
-                return ("abx 스킬 갱신 실패", "abx 스킬을 지금 abx 판으로 바꾸지 못했습니다 — \(detail)", "다시 시도",
+                return ("abx 스킬 갱신 실패", "abx 스킬을 지금 abx 버전으로 바꾸지 못했습니다 — \(detail)", "다시 시도",
                         "exclamationmark.triangle.fill", TermAppearance.statusAttention)
             }
             var needs: [String] = []
-            if case .missing(let targets) = skill { needs.append("\(targets.joined(separator: "·"))에 abx 스킬 넣기") }
+            if case .missing(let targets) = skill { needs.append("\(targets.joined(separator: "·"))에 abx 스킬 연결") }
             switch chrome {
             case .installing(let percent):
                 return ("에이전트 전용 브라우저 받는 중 \(percent)%", "에이전트 전용 브라우저(Chrome for Testing)를 받는 중… \(percent)%", nil,
@@ -383,12 +383,12 @@ struct SidebarView: View {
                 return ("에이전트 전용 브라우저 받기 실패", "에이전트 전용 브라우저를 받지 못했습니다: \(detail)", "다시 시도",
                         "exclamationmark.triangle.fill", TermAppearance.statusAttention)
             case .missing:
-                needs.append("에이전트 전용 브라우저(Chrome for Testing, 약 190MB) 받기 — 받기 전에는 설치된 Chrome 을 씁니다")
+                needs.append("에이전트 전용 브라우저(Chrome for Testing, 약 190MB) 받기 — 받기 전에는 설치된 Chrome을 씁니다")
             default: break
             }
             guard !needs.isEmpty else { return nil }
             return ("브라우저 연결 필요",
-                    "브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 오른쪽 위 지구본 버튼으로 볼 수 있습니다.",
+                    "브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx로 브라우저를 쓰고, 화면 오른쪽 위 지구본 버튼으로 볼 수 있습니다.",
                     skill == .ok || skill == .unknown ? "브라우저 받기" : "브라우저 연결하기",
                     "globe", TermAppearance.textSecondary)
         }()
@@ -407,7 +407,7 @@ struct SidebarView: View {
         Button("여기서 claude 열기(새 탭)") { model.newAgent(.claude, cwd: path) }
         Button("여기서 codex 열기(새 탭)") { model.newAgent(.codex, cwd: path) }
         Button("여기서 셸 열기(새 탭)") { model.newPane(cwd: path) }
-        Button("Finder 에서 보기") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path) }
+        Button("Finder에서 보기") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path) }
     }
 
     /// + claude·+ codex: 기본 옵션이 위험하면 경고 표시를 붙이고, 풍선 도움말에 실제 명령을 보인다
@@ -969,7 +969,7 @@ struct WorktreeRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onToggle)
-        .help((section.isClaude ? "claude 가 만든 작업 트리 · \(section.path)" : section.path)
+        .help((section.isClaude ? "claude가 만든 작업 트리 · \(section.path)" : section.path)
               + (section.branch.map { "\n브랜치 \($0)" } ?? "")
               + (collapsed ? "\n누르면 펼칩니다" : "\n누르면 접습니다"))
     }
@@ -1094,7 +1094,7 @@ struct SessionRowView: View {
     @ViewBuilder
     private var detail: some View {
         if row.dormant {
-            Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program) 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
+            Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program)를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
                 .uiTextFont(TypeSize.caption)
                 .foregroundStyle(Color(TermAppearance.textSecondary))
         } else if case .orchestrating = row.status {
@@ -1343,7 +1343,7 @@ struct AgentRowView: View {
                     HStack(spacing: 0) {
                         Text(when)
                             .foregroundStyle(Color(agent.isRunning ? TermAppearance.statusWorking : TermAppearance.textSecondary))
-                        Text([agent.agentType, owner.map { "\($0) 의 하위 에이전트" }].compactMap { $0 }
+                        Text([agent.agentType, owner.map { "\($0)의 하위 에이전트" }].compactMap { $0 }
                             .map { " · " + $0 }.joined())
                             .foregroundStyle(Color(TermAppearance.textSecondary))
                     }
@@ -1372,7 +1372,7 @@ struct AgentRowView: View {
         .sidebarPill(hovering ? PillLevel.hover : PillLevel.none, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help("누르면 이 에이전트를 띄운 에이전트 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
+        .help("누르면 이 에이전트를 띄운 에이전트의 세션으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
     }
 }
 
@@ -1445,7 +1445,7 @@ struct StatusFooterView: View {
     /// 세션 유지 안내는 데몬이 멀쩡할 때만 — 연결 문제·유지 제한이면 위 알림 줄이 그 얘기를 하므로 되풀이하지 않는다.
     private var diagnosticsHelp: String {
         var lines = [Self.versionLabel, "앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))"]
-        if daemonNotice == .none { lines.append("앱을 꺼도 세션은 계속 돕니다") }
+        if daemonNotice == .none { lines.append("앱을 꺼도 세션은 계속 실행됩니다") }
         return lines.joined(separator: "\n")
     }
 
@@ -1458,7 +1458,7 @@ struct StatusFooterView: View {
     }
     private var lastError: String? {
         #if DEBUG
-        if fake.has("error") { return "새 화면을 만들지 못했습니다." }
+        if fake.has("error") { return "새 세션을 만들지 못했습니다." }
         #endif
         return model.lastError
     }
@@ -1476,7 +1476,7 @@ struct StatusFooterView: View {
     }
     private var daemonNotice: DaemonNotice {
         #if DEBUG
-        if fake.has("failed") { return .failed(message: "소켓에 붙지 못했습니다", failures: 3) }
+        if fake.has("failed") { return .failed(message: "소켓에 연결하지 못했습니다", failures: 3) }
         if fake.has("connecting") { return .connecting("세션 데몬 연결 중…") }
         if fake.has("limited") { return .limited }
         #endif
@@ -1538,16 +1538,16 @@ struct StatusFooterView: View {
         case .none:
             EmptyView() // body 가 이 경우엔 부르지 않는다
         case .limited:
-            NoticeLine(color: TermAppearance.warning, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있음",
+            NoticeLine(color: TermAppearance.warning, title: "세션 유지 제한", detail: "앱을 강제 종료하면 세션이 끝날 수 있습니다",
                        help: """
-                           세션 데몬이 launchd 작업이 아니라 예전 방식(posix_spawn)으로 떠서 앱과 같은 묶음(coalition)에 있습니다.
-                           앱을 ⌘Q 로 끄면 세션은 남지만, 강제 종료하거나 Dock 에서 강제 종료하면 셸·claude·codex 가 함께 끝날 수 있습니다.
-                           모든 화면을 닫고 데몬이 끝난 뒤(약 1분) 앱을 다시 켜면 launchd 작업으로 다시 띄웁니다.
+                           세션 데몬이 launchd 작업이 아니라 예전 방식(posix_spawn)으로 시작되어 앱과 같은 묶음(coalition)에 있습니다.
+                           앱을 ⌘Q로 끄면 세션은 남지만, 강제 종료하거나 Dock에서 강제 종료하면 셸·claude·codex가 함께 끝날 수 있습니다.
+                           모든 세션을 닫고 데몬이 끝난 뒤(약 1분) 앱을 다시 켜면 launchd 작업으로 다시 띄웁니다.
                            기록: \(Self.logPath)
                            """)
         case .failed(let message, let failures):
             NoticeLine(color: TermAppearance.statusAttention, title: "세션 데몬에 연결하지 못함", detail: "잠시 뒤 다시 시도합니다",
-                       help: "\(message) (\(failures)번째 실패)\n새 화면을 열면 바로 다시 시도합니다.\n기록: \(Self.logPath)")
+                       help: "\(message) (\(failures)번째 실패)\n새 세션을 열면 바로 다시 시도합니다.\n기록: \(Self.logPath)")
         case .connecting(let text):
             NoticeLine(color: TermAppearance.textSecondary, title: text, detail: nil,
                        help: "세션 데몬에 연결하는 중입니다. 데몬이 없으면 띄웁니다(몇 초 걸릴 수 있음).\n기록: \(Self.logPath)")
@@ -1628,7 +1628,7 @@ private struct LegacyDaemonLine: View {
         VStack(alignment: .leading, spacing: ui(Space.sm)) {
             HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
                 Circle().fill(Color(TermAppearance.warning)).frame(width: ui(6), height: ui(6))
-                Text(relocating ? "새 위치로 옮기는 중…" : "이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다")
+                Text(relocating ? "새 위치로 옮기는 중…" : "예전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다")
                     .uiTextFont(TypeSize.secondary)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                     .fixedSize(horizontal: false, vertical: true)
@@ -1636,7 +1636,7 @@ private struct LegacyDaemonLine: View {
             if !relocating {
                 Button("지금 옮기기…", action: action)
                     .buttonStyle(NoticeButtonStyle())
-                    .help("예전 데몬을 끄고 데이터를 새 위치로 옮깁니다. 열린 셸·claude 가 멈추고, claude·codex 화면은 탭을 열면 되살아납니다.")
+                    .help("예전 데몬을 끄고 데이터를 새 위치로 옮깁니다. 열린 셸·claude가 멈추고, claude·codex 세션은 탭을 열면 되살아납니다.")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -34,9 +34,9 @@ final class ToolWindowsController: NSObject {
     /// 🌐 버튼 왼쪽의 ⌨ 버튼(작은 터미널 켜고 끄기)
     private let scratchButton = ScratchToggleButton()
     /// 세션 창 안에 떠 있는 작은 브라우저 창(host.view 위, 버튼 아래)
-    private let floatPanel = FloatPanel(spec: .browser, closeTip: "작은 창 닫기 (⌘⇧B 로 다시)")
+    private let floatPanel = FloatPanel(spec: .browser, closeTip: "작은 창 닫기 (⌘⇧B로 다시)")
     /// 세션 창 안에 떠 있는 작은 터미널 창(세션마다 임시 셸 하나)
-    private let scratchPanel = FloatPanel(spec: .terminal, closeTip: "작은 터미널 숨기기 (⌃`) — 셸은 계속 돌아요")
+    private let scratchPanel = FloatPanel(spec: .terminal, closeTip: "작은 터미널 숨기기 (⌃`) — 셸은 계속 실행됩니다")
     private var cornerObserver: AnyCancellable?
     private var autoOpenObserver: AnyCancellable?
     /// 작은 창을 끄는 동안의 자동 배치 보류(창마다) — 끝나면 한 번 돌린다

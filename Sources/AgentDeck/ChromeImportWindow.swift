@@ -59,8 +59,8 @@ final class ChromeImportModel: ObservableObject {
                 self.needsDiskAccess = blocked
                 if blocked {
                     self.sites = []
-                    self.phase = .failed("macOS 가 Chrome 데이터 읽기를 막았습니다. 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 "
-                                         + "AgentDeck 을 켠 뒤 [다시 확인]을 누르세요(안 되면 AgentDeck 을 다시 여세요).")
+                    self.phase = .failed("macOS가 Chrome 데이터 읽기를 막았습니다. 시스템 설정 → 개인정보 보호 및 보안 → 전체 디스크 접근 권한에서 "
+                                         + "AgentDeck을 켠 뒤 [다시 확인]을 누르세요(안 되면 AgentDeck을 다시 여세요).")
                 } else if found.isEmpty {
                     self.sites = []
                     self.phase = .failed("Chrome 프로필을 찾지 못했습니다(\((root.path as NSString).abbreviatingWithTildeInPath)).")
@@ -122,14 +122,14 @@ final class ChromeImportModel: ObservableObject {
                 // 템플릿을 복사해 새로 띄우는 브라우저는 세션 쿠키를 되살리지 않으므로 템플릿에는 7일 쿠키로 넣는다
                 let kept = ChromeImport.keepingSessions(picked.cookies, for: 7 * 24 * 3600)
                 let template = try await Self.injectIntoTemplate(ChromeImport.cdpCookies(kept), helpers: helpers)
-                report.send(.working("이미 있는 화면의 브라우저에 넣는 중…"))
+                report.send(.working("이미 있는 세션의 브라우저에 넣는 중…"))
                 let panes = await Self.injectIntoPanes(live: ChromeImport.cdpCookies(picked.cookies), offline: ChromeImport.cdpCookies(kept),
                                                        helpers: helpers)
-                var message = "\(sites.count)개 사이트의 로그인(쿠키 \(template.set)개)을 가져왔습니다. 새로 여는 화면의 브라우저부터 로그인된 채로 시작합니다"
-                let done = [panes.live > 0 ? "떠 있는 브라우저 \(panes.live)개" : nil, panes.offline > 0 ? "꺼져 있던 화면 \(panes.offline)개" : nil]
+                var message = "\(sites.count)개 사이트의 로그인(쿠키 \(template.set)개)을 가져왔습니다. 새로 여는 세션의 브라우저부터 로그인된 채로 시작합니다"
+                let done = [panes.live > 0 ? "떠 있는 브라우저 \(panes.live)개" : nil, panes.offline > 0 ? "꺼져 있던 세션 \(panes.offline)개" : nil]
                     .compactMap { $0 }
-                message += done.isEmpty ? "." : " — 이미 있는 화면에도 넣었습니다(\(done.joined(separator: ", ")))."
-                if panes.missed > 0 { message += " 화면 \(panes.missed)개에는 넣지 못했습니다(사람이 조작 중이거나 브라우저를 띄우지 못함)." }
+                message += done.isEmpty ? "." : " — 이미 있는 세션에도 넣었습니다(\(done.joined(separator: ", ")))."
+                if panes.missed > 0 { message += " 세션 \(panes.missed)개에는 넣지 못했습니다(직접 조작 중이거나 브라우저를 띄우지 못함)." }
                 if picked.skipped + template.rejected > 0 {
                     message += " 쿠키 \(picked.skipped + template.rejected)개는 풀거나 넣지 못해 뺐습니다."
                 }
@@ -155,7 +155,7 @@ final class ChromeImportModel: ObservableObject {
                 return
             }
             try FileManager.default.removeItem(at: template)
-            phase = .done("로그인 템플릿을 비웠습니다. 새로 여는 화면의 브라우저는 로그아웃 상태로 시작합니다(이미 열린 화면은 그대로).")
+            phase = .done("로그인 템플릿을 비웠습니다. 새로 여는 세션의 브라우저는 로그아웃 상태로 시작합니다(이미 열린 세션은 그대로).")
         } catch {
             phase = .failed("로그인 템플릿을 비우지 못했습니다: \(error.localizedDescription)")
         }
@@ -233,7 +233,7 @@ final class ChromeImportModel: ObservableObject {
     /// 고치는 도중의 템플릿을 새 화면이 복사하거나, 템플릿이 잠겨 새 화면 브라우저가 못 뜨는 일이 없게.
     private static func injectIntoTemplate(_ params: [[String: Any]], helpers: URL) async throws -> (set: Int, rejected: Int) {
         guard let runner = AbxRunner.locate(bundleHelpers: helpers) else {
-            throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "abx 를 찾지 못했습니다"])
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSLocalizedDescriptionKey: "abx를 찾지 못했습니다"])
         }
         let fm = FileManager.default
         let template = BrowserBinding.templateDir()
@@ -308,7 +308,7 @@ struct ChromeImportView: View {
             }
             HStack(spacing: ui(Space.sm)) {
                 TextField("사이트 검색 (예: github.com)", text: $model.search).textFieldStyle(.roundedBorder)
-                Text("\(model.selected.count)개 고름")
+                Text("\(model.selected.count)개 선택")
                     .uiTextFont(TypeSize.secondary)
                     .monospacedDigit()
                     .foregroundStyle(Color(TermAppearance.textSecondary))
@@ -342,7 +342,7 @@ struct ChromeImportView: View {
             HStack {
                 Button("로그인 템플릿 비우기") { model.clearTemplate() }
                     .disabled(model.busy)
-                    .help("가져온 로그인을 새 화면에 더는 쓰지 않습니다(이미 열린 화면의 브라우저는 그대로).")
+                    .help("가져온 로그인을 새 세션에서 더는 쓰지 않습니다(이미 열린 세션의 브라우저는 그대로).")
                 Spacer()
                 Button("가져오기") { model.importSelected() }
                     .buttonStyle(.borderedProminent) // 이 창에서 끝을 맺는 동작 하나 — 기본 버튼(Return)
@@ -360,7 +360,7 @@ struct ChromeImportView: View {
     /// 창 제목이 이미 이름이다 — 안에서는 하는 일 한 줄, 맡길 때 조심할 것(경고) 한 줄, 키체인 안내는 보조 글로
     private var intro: some View {
         VStack(alignment: .leading, spacing: ui(Space.sm)) {
-            Text("고른 사이트의 로그인 상태(쿠키)만 에이전트 브라우저로 가져옵니다. 비밀번호는 가져오지 않습니다.")
+            Text("고른 사이트의 로그인 상태(쿠키)만 에이전트 전용 브라우저로 가져옵니다. 비밀번호는 가져오지 않습니다.")
                 .uiTextFont(TypeSize.emphasis)
                 .foregroundStyle(Color(TermAppearance.textPrimary))
             HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
@@ -369,7 +369,7 @@ struct ChromeImportView: View {
             }
             .uiTextFont(TypeSize.row)
             .foregroundStyle(Color(TermAppearance.warnText))
-            Text("가져올 때 macOS 가 키체인의 \"Chrome Safe Storage\" 사용을 묻습니다. "
+            Text("가져올 때 macOS가 키체인의 \"Chrome Safe Storage\" 사용을 묻습니다. "
                  + "가져온 로그인은 AgentDeck 브라우저 프로필에 저장되며 키체인이 아닌 파일 권한으로만 보호됩니다.")
                 .uiTextFont(TypeSize.secondary)
                 .foregroundStyle(Color(TermAppearance.textSecondary))

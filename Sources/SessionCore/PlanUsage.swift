@@ -176,7 +176,7 @@ public enum UsageSummary {
             guard let window = item.window else { continue }
             if let reset = window.resetsAt, reset <= now {
                 cells.append(UsageCell(label: item.label, percent: nil))
-                lines.append("\(item.name): \(resetText(reset, now: now, calendar: calendar)) 에 초기화됨 — 새 기록 전")
+                lines.append("\(item.name): \(resetText(reset, now: now, calendar: calendar))에 초기화됨 — 새 기록 전")
             } else {
                 cells.append(UsageCell(label: item.label, percent: window.percent))
                 let reset = window.resetsAt.map { " · \(resetText($0, now: now, calendar: calendar)) 초기화" } ?? ""
