@@ -18,9 +18,9 @@ public struct BrowserRelease: Equatable, Sendable {
     }
 
     public static let pinned = BrowserRelease(
-        version: "156.0.8078.73",
-        url: URL(string: "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.73/mac-arm64/chrome-mac-arm64.zip")!,
-        sha256: "a46be48ee2e33b3edc1a98a39668b9f0abb8f23f031bc4df195e2388e6de28d1",
+        version: "157.0.8103.38",
+        url: URL(string: "https://storage.googleapis.com/chrome-for-testing-public/157.0.8103.38/mac-arm64/chrome-mac-arm64.zip")!,
+        sha256: "3406b38b52b7d341d74450eb7b369be038c9fec9894c8b8a9e9e9f97333caf2f",
         executable: "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
 }
 
