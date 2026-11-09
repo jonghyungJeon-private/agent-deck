@@ -28,9 +28,16 @@ final class TerminalPaneSurface: NSView {
     override func layout() {
         super.layout()
         let height = bar.superview == nil ? 0 : min(TerminalFindBar.height, bounds.height)
+        // 앞쪽만 띄운다: 뒤쪽은 터미널 스크롤 막대가 구분선·창 가장자리에 붙어 있어야 선이 두 겹으로 보이지 않는다
         let inset = min(Self.gridInset, bounds.width / 4)
-        terminal.frame = NSRect(x: inset, y: 0, width: max(0, bounds.width - 2 * inset), height: bounds.height)
+        terminal.frame = NSRect(x: inset, y: 0, width: max(0, bounds.width - inset), height: bounds.height)
         bar.frame = NSRect(x: 0, y: bounds.height - height, width: bounds.width, height: height)
+    }
+
+    /// 띄운 앞쪽 여백을 눌러도 터미널이 받는다(포커스·선택 시작). 터미널은 바깥 좌표를 첫 칸으로 맞춘다.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? terminal : hit
     }
 }
 

@@ -482,6 +482,7 @@ struct ChromeButton: View {
         .buttonStyle(SidebarPressStyle())
         .onHover { hovering = $0 }
         .help(help)
+        .accessibilityValue(warning ? "위험한 기본 옵션이 켜져 있음" : "")
     }
 }
 

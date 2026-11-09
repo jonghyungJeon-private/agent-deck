@@ -194,7 +194,7 @@ final class PaletteTests: XCTestCase {
             for other in others {
                 let floor: Double
                 switch other {
-                case .accent, .accentText: floor = 13.5
+                case .accent where dark, .accentText where dark: floor = 13.5
                 case .statusAttention where dark: floor = 10
                 case .textSecondary where dark: floor = 12
                 default: floor = 14
