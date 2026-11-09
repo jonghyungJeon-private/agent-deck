@@ -1,4 +1,5 @@
 import AppKit
+import SwiftTerm
 import TermLayout
 
 /// 세션 창 안에 떠 있는 작은 창(브라우저·작은 터미널): 얇은 제목 줄(제목 · 추가 버튼 · 크게 · ✕) + 내용.
@@ -6,6 +7,11 @@ import TermLayout
 /// 나타날 때·사라질 때는 투명도 + 아래로 6pt 정도만 움직인다(Motion.standard, 동작 줄이기에서는 바로).
 /// 제목 줄을 끌면 옮기고, 가장자리·모서리를 끌면 크기를 바꾼다. 자리는 호스트(부모 뷰) 좌표 frame 으로 다루고,
 /// 사람이 끌기를 마치면 `onFrameChanged` 로 알린다(저장은 ToolWindowsController). 종류마다 `FloatSpec`(최소 크기)이 다르다.
+///
+/// 투명도(종류마다 따로, 제목 줄 "⋯" 메뉴 또는 제목 줄 오른쪽 클릭 → "투명도" 100·90·80·70%): 포인터가 위에 있거나 키보드 포커스가 이 창 안에 있거나
+/// 끄는 중이면 100%, 아니면 고른 값으로 돌아온다(Motion.standard 로 서서히 — 동작 줄이기·창이 뜨는 첫 순간은 바로).
+/// 제목 줄·테두리·그림자는 늘 또렷하고 안쪽 내용만 옅어진다: 브라우저는 내용 전체(페이지 그림 포함), 작은 터미널은 바탕만(글자·커서는 그대로).
+/// 창의 `alphaValue`(나타남·사라짐이 쓴다)가 아니라 안쪽 레이어를 건드려 서로 겹치지 않는다.
 final class FloatPanel: NSView {
     var onFrameChanged: ((NSRect) -> Void)?
     var onClose: (() -> Void)?
@@ -29,6 +35,19 @@ final class FloatPanel: NSView {
     private let sizeButton = FloatIconButton(symbol: "arrow.up.left.and.arrow.down.right", tip: "크게")
     private let closeButton: FloatIconButton
     private var iconButtons: [FloatIconButton] = []
+    private let moreButton = FloatIconButton(symbol: "ellipsis", tip: "작은 창 설정 — 투명도")
+
+    // MARK: 투명도 상태
+    private let isBrowser: Bool
+    /// 고른 값(100·90·80·70)
+    private(set) var opacityPercent = 100
+    private var pointerInside = false
+    private var keyFocused = false
+    /// 지금 그려진 불투명도(1 = 불투명). 포인터·포커스·끌기에 따라 `opacityPercent` 와 1 사이
+    private var shownLevel: CGFloat = 1
+    private var windowObservers: [NSObjectProtocol] = []
+    private var responderObservation: NSKeyValueObservation?
+    private var debugObserver: NSObjectProtocol?
     private var stripHeightConstraint: NSLayoutConstraint!
     private let edgeCursors = FloatEdgeCursorView()
     private let row = NSStackView()
@@ -47,8 +66,10 @@ final class FloatPanel: NSView {
 
     init(spec: FloatSpec, closeTip: String) {
         self.spec = spec
+        isBrowser = spec == .browser
         closeButton = FloatIconButton(symbol: "xmark", tip: closeTip)
         super.init(frame: .zero)
+        opacityPercent = FloatOpacity.load(browser: isBrowser)
         wantsLayer = true
         layer?.shadowColor = NSColor.black.cgColor
         layer?.shadowRadius = 10
@@ -76,8 +97,11 @@ final class FloatPanel: NSView {
         sizeButton.action = #selector(sizeClicked)
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        iconButtons = [sizeButton, closeButton]
-        for view in [titleLabel, sizeButton, closeButton] { row.addArrangedSubview(view) }
+        moreButton.target = self
+        moreButton.action = #selector(moreClicked)
+        strip.menuProvider = { [weak self] in self?.settingsMenu() }
+        iconButtons = [moreButton, sizeButton, closeButton]
+        for view in [titleLabel, moreButton, sizeButton, closeButton] { row.addArrangedSubview(view) }
         row.orientation = .horizontal
         row.spacing = 2
         row.setCustomSpacing(8, after: titleLabel)
@@ -117,12 +141,15 @@ final class FloatPanel: NSView {
     private func refreshLayerColors() {
         layer?.shadowOpacity = effectiveAppearance.isDark ? 0.4 : 0.16
         clip.layer?.borderColor = TermAppearance.border.cg(in: self)
-        clip.layer?.backgroundColor = TermAppearance.background.cg(in: self)
+        // 바탕만 옅어진다(제목 줄·테두리는 늘 또렷하게)
+        clip.layer?.backgroundColor = TermAppearance.background.withAlphaComponent(shownLevel).cg(in: self)
     }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         refreshLayerColors()
+        // 터미널 뷰는 모양이 바뀔 때 바탕을 불투명으로 다시 칠한다 — 그 뒤에 투명도를 다시 건다
+        DispatchQueue.main.async { [weak self] in self?.applyTerminalBackground() }
     }
 
     func setTitle(_ text: String) {
@@ -188,6 +215,7 @@ final class FloatPanel: NSView {
             view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
         ])
+        applyTerminalBackground()
     }
 
     /// 제목 줄의 "크게" 앞에 아이콘 버튼을 더한다(브라우저의 "별도 창으로 떼기", 작은 터미널의 "끝내기")
@@ -201,7 +229,7 @@ final class FloatPanel: NSView {
         button.tag = extraActions.count
         extraActions.append(action)
         iconButtons.append(button)
-        row.insertArrangedSubview(button, at: row.arrangedSubviews.firstIndex(of: sizeButton) ?? row.arrangedSubviews.count)
+        row.insertArrangedSubview(button, at: row.arrangedSubviews.firstIndex(of: moreButton) ?? row.arrangedSubviews.count)
         if destructive { row.setCustomSpacing(8, after: button) }
     }
 
@@ -211,6 +239,161 @@ final class FloatPanel: NSView {
 
     @objc private func sizeClicked() { onToggleSize?() }
     @objc private func closeClicked() { onClose?() }
+
+    // MARK: - 투명도
+
+    private var isPointerInside: Bool {
+        guard let window else { return false }
+        return bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+
+    /// 이 창 안(브라우저 화면·터미널·찾기 막대)에 키보드가 있는지
+    private var hasKeyboardFocus: Bool {
+        guard let window, window.isKeyWindow, let responder = window.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: self)
+    }
+
+    private func observeWindow() {
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers = []
+        responderObservation = nil
+        guard let window else { return }
+        let refresh: (Notification) -> Void = { [weak self] _ in self?.focusChanged() }
+        windowObservers = [
+            NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main, using: refresh),
+            NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main, using: refresh),
+        ]
+        responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.focusChanged() }
+        }
+        if debugObserver == nil {
+            debugObserver = NotificationCenter.default.addObserver(forName: FloatOpacity.debugNotification, object: nil, queue: .main) { [weak self] note in
+                self?.debugCommand(note)
+            }
+        }
+    }
+
+    private func focusChanged() {
+        keyFocused = hasKeyboardFocus
+        refreshOpacity(animated: true)
+    }
+
+    deinit {
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        if let debugObserver { NotificationCenter.default.removeObserver(debugObserver) }
+    }
+
+    /// 지금 있어야 할 불투명도: 포인터가 위에 있거나 키보드가 안에 있거나 끄는 중이면 1, 아니면 고른 값
+    private var targetLevel: CGFloat {
+        pointerInside || keyFocused || drag != nil ? 1 : CGFloat(opacityPercent) / 100
+    }
+
+    /// 투명도를 목표에 맞춘다. animated 면 Motion.standard(ease-out)로 서서히(동작 줄이기·창 밖이면 바로).
+    private func refreshOpacity(animated: Bool) {
+        keyFocused = hasKeyboardFocus
+        let target = targetLevel
+        guard target != shownLevel else { return }
+        let from = shownLevel
+        shownLevel = target
+        let animate = animated && !Motion.reduced && window != nil
+        guard let layer = clip.layer else { return }
+        // 바탕색 알파가 투명도다. 제목 줄·테두리는 그대로 또렷하다(버튼이 늘 읽히게).
+        let color = TermAppearance.background.withAlphaComponent(target).cg(in: self)
+        Self.fade(layer, key: "backgroundColor", from: layer.presentation()?.backgroundColor ?? layer.backgroundColor, to: color, animate: animate) {
+            layer.backgroundColor = color
+        }
+        // 브라우저는 페이지 그림도 함께(내용 전체 opacity). 작은 터미널은 글자·커서를 그대로 두고 터미널 뷰의 기본 바탕을 투명하게 둔다.
+        if isBrowser {
+            container.wantsLayer = true
+            if let content = container.layer {
+                Self.fade(content, key: "opacity", from: content.presentation()?.opacity ?? Float(from), to: Float(target), animate: animate) {
+                    content.opacity = Float(target)
+                }
+            }
+        }
+    }
+
+    private static func fade(_ layer: CALayer, key: String, from: Any?, to: Any?, animate: Bool, set: () -> Void) {
+        set()
+        guard animate else { layer.removeAnimation(forKey: "floatOpacity"); return }
+        let animation = CABasicAnimation(keyPath: key)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = Motion.standard
+        animation.timingFunction = FloatFx.timing
+        layer.add(animation, forKey: "floatOpacity")
+    }
+
+    /// 작은 터미널 뷰의 기본 바탕: 100% 면 터미널이 칠하고(예전 그대로), 아니면 투명하게 두고 clip 레이어가 칠한다(그 알파가 투명도)
+    private func applyTerminalBackground() {
+        guard !isBrowser, let terminal = (content as? TerminalPaneSurface)?.terminal else { return }
+        terminal.backgroundOpacity = opacityPercent >= 100 ? 1 : 0
+    }
+
+    private func setOpacityPercent(_ percent: Int, persist: Bool = true) {
+        guard FloatOpacity.levels.contains(percent) else { return }
+        opacityPercent = percent
+        if persist { FloatOpacity.save(percent, browser: isBrowser) }
+        applyTerminalBackground()
+        refreshOpacity(animated: true)
+    }
+
+    @objc private func moreClicked() {
+        settingsMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: -2), in: moreButton)
+    }
+
+    /// 작은 창 자신의 메뉴: "투명도" ▸ 100·90·80·70%(고른 것에 체크)
+    private func settingsMenu() -> NSMenu {
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "투명도", action: nil, keyEquivalent: "")
+        let sub = NSMenu()
+        for percent in FloatOpacity.levels {
+            let entry = ClosureMenuItem(title: "\(percent)%") { [weak self] in self?.setOpacityPercent(percent) }
+            entry.state = percent == opacityPercent ? .on : .off
+            sub.addItem(entry)
+        }
+        item.submenu = sub
+        menu.addItem(item)
+        return menu
+    }
+
+    /// 시험 명령 `panel-opacity <browser|scratch> [퍼센트]`
+    private func debugCommand(_ note: Notification) {
+        guard let kind = note.userInfo?["kind"] as? String, kind == (isBrowser ? "browser" : "scratch"), window != nil else { return }
+        if let percent = note.userInfo?["percent"] as? Int, percent > 0 { setOpacityPercent(percent, persist: false) }
+        if note.userInfo?["blur"] as? Bool == true, hasKeyboardFocus { window?.makeFirstResponder(nil) } // 포커스를 이 창 밖으로(시험)
+        pointerInside = isPointerInside
+        refreshOpacity(animated: false)
+        if let path = note.userInfo?["snap"] as? String, !path.isEmpty { debugSnapshot(to: path) }
+        print("panel-opacity \(kind) chosen=\(opacityPercent) shown=\(String(format: "%.2f", Double(shownLevel))) hover=\(pointerInside) focus=\(keyFocused) "
+              + "mode=\(isBrowser ? "content" : "background") clipBgAlpha=\(String(format: "%.2f", Double(clip.layer?.backgroundColor?.alpha ?? -1)))"
+              + " terminalOpacity=\((content as? TerminalPaneSurface).map { String(format: "%.2f", Double($0.terminal.backgroundOpacity)) } ?? "-")"
+              + " contentOpacity=\(String(format: "%.2f", Double(container.layer?.opacity ?? 1))) z=\(superview?.subviews.firstIndex(of: self) ?? -1)/\(superview?.subviews.count ?? 0)")
+        fflush(stdout)
+    }
+
+    /// 시험: 이 창을 줄무늬 바탕 위에 층째 그린다(얼마나 비치는지 보려고 — 창 그림은 터미널 바탕을 빼먹는다)
+    private func debugSnapshot(to path: String) {
+        guard let layer = layer, let scale = window?.backingScaleFactor else { return }
+        let width = Int(bounds.width * scale), height = Int(bounds.height * scale)
+        guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.scaleBy(x: scale, y: scale)
+        ctx.setFillColor(NSColor.white.cgColor)
+        ctx.fill(CGRect(origin: .zero, size: bounds.size))
+        ctx.setFillColor(NSColor(srgbRed: 0.9, green: 0.2, blue: 0.5, alpha: 1).cgColor)
+        var y: CGFloat = 0
+        while y < bounds.height { ctx.fill(CGRect(x: 0, y: y, width: bounds.width, height: 10)); y += 24 }
+        // render(in:) 는 둥근 모서리 + 잘라내기 레이어의 바탕을 빼먹는다 — 그리는 동안만 잘라내기를 끈다
+        var masked: [CALayer] = []
+        func collect(_ l: CALayer) { if l.masksToBounds { masked.append(l); l.masksToBounds = false }; l.sublayers?.forEach(collect) }
+        collect(layer)
+        layer.render(in: ctx)
+        masked.forEach { $0.masksToBounds = true }
+        if let image = ctx.makeImage() {
+            try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        }
+    }
 
     // MARK: - 끌기: 가장자리는 이 뷰가 받는다(안쪽 브라우저 화면이 가로채지 않게)
 
@@ -242,6 +425,7 @@ final class FloatPanel: NSView {
         dragOrigin = host.convert(event.locationInWindow, from: nil)
         dragFrame = frame
         onGestureBegan?()
+        refreshOpacity(animated: true) // 끄는 동안은 불투명
     }
 
     private func dragged(_ event: NSEvent) {
@@ -285,6 +469,8 @@ final class FloatPanel: NSView {
         if frame != dragFrame { onFrameChanged?(frame) }
         layoutSubtreeIfNeeded() // 안쪽 화면이 마지막 크기로 자리 잡은 뒤 페이지를 맞추게
         onGestureEnded?()
+        pointerInside = isPointerInside
+        refreshOpacity(animated: true)
     }
 
     /// 끄는 중에 창이 호스트에서 빠졌다(세션이 바뀌어 닫힘 등): 마우스 뗌이 오지 않으므로 끝을 알린다
@@ -314,6 +500,10 @@ final class FloatPanel: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         invalidateCursors()
+        observeWindow()
+        // 열릴 때는 애니메이션 없이 바로 그 상태로
+        pointerInside = isPointerInside
+        refreshOpacity(animated: false)
         // 열릴 때 떠오르듯 나타난다(앱이 막 뜨는 동안 복원되는 창은 그냥 나타난다)
         if window != nil, Self.pastLaunch { FloatFx.fadeIn(self, duration: Motion.standard, dy: -6) }
     }
@@ -344,7 +534,12 @@ final class FloatPanel: NSView {
         for rect in rects {
             addTrackingArea(NSTrackingArea(rect: rect, options: [.cursorUpdate, .activeInKeyWindow], owner: self))
         }
+        // 포인터가 창 위에 있는지(투명도)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
     }
+
+    override func mouseEntered(with event: NSEvent) { pointerInside = true; refreshOpacity(animated: true) }
+    override func mouseExited(with event: NSEvent) { pointerInside = false; refreshOpacity(animated: true) }
 
     override func cursorUpdate(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
@@ -395,6 +590,9 @@ final class FloatTitleStrip: NSView {
     var onDragBegan: ((NSEvent) -> Void)?
     var onDragMoved: ((NSEvent) -> Void)?
     var onDragEnded: (() -> Void)?
+    /// 오른쪽 클릭 메뉴(작은 창 메뉴와 같다)
+    var menuProvider: (() -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? { menuProvider?() }
 
     override var mouseDownCanMoveWindow: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -409,4 +607,18 @@ final class FloatTitleStrip: NSView {
         TermAppearance.border.setFill()
         NSRect(x: 0, y: 0, width: bounds.width, height: 1).fill()
     }
+}
+
+/// 작은 창 투명도: 종류(브라우저 / 작은 터미널)마다 UserDefaults 에 퍼센트 정수로 둔다.
+/// 키 `floatPanel.opacity.browser`·`floatPanel.opacity.terminal` — 100(기본, 예전 모습)·90·80·70. 없거나 다른 값이면 100.
+enum FloatOpacity {
+    static let levels = [100, 90, 80, 70]
+    static func key(browser: Bool) -> String { browser ? "floatPanel.opacity.browser" : "floatPanel.opacity.terminal" }
+    static func load(browser: Bool) -> Int {
+        let value = UserDefaults.standard.integer(forKey: key(browser: browser))
+        return levels.contains(value) ? value : 100
+    }
+    static func save(_ percent: Int, browser: Bool) { UserDefaults.standard.set(percent, forKey: key(browser: browser)) }
+    /// 시험 명령 `panel-opacity` 가 보낸다(userInfo: kind = browser|scratch, percent)
+    static let debugNotification = Notification.Name("AgentDeck.debugPanelOpacity")
 }

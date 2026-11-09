@@ -227,6 +227,14 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
   `sides[.browser] = .hidden`(도크와 작은 창은 한 곳만)이라 도크 배치 논리가 그대로다.
   안의 내용은 `BrowserDockController` 가 보여 주는 같은 칸(옮겨 달기, 도구가 보일 때만 스트림, `docked` 크기). ⌘W 는 작은 창만 닫는다.
   시험: `dock browser float`, `uilayout`·`browsers`(`browser-float` 줄: 방식·저장된 자리·창 좌표 자리).
+- **작은 창 투명도(`FloatPanel`, 브라우저 작은 창·작은 터미널 둘 다):** 제목 줄의 "⋯" 버튼(또는 제목 줄 오른쪽 클릭) → "투명도" ▸ 100·90·80·70%(고른 것에 체크, 기본 100% = 예전 모습).
+  종류마다 따로 `UserDefaults` 에 정수 퍼센트로 둔다: `floatPanel.opacity.browser`·`floatPanel.opacity.terminal`(없거나 다른 값이면 100). 다시 켜도 유지.
+  포인터가 창 위에 있거나, 키보드 포커스가 창 안(브라우저 화면·터미널·찾기 막대)에 있거나, 창을 끄는 중이면 100%, 포인터가 나가고 포커스도 없으면 고른 값으로 돌아온다
+  (`Motion.standard` 0.2초 ease-out, 동작 줄이기·창이 처음 놓일 때는 바로). 제목 줄·테두리·그림자는 늘 또렷하고 안쪽만 옅어진다:
+  브라우저는 안쪽 내용 전체(페이지 그림 포함)의 opacity 와 바탕 알파, 작은 터미널은 바탕만 — 터미널 뷰의 기본 바탕(`backgroundOpacity` 0)을 투명하게 두고 창 바탕 레이어의 알파가 투명도라 글자·커서는 그대로 불투명하다
+  (100% 일 때는 터미널이 바탕을 직접 칠해 예전과 같다; 모양이 바뀌면 터미널이 바탕을 불투명으로 다시 칠하므로 한 번 더 건다).
+  창의 `alphaValue`(자동 열기·닫기의 나타남이 쓴다)는 건드리지 않는다. 별도 브라우저 창(`BrowserWindowController`)에는 적용하지 않는다(작은 창만).
+  시험: `panel-opacity <browser|scratch> [100|90|80|70] [blur] [/절대경로.png]`(저장하지 않고 상태 한 줄 출력, blur = 포커스를 창 밖으로, 경로 = 줄무늬 바탕 위에 층째 그린 그림), `layer-snap <경로>`(주 창을 층째).
 - **작은 터미널(⌃`, `ScratchTerminals`·`ScratchToggleButton`):** 🌐 왼쪽(8pt)의 터미널 버튼(28pt, `terminal` 기호; 열리면 `terminal.fill` + 밝은 바탕, 닫아 둔 채 명령이 돌면 숨 쉬는 `statusWorking` 점. 두 버튼의 공통 바탕은 `FloatPillButton`)이
   고른 세션의 임시 셸 창을 켜고 끈다. 창은 `FloatPanel`(호스트의 50%×40%, 최소 360×200)이고 **기본 자리는 이 세션의 브라우저가 보이는지에 따라 다르다**(`ToolLayout.terminalRect`·`terminalRectKind`, 순수 함수 `FloatSpec.defaultRect(in:corner:edgeInset:besideBrowser:)`): 브라우저가 안 보이면 터미널 혼자 구석에 붙는다(오른쪽 위면 버튼 줄 아래, 오른쪽 아래면 🌐 버튼 위 — 브라우저와 같은 쪽·같은 edgeInset); 함께 보이면 나란히(오른쪽 위는 브라우저 처음 자리의 왼쪽 같은 높이에서 겹치지 않게 — 모자라면 폭을 줄이되 최소 폭까지, 오른쪽 아래는 왼쪽 아래 14pt). 브라우저가 열리고 닫힐 때(세션 전환 포함) 터미널이 아직 기본 자리면 다시 놓는다(크기가 같으면 0.18초 미끄러짐 — 줄바꿈이 일어나지 않게 자리만 바뀔 때만). 끌거나 크기를 바꿔 저장된 자리(`terminalFloat.frame`)는 자동으로 옮기지 않는다. "크게" 는 그대로. `scratch-state` 의 `rect=default-alone|default-beside|saved` 로 확인. 창은 제목은 "⌨ 터미널 · 세션 이름 · 폴더",
   버튼은 끝내기(셸 종료, 다음엔 새 셸 — 되돌릴 수 없어 "크게"와 8pt 떨어지고 올리면 빨강)·크게/작게·✕(숨김, 셸은 계속). 제목은 "터미널"(시스템 semibold) + 이름·폴더(고정폭, `textSecondary`). 창은 나타날 때 투명 → 불투명 + 아래에서 6pt 떠오르고 닫힐 때 같은 모습이 내려앉으며 사라진다(`Motion.standard`, 동작 줄이기·앱이 막 뜬 3초 안에는 없음). **세션마다 임시 셸 하나**, 처음 열 때 만들고 작업 폴더 = 그 세션의 지금 폴더

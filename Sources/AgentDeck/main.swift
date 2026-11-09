@@ -606,6 +606,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             default: print("scratch 사용법: show | hide | toggle | end")
             }
             fflush(stdout)
+        case "layer-snap":
+            // layer-snap <경로.png>: 주 창 내용을 층(layer)까지 그린다(cacheDisplay 가 빼먹는 층 바탕·반투명 확인용)
+            guard let view = window?.contentView, let layer = view.layer, let backing = window?.backingScaleFactor else { return }
+            let width = Int(view.bounds.width * backing), height = Int(view.bounds.height * backing)
+            guard let ctx = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+            ctx.scaleBy(x: backing, y: backing)
+            layer.render(in: ctx)
+            if let image = ctx.makeImage() {
+                try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: argument))
+            }
+        case "panel-opacity":
+            // panel-opacity <browser|scratch> [퍼센트 100|90|80|70] [blur]: 작은 창 투명도(저장하지 않는다). 상태 한 줄을 찍는다
+            let v = argument.split(separator: " ").map(String.init)
+            NotificationCenter.default.post(name: FloatOpacity.debugNotification, object: nil,
+                                            userInfo: ["kind": v.first ?? "", "percent": v.count > 1 ? Int(v[1]) ?? -1 : -1, "blur": v.contains("blur"), "snap": v.first(where: { $0.hasPrefix("/") }) ?? ""])
         case "scratch-state":
             // 주인 세션·임시 셸 화면 ID·보임·자리·버튼 자리(창 좌표)
             print(toolWindows?.debugScratch ?? "scratch-state -")
