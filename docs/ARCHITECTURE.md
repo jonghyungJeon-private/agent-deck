@@ -191,7 +191,7 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
 - **보이는 곳:** 세션 창 오른쪽 아래 🌐 버튼(`BrowserToggleButton`) — 읽을 만한 상태(에이전트 제어 중·내가 조작 중·내 조작 필요 !·넘겨받는 중)면
   오른쪽 아래 자리를 지킨 채 왼쪽으로 늘어나 🌐 + 상태 글자 알약(에이전트 제어 중만 `agent` 초록 테두리·글자, 내 조작 필요는 빨강 점, 결과 있음은 `statusDone`, 그 밖은 중립), 쉬는 중·없음은 28pt 버튼. 화면 제목 줄 칩은 없앴다
   (0.9.x 까지 `SplitContainerView.setChips`; `BrowserChipView` 는 브라우저 창 머리 줄의 상태 알약으로만 쓴다). spaces 목록 세션 줄에도 🌐(상태 색, 기다림은 !).
-  🌐 버튼·목록 아이콘·⇧⌘B("브라우저 보이기") = 그 세션의 브라우저.
+  🌐 버튼·목록 아이콘·⇧⌘B(셸 메뉴 "브라우저 열기") = 그 세션의 브라우저.
 - **나를 기다림:** Dock 배지(터미널 대기와 합쳐 화면당 한 번), macOS 알림("브라우저 · <세션>" + 에이전트 글 — 누르면 그 창, 그 창을 보고
   있으면 알리지 않음, 앱을 켠 첫 상태는 기억만, 같은 글은 한 번). 내가 가져온 것은 알리지 않는다.
 - **표시 방식(0.9, `BrowserCore/BrowserDisplay`, 별도 창 머리 줄 "⋯" 메뉴 · 작은 창 제목 줄 "별도 창으로 떼기"):** 보는 곳(별도 창 / 세션 창 안) + 창 동작(일반 창[기본] /
@@ -392,6 +392,8 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
 
 - 셸·claude 는 앱이 아니라 `AgentDeckDaemon` 이 붙잡고 있다. 앱을 끄거나 다시 빌드해도 계속 돌고, 앱을 다시 켜면 그대로 붙는다.
   데몬은 화면도 앱 연결도 없이 60초가 지나면 스스로 끝난다. 재부팅하면 셸·claude 는 끝난다.
+- 터미널 격자 양옆에는 `TerminalPaneSurface.gridInset`(8pt, 글꼴 배율을 따름)만큼 여백을 둔다(사이드바를 숨겨도 글자가 창 가장자리·구분선에 붙지 않게). 바탕은 가장자리까지 같은 색으로 칠하고
+  터미널 뷰만 안쪽에 앉으므로 열 수는 그 폭이 정한다(세션 화면·작은 터미널 모두 같은 `TerminalPaneSurface`). 커서는 앱 강조색(`accent`, 두 모드)이다.
 - 메모리: 앱은 지금 탭에 보이는 화면만 터미널 뷰를 만든다(다른 탭은 데몬이 화면당 최대 2MB 의 지난 출력만 보관).
   그래서 탭이 늘어도 앱 메모리는 거의 그대로다(화면 6개로 나눈 탭도 약 76MB). 실측(M 시리즈, release): 앱 빈 상태 28MB, 화면 보는 중 약 62~65MB(뒤로 보기 2,000줄), 데몬 3~9MB.
   글자가 화면에 찍히는 동안(입력·claude 작업 중)은 macOS 가 그리기용 그래픽 메모리를 약 +130MB 붙였다가, 멈추고 몇 초 뒤 돌려준다.
@@ -429,7 +431,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   되살리기 정보(`claudeArgs`·`codexArgs`)에 남으므로, 되살릴 때는 그 세션을 띄운 옵션을 쓰고 지금 기본값은 넣지 않는다(허용 목록에 없는 추가 인자는 빠짐).
   권한 확인 건너뛰기가 켜지면 `--permission-mode` 를, yolo(`--dangerously-bypass-approvals-and-sandbox`)가 켜지면 승인·샌드박스를 넣지 않는다.
   값 목록은 claude 2.1.303·codex-cli 0.162.1 의 `--help` 기준(codex `-a` 는 on-request·never 만 받는다). 파일에 빠진·모르는 칸은 기본값으로 읽는다.
-  권한·승인·샌드박스를 건너뛰는 인자(`LaunchDanger`)로 뜬 화면은 spaces 줄에 ⚠, 탭 풍선 도움말에 ⚠ 설명, + 버튼도 기본값이 그러면 ⚠.
+  권한·승인·샌드박스를 건너뛰는 인자(`LaunchDanger`)로 뜬 화면은 spaces 줄에 ⚠, 탭 풍선 도움말에 ⚠ 설명, + 버튼도 기본값이 그러면 모서리에 작은 위험 색 점(폭을 늘리지 않음)·풍선 도움말에 ⚠ 설명, 푸터 설정 톱니는 ⚠.
 - 지난 출력을 다시 그리는 동안 터미널이 내는 응답·클립보드 쓰기는 버린다(예전 질의의 답이 지금 claude 입력으로 새지 않게).
 - 지난 출력은 앞에서부터 잘리므로 긴 claude 세션은 맨 앞의 대체 화면 켜기(`ESC[?1049h`)가 사라진다. 그대로 다시 그리면
   claude 화면이 보통 화면에 남고 `/exit` 뒤 "Resume this session with:" 가 그 위에 겹쳐 보였다.
@@ -466,16 +468,22 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
 - **탭 줄 = 창 제목 줄 (`MainWindowChrome`·`WindowChrome`, `WindowChrome.swift`):** 메인 창은 `.fullSizeContentView` + 투명 제목 줄 + `titleVisibility = .hidden` 이라 내용이 창 맨 위까지 올라오고 탭 줄이 제목 줄 자리에 앉는다
   (칠해진 제목 줄 띠가 없다). **창 제목 = 고른 세션 이름, 부제 = 그 폴더**(홈은 `~`, 편집기는 파일이 든 폴더, 세션이 없으면 "AgentDeck")를 계속 설정해 창 메뉴·Mission Control 이 읽는다(`WindowChrome.windowTitle`).
   - **신호등 자리:** 왼쪽 도크가 보이면 도크 맨 위의 빈 줄(`DockViewController.windowBand`, 탭 줄과 같은 높이 `TerminalHostController.tabBarHeight` — 이 한 값이 도크 위 여백이다)이 신호등을 품는다(Finder·Xcode 처럼).
+    도구 버튼 줄(spaces/files)이 있고 도크가 신호등 옆에 들어갈 만큼 넓으면(`WindowChrome.dockTop`: 도크 폭 ≥ 신호등 오른쪽 끝 + 12 + 칸 폭 + 4) 그 줄이 신호등 줄에 앉고(오른쪽 도크와 같은 규칙 — 버튼 줄이 맨 위 줄) 빈 줄은 없다.
+    더 좁으면 빈 줄 아래에 버튼 줄. 도구가 하나뿐이면 왼쪽은 신호등 줄 + 그 도구의 머리 줄, 오른쪽은 머리 줄이 맨 위 줄(탭 줄과 같은 높이로 맞춤). 전체 화면에는 신호등이 없어 빈 줄도 없다.
     도크가 숨었거나 오른쪽에 있으면 탭 줄이 왼쪽을 비운다: `TabBarView.leadingInset = WindowChrome.leadingInset(lightsMaxX, contentMinX, gap 12)` — 탭 줄 시작이 신호등 오른쪽 끝(+12pt)보다 멀면 0, 아니면 모자란 만큼.
     신호등 오른쪽 끝은 `standardWindowButton(.zoomButton)` 의 창 좌표에서 읽고(전체 화면이면 0), 도크를 끌어 접거나 창 크기·전체 화면이 바뀔 때마다 다시 계산한다(`ToolWindowsController.tabBarChanged` ← 호스트 폭 변화·`MainWindowChrome.onChange`).
-  - **신호등 세로 가운데:** 시스템 자리는 위에서 6pt(28pt 제목 줄 기준)라 탭 줄(32pt, ⌘+ ⌘− 배율에 따라 커짐) 가운데와 어긋나므로 `MainWindowChrome.positionTrafficLights` 가 세 단추의 세로 자리만 줄 높이 가운데로 옮긴다(가로는 그대로).
+  - **신호등 세로 가운데:** 시스템 자리는 위에서 6pt(28pt 제목 줄 기준)라 탭 줄(32pt, ⌘+ ⌘− 배율에 따라 커짐) 가운데와 어긋나므로 `MainWindowChrome.positionTrafficLights` 가 세 단추의 세로 자리만 줄 높이 가운데로 옮긴다(가로는 그대로). 큰 글꼴 배율에서 탭 줄이 제목 줄 뷰(28pt)보다 높아지면
+    단추가 뷰 밖으로 나가 아래쪽이 클릭을 못 받으므로(탭 줄로 가서 창이 끌린다) 뷰 안에 가둔다(`WindowChrome.lightsTop` — 가운데보다 조금 위). 시스템이 창 크기를 바꾸는 중·전체 화면을 오갈 때 단추를 제자리로 되돌리므로
+    단추와 그 부모(제목 줄 뷰)의 틀 바뀜(`NSView.frameDidChangeNotification`)을 직접 들어 레이아웃 도중에 다시 앉힌다(한 프레임도 어긋나 보이지 않게; `didUpdate` 는 안전망, 전체 화면을 오가면 부모가 바뀌므로 그때마다 다시 건다).
     시스템이 창을 처음 보일 때·크기를 바꿀 때 되돌리므로 `didUpdate`·`didResize`·전체 화면 알림마다 자리만 확인한다(같으면 아무것도 안 한다). 전체 화면에서는 건드리지 않는다.
   - **창 끌기·두 번 누르기:** 탭 줄의 빈 곳(신호등 자리·"+" 오른쪽·알약 사이), 왼쪽 도크 맨 위 줄, 도구 버튼 줄의 빈 곳은 `WindowDragging.mouseDown` 이 끌면 `performDrag`, 두 번 누르면 시스템 설정
-    (`AppleActionOnDoubleClick` Maximize/Minimize/None, 없으면 `AppleMiniaturizeOnDoubleClick`)대로 확대·최소화·아무것도 안 함(`WindowChrome.doubleClickAction`). 탭·"+"·⌄ 위는 그대로 탭 동작(`mouseDownCanMoveWindow` 는 false 라 탭을 끌 때 창이 같이 움직이지 않는다).
+    (`AppleActionOnDoubleClick` Maximize/Minimize/None, 없으면 `AppleMiniaturizeOnDoubleClick`)대로 확대·최소화·아무것도 안 함(`WindowChrome.doubleClickAction`). macOS 15 의 "Fill"(창 맞춤)은 흉내 내지 않고 확대/축소로 처리한다. 탭·"+"·⌄ 위는 그대로 탭 동작(`mouseDownCanMoveWindow` 는 false 라 탭을 끌 때 창이 같이 움직이지 않는다).
   - **빈 화면:** 탭 줄은 탭이 없어도 높이를 가진 채 줄(바탕·아래 경계)만 그린다("+" 는 안 그린다). 알약은 그 줄 안, 안내 글은 줄 아래 영역의 가운데.
 - **탭 줄 넘침(`TabBarView`·`TabBarFit.visibleRange`):** 제목은 먼저 최소 24pt 까지 줄어든다. 탭을 ⌄ 로 보낼지는 알아볼 수 있는 폭(제목 48pt + 탭 여백)을 기준으로 가른다: 그 폭으로도 신호등 자리·"+"·알약 자리를 뺀 폭에 안 들어가면
-  보일 탭의 이어진 구간(맨 앞부터, 고른 탭이 밖이면 고른 탭이 들어올 때까지 오른쪽으로 민다 — 고른 탭은 늘 보인다)만 남기고 나머지는 "+" 오른쪽의 `chevron.down` 단추 메뉴에 둔다.
-  메뉴 항목 = 종류 아이콘 + 이름 + (있으면) 상태 글자(`WorkStatus.label`), 고르면 그 탭으로 가고 탭 줄이 미끄러져 그 탭이 보인다. 단추 풍선 도움말 "숨은 탭 N개 보기". "+" 는 늘 보이고,
+  보일 탭의 이어진 구간만 남기고 나머지는 "+" 오른쪽의 `chevron.down` 단추 메뉴에 둔다. 구간은 가만히 있는다(`previousStart`): 고른 탭이 지난 구간 안이면 그대로, 밖이면
+  고른 탭이 보일 만큼만 민다(왼쪽 밖 = 고른 탭이 맨 앞, 오른쪽 밖 = 들어올 때까지 한 칸씩) — 고른 탭은 늘 보인다. 오른쪽 끝에 빈자리가 남으면(탭이 닫히거나 창이 넓어짐) 그만큼만 왼쪽을 더 보인다.
+  메뉴 항목 = 모든 탭(종류 아이콘 + 이름 + 상태 글자 + 폴더(고정폭, 홈은 ~), ⌘숫자, 지금 탭에 ✓ — 같은 이름의 탭을 가른다). 고르면 그 탭으로 가고(탭 번호가 아니라 탭 식별 `TabBarView.Tab.id` 로 찾으므로 메뉴가 열린 동안 탭이 닫히거나 옮겨져도 엉뚱한 탭으로 가지 않는다) 탭 줄이 미끄러져 그 탭이 보인다.
+  선택된 탭의 강조 줄은 창 윗선에 붙지 않게 1pt 띄우고 양옆을 들인 둥근 2pt 선이다. 단추 풍선 도움말 "숨은 탭 N개 보기". "+" 는 늘 보이고,
   안 보이는 탭은 폭 0 자리(왼쪽에 숨은 것은 맨 앞, 오른쪽에 숨은 것은 보이는 끝)로 두어 끌어 순서 바꾸기·⌘숫자는 전체 탭 번호 그대로 동작한다(보이는 끝으로 끌면 숨은 오른쪽 탭들 앞에 놓인다).
   알약이 탭 줄 안에 앉는 조건의 "최소 폭"은 신호등 자리 + 탭 하나 + "+" + ⌄ 로 바뀌었다(나머지는 ⌄ 가 맡으므로 탭이 많아도 알약이 줄 아래로 밀리지 않는다). 시험: `chrome`(신호등·제목 줄 뷰·탭 줄 왼쪽 비움·숨은 탭),
   `overflow [pick <n>|open <초>]`, `hit <x> <y>`(제목 줄 영역에서 마우스가 닿는 뷰), `mouse down|drag|up <x> <y> [누른 횟수]`, `snapshot-frame <png>`(신호등까지 든 창 그림), `activate`, `zoom-window`.
@@ -488,7 +496,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   claude 세션 자체의 이름(`claude --resume` 목록)은 바꾸지 않는다.
 - 도구 창(IntelliJ 식): 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구는 **spaces**(세션 목록)와 **files**(파일 트리) 둘이고,
   각각 왼쪽·오른쪽·숨김 중 한 곳에 붙는다. 한 도크에 둘이 붙으면 위에 도구 버튼 줄(고른 것은 강조색)이 생기고, 보이는 도구가 없는 도크는 접힌다.
-  도구 버튼·머리 줄 오른쪽 클릭 = "왼쪽에 두기"·"오른쪽에 두기"(지금 자리에 진짜 ✓)·숨기기 — 단축키 글자는 메뉴 막대(보기)에만 둔다. 보기 메뉴에도 있다.
+  도구 버튼·머리 줄 오른쪽 클릭 = "왼쪽에 두기"·"오른쪽에 두기"(지금 자리에 진짜 ✓)·가리기 — 단축키 글자는 메뉴 막대(보기)에만 둔다. 보기 메뉴에도 있다.
   ⌘⇧E files, ⌘⇧S spaces: 숨김이면 마지막 쪽에 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김(한글 입력 중에도 키 위치로).
   ⌘⇧E 로 열면 트리에 포커스가 가고, Esc 는 터미널로 돌아간다.
   기본값은 spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 의 Project 창 자리, 터미널 폭은 그대로). 배치·고른 도구·도크 폭은 `term/ui.json`
@@ -579,7 +587,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   - 상태: `statusAttention`(빨강, 내 조작 필요 = 입력 대기 ◉·오류 !)과 `statusDone`(세이지 초록, 결과가 나옴 ●)만 색으로 주의를 끈다.
     `statusWorking`(주 글자색, 숨 쉬는 점)·`statusIdle`(○)·`statusOrchestrating`(점선 ◌)·`statusNone`(흐린 점)은 중립이고 모양으로 구분한다.
   - `warning`·`warnText` 호박색 = 경고와 사용량 70% 이상만(작업 중에는 쓰지 않는다).
-  - `danger`·`dangerText`·`dangerFill` 난초색(자주, OKLCH 색상 318) = 안전장치를 약하게 하는 설정 전용(권한 확인·승인·샌드박스 건너뛰기). 설정 › 새 세션의 위험 스위치 켜짐 바탕(`dangerFill`), 그 아래 ⚠ 경고 줄과 명령 미리보기의 위험한 인자(`dangerText`)에만 쓴다. 빨강(`statusAttention`, 내 조작 필요)·호박(경고)·종류 색과 뜻도 색도 섞지 않는다(ΔE 14 이상, `AppearanceTests.testDangerRoleIsReadableAndDistinct`). 빨강·주황 계열은 `statusAttention`·`typeClaude` 와 구분되지 않아 비어 있는 보라~자주 자리를 골랐다. 적록·청황 색각 이상에서는 잉크 블루와 가까워지므로 색만으로 알리지 않는다(⚠ 기호 + 문장 + 플래그 이름이 항상 함께). 사이드바 + 버튼·푸터 설정 단추의 ⚠ 는 아직 `warning`(호박) — 다음 통합에서 `danger` 로 옮긴다.
+  - `danger`·`dangerText`·`dangerFill` 자주색(어두운 모드는 낮은 채도의 연한 자주 `#cf88c8`·`#ab61a5`, 밝은 모드 `#731a8a`·`#8e32a7`) = 안전장치를 약하게 하는 설정 전용(권한 확인·승인·샌드박스 건너뛰기). 설정 › 새 세션의 위험 스위치 켜짐 바탕(`dangerFill`), 그 아래 경고 줄의 ⚠ 기호와 옵션 이름(`bypassPermissions`·`danger-full-access`, 고정폭), 명령 미리보기의 위험한 인자(`dangerText`)에만 쓴다 — 경고 **문장**은 `textPrimary`(문장 전체가 색으로 칠해지지 않게). 빨강(`statusAttention`, 내 조작 필요)·호박(경고)·종류 색과 뜻도 색도 섞지 않는다(ΔE 14 이상 — 잉크 블루 13.5, 어두운 모드의 빨강 10·보조 글자색 12 — 그리고 없앤 연보라 `#c099ff` 와 8 이상, `AppearanceTests.testDangerRoleIsReadableAndDistinct`). 빨강·주황 계열은 `statusAttention`·`typeClaude` 와 구분되지 않아 비어 있는 보라~자주 자리를 골랐다. 적록·청황 색각 이상에서는 잉크 블루와 가까워지므로 색만으로 알리지 않는다(⚠ 기호 + 문장 + 플래그 이름이 항상 함께). 푸터 설정 톱니의 ⚠ 와 세션 줄 ⚠ 는 `danger`, 사이드바 + 버튼에는 글 폭을 늘리지 않는 작은 `danger` 점만 단다(머리 줄이 "+ 새 세션" 으로 접히지 않게).
   - `agent`·`onAgent` 초록 = 브라우저에서 AI 가 조작 중(테두리·알약·커서·AI 칩, 그 위 글자). `human` = 내가 조작 중(중립).
   - 그 밖: `markdownQuote`·`markdownTableStripe`·`markdownHighlight`(미리보기, 불투명), 편집기·git·구문 색은 색조를 그대로 두고 값만 새 바탕에 맞췄다.
   - **대비 하한:** 글자(12pt 이하) 4.5:1, 점·아이콘·포커스 표시 3:1 — 사이드바(`chrome`)·고른 줄(`chromeRaised`)·터미널 바탕 위에서 두 모드 모두(`AppearanceTests` 가 확인).
@@ -661,14 +669,14 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
 
 ## 메뉴 막대
 
-- 순서: AgentDeck · 파일 · 편집 · 셸 · 이동 · 보기 · **윈도우** · **도움말**(`main.swift` `buildMenu`). macOS 표준 틀을 따른다.
+- 순서: AgentDeck · 파일 · 편집 · **보기** · 셸 · 이동 · **윈도우** · **도움말**(`main.swift` `buildMenu`). macOS 표준 틀을 따른다.
   - 앱 메뉴: 설정 아래 앱 항목들 뒤에 **서비스**(`NSApp.servicesMenu`, 시스템이 채움). "AgentDeck 종료"는 제목 그대로고 "앱을 꺼도 세션은 계속 실행됩니다"는 항목 풍선 도움말.
   - 윈도우(`NSApp.windowsMenu`): 최소화 ⌘M · 확대/축소 · 모두 앞으로 가져오기, 아래에 열린 창 목록(시스템). 작은 창(FloatPanel)은 창이 아니라 뷰라 목록에 없다. ⌘M 은 다른 단축키와 겹치지 않는다(`shortcuts` 에 없음).
   - 도움말(`NSApp.helpMenu`): "AgentDeck 도움말" 하나 → 릴리스 확인과 같은 저장소의 README(`UpdateCheck.repository`). 메뉴 검색 칸은 시스템이 붙인다.
-- 보기 메뉴의 켜고 끄는 항목은 **지금 상태를 제목에 쓴다**(`AppDelegate.refreshStateLabels`, `validateMenuItem` 에서): "files 보이기" ↔ "files 숨기기", spaces 도 같고,
-  "작은 터미널 보이기/숨기기", "세션 크게 보기" ↔ "세션 크기 되돌리기", 브라우저는 "브라우저 보이기" ↔ "브라우저 숨기기"(`tool-toggle:browser`). 브라우저의 이름은 하나다 —
-  셸 메뉴 "브라우저 보이기"(⇧⌘B, 보는 곳에 열기)와 같은 말. 보기 메뉴의 "browser 위치" 하위 메뉴는 없앴다(작은 창 켜기·끄기 = 위 항목, 시험 명령 `dock browser float|hidden` 은 그대로).
-  files·spaces "위치" 하위 메뉴(왼쪽·오른쪽·숨김)는 지금 자리에 진짜 ✓(`state`)를 단다.
+- 보기 메뉴의 켜고 끄는 항목은 **지금 상태를 제목에 쓴다**(`AppDelegate.refreshStateLabels`, `validateMenuItem` 에서): "files 보기" ↔ "files 가리기", spaces 도 같고,
+  "작은 터미널 보기/가리기", "세션 크게 보기" ↔ "세션 크기 되돌리기", 브라우저는 "브라우저 보기" ↔ "브라우저 가리기"(`tool-toggle:browser`) — 보이기/숨기기 쌍은 macOS 한국어 관례(시스템 메뉴의 "가리기"·"모두 보기")인
+  **보기 / 가리기** 로 쓴다(메뉴·오른쪽 클릭 메뉴·풍선 도움말 모두). 셸 메뉴 "브라우저 열기"(⇧⌘B)는 다른 동작이라(그 세션이 보도록 정한 곳 — 작은 창·세션 창 안·별도 창 — 에 연다) 이름을 달리한다. 보기 메뉴의 "browser 위치" 하위 메뉴는 없앴다(작은 창 켜기·끄기 = 위 항목, 시험 명령 `dock browser float|hidden` 은 그대로).
+  files·spaces "위치" 하위 메뉴(왼쪽·오른쪽·가리기)는 지금 자리에 진짜 ✓(`state`)를 단다.
 - 오른쪽 클릭 메뉴(사이드바 머리 줄 `SidebarView`, 도구 버튼·머리 줄 `ToolWindows.menu(for:)`)는 제목에 ✓ 글자나 단축키 글자를 넣지 않는다 — "왼쪽에 두기"·"오른쪽에 두기"는 SwiftUI `Toggle`/`NSMenuItem.state` 로 진짜 ✓.
 - 기기 메뉴(`DeviceMenu`)는 면책 줄 대신 머리 줄 기기 버튼 풍선 도움말과 "직접 크기 입력" 창에 같은 말을 둔다. 이름에 크기가 든 기기("Laptop 1280×800")는 크기를 한 번만 적고, 이름 속 `1280x800` 의 x 도 ×로 맞춘다.
   "최근"은 macOS 14 이상에서 시스템 구역 머리(`NSMenuItem.sectionHeader`), 13 은 꺼진 작은 글 줄.

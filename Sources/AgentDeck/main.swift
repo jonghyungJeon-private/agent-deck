@@ -58,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         let chrome = MainWindowChrome(window: window, rowHeight: { TerminalHostController.tabBarHeight })
         windowChrome = chrome
         tools.lightsMaxX = { [weak chrome] in chrome?.lightsMaxX ?? 0 }
+        tools.repositionLights = { [weak chrome] in chrome?.positionTrafficLights() }
         chrome.onChange = { [weak tools] in tools?.windowChromeChanged() }
         host.onWindowTitleChanged = { [weak window] title, subtitle in
             guard let window else { return }
@@ -106,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         model.saveLayoutNow()
     }
 
-    /// 켰다 껐다 하는 메뉴의 제목·✓ 를 지금 상태에 맞춘다(보기 메뉴): "files 보이기" ↔ "files 숨기기", 자리 항목의 ✓
+    /// 켰다 껐다 하는 메뉴의 제목·✓ 를 지금 상태에 맞춘다(보기 메뉴): "files 보기" ↔ "files 가리기", 자리 항목의 ✓
     private func refreshStateLabels(_ menuItem: NSMenuItem) {
         guard let action = menuItem.representedObject as? String else { return }
         let parts = action.split(separator: ":").map(String.init)
@@ -114,12 +115,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "tool-toggle":
             guard parts.count == 2, let tool = ToolID(rawValue: parts[1]), let layout = toolWindows?.layout else { return }
             if tool == .browser {
-                menuItem.title = layout.isBrowserShown ? "브라우저 숨기기" : "브라우저 보이기"
+                menuItem.title = layout.isBrowserShown ? "브라우저 가리기" : "브라우저 보기"
             } else {
-                menuItem.title = "\(parts[1]) " + (layout.isVisible(tool) ? "숨기기" : "보이기")
+                menuItem.title = "\(parts[1]) " + (layout.isVisible(tool) ? "가리기" : "보기")
             }
         case "scratch-toggle":
-            menuItem.title = toolWindows?.layout.terminalFloat.shown == true ? "작은 터미널 숨기기" : "작은 터미널 보이기"
+            menuItem.title = toolWindows?.layout.terminalFloat.shown == true ? "작은 터미널 가리기" : "작은 터미널 보기"
         case "zoom":
             menuItem.title = model.workspace.selectedTab?.zoomed == true ? "세션 크기 되돌리기" : "세션 크게 보기"
         case "tool-move":
@@ -264,7 +265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         addAction(shell, "새 탭", "new-tab", "t")
         addAction(shell, "오른쪽으로 나누기", "split-right", "d")
         addAction(shell, "아래로 나누기", "split-down", "d", [.command, .shift])
-        addAction(shell, "브라우저 보이기", "browser", "b", [.command, .shift])
+        addAction(shell, "브라우저 열기", "browser", "b", [.command, .shift])
         addAction(shell, "Chrome 로그인 가져오기…", "chrome-import", "")
         shell.addItem(.separator())
         addAction(shell, "세션 닫기", "close", "w")
@@ -274,7 +275,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         shell.addItem(.separator())
         addAction(shell, "이름 바꾸기…", "rename", "")
         addAction(shell, "세션을 새 탭으로 꺼내기", "extract-pane", "")
-        addSubmenu(main, shell)
 
         // 이동(IntelliJ 식). ⌘[ ⌘] 는 편집기 화면에서만 뒤로·앞으로(터미널에선 이전·다음 화면)
         let navigate = NSMenu(title: "이동")
@@ -287,7 +287,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         navigate.addItem(.separator())
         addAction(navigate, "뒤로", "nav-back", "[")
         addAction(navigate, "앞으로", "nav-forward", "]")
-        addSubmenu(main, navigate)
 
         let view = NSMenu(title: "보기")
         // Markdown 파일: 편집 ↔ 미리보기(Markdown 편집기 화면일 때만 켜진다)
@@ -320,23 +319,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             addAction(view, number == 9 ? "마지막 탭" : "탭 \(number)", "tab:\(number)", "\(number)")
         }
         // IntelliJ 식 도구 창: 숨김이면 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김
-        // 제목은 지금 상태를 따라 "보이기" ↔ "숨기기"로 바뀐다(validateMenuItem). 브라우저는 하나뿐이다 — 셸 ▸ "브라우저 보기"(⇧⌘B)와 같은 이름.
+        // 제목은 지금 상태를 따라 "보기" ↔ "가리기"로 바뀐다(validateMenuItem; 시스템 메뉴의 "가리기"와 같은 말). 브라우저 작은 창 켜기·끄기 = 이 항목,
+        // 셸 ▸ "브라우저 열기"(⇧⌘B)는 그 세션이 보도록 정한 곳(작은 창·세션 창 안·별도 창)에 여는 다른 동작이라 이름을 달리한다.
         view.addItem(.separator())
-        addAction(view, "files 보이기", "tool-toggle:files", "e", [.command, .shift])
-        addAction(view, "spaces 보이기", "tool-toggle:spaces", "s", [.command, .shift])
-        addAction(view, "브라우저 보이기", "tool-toggle:browser", "")
-        addAction(view, "작은 터미널 보이기", "scratch-toggle", "`", [.control])
+        addAction(view, "files 보기", "tool-toggle:files", "e", [.command, .shift])
+        addAction(view, "spaces 보기", "tool-toggle:spaces", "s", [.command, .shift])
+        addAction(view, "브라우저 보기", "tool-toggle:browser", "")
+        addAction(view, "작은 터미널 보기", "scratch-toggle", "`", [.control])
         // 도구가 놓일 자리: 지금 자리에 ✓. 브라우저는 옆 도크가 없어 따로 두지 않는다(위 항목이 작은 창 켜기·끄기)
         for tool in ["files", "spaces"] {
             let place = NSMenu(title: "\(tool) 위치")
             addAction(place, "왼쪽", "tool-move:\(tool):left", "")
             addAction(place, "오른쪽", "tool-move:\(tool):right", "")
-            addAction(place, "숨김", "tool-move:\(tool):hidden", "")
+            addAction(place, "가리기", "tool-move:\(tool):hidden", "")
             let item = NSMenuItem(title: "\(tool) 위치", action: nil, keyEquivalent: "")
             item.submenu = place
             view.addItem(item)
         }
+        // 메뉴 막대 순서: 앱 · 파일 · 편집 · 보기 · (앱 고유) 셸 · 이동 · 윈도우 · 도움말(macOS 관례 — 보기는 편집 바로 뒤)
         addSubmenu(main, view)
+        addSubmenu(main, shell)
+        addSubmenu(main, navigate)
 
         // 윈도우: 최소화(⌘M)·확대/축소·모두 앞으로 + 시스템이 붙이는 열린 창 목록(작은 창 패널은 목록에 넣지 않는다)
         let windowMenu = NSMenu(title: "윈도우")
@@ -772,6 +775,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             #if DEBUG
             FooterDebug.shared.scenarios = argument == "off" ? [] : Set(argument.split(whereSeparator: { $0 == "," || $0 == " " }).map(String.init))
             print("fake-footer \(FooterDebug.shared.scenarios.sorted().joined(separator: ","))")
+            fflush(stdout)
+            #endif
+        case "fake-browser-pill":
+            // fake-browser-pill <agent|user|waiting|switching|idle|badge|off>: 🌐 알약 상태를 덮어쓴다(디버그 빌드 전용)
+            #if DEBUG
+            switch argument {
+            case "agent": toolWindows?.debugPill = (.agent, false)
+            case "user": toolWindows?.debugPill = (.user, false)
+            case "waiting": toolWindows?.debugPill = (.waiting("확인이 필요합니다"), false)
+            case "switching": toolWindows?.debugPill = (.switching, false)
+            case "idle": toolWindows?.debugPill = (.idle, false)
+            case "badge": toolWindows?.debugPill = (nil, true)
+            default: toolWindows?.debugPill = nil
+            }
+            print("fake-browser-pill \(argument)")
             fflush(stdout)
             #endif
         case "quit":

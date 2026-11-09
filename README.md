@@ -141,7 +141,7 @@ gh api repos/jonghyungJeon-private/agent-deck/contents/scripts/install.sh -H 'Ac
 | | ⌘W | 세션 닫기(셸이 아닌 프로그램이 돌면 묻는다) |
 | | ⌘[ ⌘] · ⌥⌘방향키 | 이전 · 다음 세션 · 그쪽 세션으로 |
 | | ⇧⌘↩ · ⌃⌘= · ⌃⌘방향키 | 세션 크게 보기 · 크기 같게 · 나눈 선 옮기기 |
-| 도구 창 | ⇧⌘E · ⇧⌘S | files · spaces 보이기/고르기/숨기기 |
+| 도구 창 | ⇧⌘E · ⇧⌘S | files · spaces 보기/고르기/가리기 |
 | 편집기 | ⌘S · ⌘Z ⇧⌘Z | 저장 · 되돌리기/다시 |
 | | ⌘F · ⌥⌘F · ⌘G ⇧⌘G | 찾기 · 바꾸기 · 다음/이전 찾기 |
 | | ⇧⌘V | Markdown 편집 ↔ 미리보기 |

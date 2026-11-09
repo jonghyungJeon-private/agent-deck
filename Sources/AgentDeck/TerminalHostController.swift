@@ -264,23 +264,29 @@ final class TerminalHostController: NSViewController {
             TabBarView.Tab(title: model.tabTitle(tab), paneCount: tab.root.panes.count, zoomed: tab.zoomed,
                            status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }),
                            warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first,
-                           kind: EditorPane.isEditor(tab.focused) ? .document : kinds[tab.focused] ?? .shell)
+                           kind: EditorPane.isEditor(tab.focused) ? .document : kinds[tab.focused] ?? .shell,
+                           id: tab.id, folder: displayFolder(of: tab.focused))
         }, selected: workspace.selectedIndex)
     }
 
     /// 창 제목 = 고른 탭의 이름, 부제 = 그 폴더(편집기는 파일이 든 폴더). 탭이 없으면 앱 이름만.
     private func publishWindowTitle() {
         let selected = model.connected ? model.workspace.selectedTab?.focused : nil
-        var folder: String?
-        if let selected {
-            if EditorPane.isEditor(selected) {
-                folder = model.workspace.editors[selected].map { ($0.path as NSString).deletingLastPathComponent }
-            } else {
-                folder = model.row(selected)?.cwd
-            }
-        }
-        let text = WindowChrome.windowTitle(session: selected.map(model.paneLabel), folder: folder, home: NSHomeDirectory())
+        let text = WindowChrome.windowTitle(session: selected.map(model.paneLabel), folder: selected.flatMap(folder(of:)), home: NSHomeDirectory())
         onWindowTitleChanged?(text.title, text.subtitle)
+    }
+
+    /// 화면의 폴더(편집기는 파일이 든 폴더)
+    private func folder(of pane: String) -> String? {
+        if EditorPane.isEditor(pane) {
+            return model.workspace.editors[pane].map { ($0.path as NSString).deletingLastPathComponent }
+        }
+        return model.row(pane)?.cwd
+    }
+
+    /// 탭 ⌄ 메뉴에 적는 폴더(홈은 ~)
+    private func displayFolder(of pane: String) -> String {
+        WindowChrome.windowTitle(session: "x", folder: folder(of: pane), home: NSHomeDirectory()).subtitle
     }
 
     /// 분할 테두리에 쓰는 화면 제목과 상태

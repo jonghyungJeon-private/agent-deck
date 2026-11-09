@@ -36,7 +36,7 @@ final class ToolWindowsController: NSObject {
     /// 세션 창 안에 떠 있는 작은 브라우저 창(host.view 위, 버튼 아래)
     private let floatPanel = FloatPanel(spec: .browser, closeTip: "작은 창 닫기 (⌘⇧B로 다시)")
     /// 세션 창 안에 떠 있는 작은 터미널 창(세션마다 임시 셸 하나)
-    private let scratchPanel = FloatPanel(spec: .terminal, closeTip: "작은 터미널 숨기기 (⌃`) — 셸은 계속 실행됩니다")
+    private let scratchPanel = FloatPanel(spec: .terminal, closeTip: "작은 터미널 가리기 (⌃`) — 셸은 계속 실행됩니다")
     private var cornerObserver: AnyCancellable?
     private var autoOpenObserver: AnyCancellable?
     /// 작은 창을 끄는 동안의 자동 배치 보류(창마다) — 끝나면 한 번 돌린다
@@ -80,6 +80,7 @@ final class ToolWindowsController: NSObject {
         model.browserWindows.moveDock = { [weak self] side in self?.move(.browser, to: side) }
         model.browserWindows.titleFor = { [weak model] owner in model?.row(owner)?.title }
         for (_, dock) in docks {
+            dock.lightsMaxX = { [weak self] in self?.lightsMaxX() ?? 0 }
             dock.onSelect = { [weak self] tool in self?.select(tool) }
             dock.menuFor = { [weak self] tool in self?.menu(for: tool) ?? NSMenu() }
         }
@@ -316,6 +317,8 @@ final class ToolWindowsController: NSObject {
 
     /// 창 제목 줄과 합친 탭 줄: 신호등 오른쪽 끝(창 좌표 x, 전체 화면이면 0) — `AppDelegate` 가 창을 만든 뒤 단다
     var lightsMaxX: () -> Double = { 0 }
+    /// 글꼴 배율로 탭 줄 높이가 바뀌면 신호등 세로 자리를 다시 잡는다(창이 가만히 있으면 `didUpdate` 가 오지 않는다)
+    var repositionLights: () -> Void = {}
     /// 신호등과 탭 사이 여유
     private static let lightsGap: CGFloat = 12
 
@@ -327,10 +330,14 @@ final class ToolWindowsController: NSObject {
     }
 
     /// 신호등 자리·전체 화면이 바뀜
-    func windowChromeChanged() { tabBarChanged() }
+    func windowChromeChanged() {
+        docks.values.forEach { $0.updateTopBand() }
+        tabBarChanged()
+    }
 
     /// 탭 줄 높이·탭·호스트 폭이 바뀜: 알약 자리(탭 줄 안 ↔ 탭 줄 아래)와 탭 줄의 오른쪽 여백을 맞춘다
     private func tabBarChanged() {
+        repositionLights()
         updateTabBarLeadingInset()
         if anchoredInTabRow != pillsInTabRow {
             anchorButtons()
@@ -827,9 +834,24 @@ final class ToolWindowsController: NSObject {
         if let owner = windows.dock.owner { windows.move(owner, to: .dock) } else { reveal(.browser) }
     }
 
+    #if DEBUG
+    /// 시험 전용(`fake-browser-pill`): 🌐 알약의 상태를 덮어쓴다(nil = 덮지 않음). 글꼴 배율·창 폭에서 글자가 들어가는지 보려고.
+    var debugPill: (indicator: BrowserIndicator?, badge: Bool)? {
+        didSet { refreshBrowserButton() }
+    }
+    #endif
+
     private func refreshBrowserButton() {
         let owner = model.browserWindows.dock.owner
         browserButton.indicator = owner.flatMap { model.browserStates[$0] }.flatMap(BrowserIndicator.init)
+        #if DEBUG
+        if let debugPill {
+            browserButton.indicator = debugPill.indicator
+            browserButton.resultBadge = debugPill.badge
+            browserButton.isOn = layout.isBrowserShown
+            return
+        }
+        #endif
         browserButton.isOn = layout.isBrowserShown
         browserButton.resultBadge = model.browserAuto.badge(owner)
         if layout.browserFloat.shown { floatPanel.setTitle(floatTitle()) }
@@ -906,9 +928,9 @@ final class ToolWindowsController: NSObject {
             item.state = layout.browserFloat.shown ? .on : .off
             floatItem = item
         }
-        let hide = ClosureMenuItem(title: "숨기기") { [weak self] in self?.move(tool, to: .hidden) }
-        // 오른쪽 클릭 메뉴에는 단축키를 적지 않는다(보기 메뉴에 있다) — ⌘⇧B 는 "브라우저 보기"라 숨기기 단축키가 아니다
-        // 브라우저는 옆으로 옮기는 항목 없이 작은 창 + 숨기기만
+        let hide = ClosureMenuItem(title: "가리기") { [weak self] in self?.move(tool, to: .hidden) }
+        // 오른쪽 클릭 메뉴에는 단축키를 적지 않는다(보기 메뉴에 있다) — ⌘⇧B 는 "브라우저 열기"(셸 메뉴)라 가리기 단축키가 아니다
+        // 브라우저는 옆으로 옮기는 항목 없이 작은 창 + 가리기만
         let moves = tool == .browser ? [] : [left, right]
         for item in [floatItem] + moves + [NSMenuItem.separator(), hide] { if let item { menu.addItem(item) } }
         return menu
@@ -937,8 +959,11 @@ final class DockViewController: NSViewController {
     var onSelect: ((ToolID) -> Void)?
     var menuFor: ((ToolID) -> NSMenu)?
 
-    /// 왼쪽 도크 맨 위: 신호등이 앉는 빈 줄(탭 줄과 같은 높이, 끌면 창이 움직인다). 도크가 창 왼쪽 가장자리에 있을 때만 높이가 있다.
+    /// 왼쪽 도크 맨 위: 신호등이 앉는 빈 줄(탭 줄과 같은 높이, 끌면 창이 움직인다). 도크가 창 왼쪽 가장자리에 있고 신호등이 있을 때만 높이가 있다 —
+    /// 전체 화면에는 신호등이 없어 빈 줄도 없고, 도구 버튼 줄이 신호등 옆에 들어갈 만큼 넓으면 그 줄이 신호등 줄에 앉는다(`WindowChrome.dockTop`).
     private let windowBand = WindowDragView()
+    /// 신호등 오른쪽 끝(창 좌표 x, 없으면 0) — 도구 창 관리자가 단다
+    var lightsMaxX: () -> Double = { 0 }
     private var bandHeight: NSLayoutConstraint!
     private let strip = DockStripView()
     private let container = NSView()
@@ -962,7 +987,7 @@ final class DockViewController: NSViewController {
             view.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(view)
         }
-        bandHeight = windowBand.heightAnchor.constraint(equalToConstant: side == .left ? TerminalHostController.tabBarHeight : 0)
+        bandHeight = windowBand.heightAnchor.constraint(equalToConstant: 0)
         stripHeight = strip.heightAnchor.constraint(equalToConstant: 0)
         containerBottom = container.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         NSLayoutConstraint.activate([
@@ -980,6 +1005,21 @@ final class DockViewController: NSViewController {
             containerBottom,
         ])
         view = root
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateTopBand()
+    }
+
+    /// 신호등 줄·버튼 줄 자리를 지금 신호등·폭에 맞춘다(바뀐 것만 반영하므로 레이아웃이 되풀이되지 않는다)
+    func updateTopBand() {
+        guard isViewLoaded, side == .left else { return }
+        let top = WindowChrome.dockTop(lightsMaxX: lightsMaxX(), hasStrip: stripHeight.constant > 0, stripWidth: Double(strip.contentWidth),
+                                       dockWidth: Double(view.bounds.width), rowHeight: Double(TerminalHostController.tabBarHeight),
+                                       gap: Double(TermAppearance.scaled(Space.md)), margin: Double(TermAppearance.scaled(Space.xs)))
+        if bandHeight.constant != CGFloat(top.bandHeight) { bandHeight.constant = CGFloat(top.bandHeight) }
+        strip.leadingInset = CGFloat(top.stripLeading)
     }
 
     /// 이 도크 맨 아래에 상태 줄을 붙이거나 뗀다
@@ -1006,9 +1046,9 @@ final class DockViewController: NSViewController {
     /// 글꼴 크기 배율이 바뀜: 도구 버튼 줄 높이·글꼴
     func scaleChanged() {
         guard isViewLoaded else { return }
-        if side == .left { bandHeight.constant = TerminalHostController.tabBarHeight }
         if stripHeight.constant > 0 { stripHeight.constant = DockStripView.height }
         strip.scaleChanged()
+        updateTopBand()
     }
 
     func show(tools: [ToolID], selected: ToolID?, content: NSViewController?) {
@@ -1017,6 +1057,7 @@ final class DockViewController: NSViewController {
         let shared = tools.count > 1
         stripHeight.constant = shared ? DockStripView.height : 0
         strip.isHidden = !shared
+        updateTopBand()
         guard content !== current else { return }
         // 다른 도크로 옮겨 간 도구는 이미 그쪽에 붙어 있을 수 있다 — 내 것일 때만 뗀다
         if let current, current.parent === self {
@@ -1045,6 +1086,16 @@ final class DockStripView: NSView {
 
     var onSelect: ((ToolID) -> Void)?
     var menuFor: ((ToolID) -> NSMenu?)?
+    /// 왼쪽 여백(기본 4pt, 신호등 옆에 앉으면 신호등을 피한 폭)
+    var leadingInset: CGFloat = TermAppearance.scaled(Space.xs) {
+        didSet {
+            guard leadingInset != oldValue else { return }
+            layoutButtons()
+            needsDisplay = true
+        }
+    }
+    /// 칸들이 차지하는 폭(왼쪽 여백 빼고)
+    var contentWidth: CGFloat { (rects.last?.1.maxX ?? leadingInset) - leadingInset + TermAppearance.scaled(Space.xs) }
 
     private var tools: [ToolID] = []
     private var selected: ToolID?
@@ -1099,7 +1150,7 @@ final class DockStripView: NSView {
 
     private func layoutButtons() {
         rects = []
-        var x: CGFloat = TermAppearance.scaled(Space.xs)
+        var x: CGFloat = leadingInset
         let nameAttributes: [NSAttributedString.Key: Any] = [.font: labelFont]
         for tool in tools {
             let label = (tool.rawValue as NSString).size(withAttributes: nameAttributes).width

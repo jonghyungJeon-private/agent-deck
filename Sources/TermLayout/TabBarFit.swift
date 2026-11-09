@@ -33,20 +33,34 @@ public enum TabBarFit {
     /// 탭 줄에 다 안 들어갈 때 보일 탭의 이어진 구간(탭마다 제목을 최소로 줄인 폭 `minWidths`, 둘 수 있는 폭 `available`).
     /// 다 들어가면 전부. 아니면 맨 앞부터 채우고, 고른 탭이 밖이면 고른 탭이 들어올 때까지 구간을 오른쪽으로 민다(고른 탭은 늘 보인다).
     /// 한 탭도 안 들어가는 좁은 폭에서도 고른 탭 하나는 둔다.
-    public static func visibleRange(minWidths: [Double], selected: Int?, available: Double) -> Range<Int> {
+    /// `previousStart`(지난번 구간의 첫 탭)가 있으면 구간이 가만히 있는다: 고른 탭이 지난 구간 안이면 그대로, 밖이면 고른 탭이 보일 만큼만
+    /// 민다(왼쪽 밖이면 고른 탭이 맨 앞, 오른쪽 밖이면 고른 탭이 들어올 때까지 오른쪽으로). 오른쪽 끝에 빈자리가 남으면 그만큼만 왼쪽으로 당긴다.
+    /// 없으면(처음) 맨 앞부터.
+    public static func visibleRange(minWidths: [Double], selected: Int?, available: Double, previousStart: Int? = nil) -> Range<Int> {
         let count = minWidths.count
         guard count > 0 else { return 0..<0 }
         guard minWidths.reduce(0, +) > available else { return 0..<count }
         let target = min(max(selected ?? 0, 0), count - 1)
-        var start = 0
-        while true {
+        func lastFit(from start: Int) -> Int {
             var end = start, used = minWidths[start]
             while end + 1 < count, used + minWidths[end + 1] <= available {
                 end += 1
                 used += minWidths[end]
             }
-            if end >= target || start >= target { return start..<(max(end, start) + 1) }
-            start += 1
+            return end
         }
+        var start = min(max(previousStart ?? 0, 0), count - 1)
+        if target < start { start = target }
+        while lastFit(from: start) < target, start < target { start += 1 }
+        let end = lastFit(from: start)
+        // 오른쪽 끝(마지막 탭까지 보임)에 빈자리가 남으면 왼쪽 탭을 더 보인다
+        if end == count - 1 {
+            var used = minWidths[start...end].reduce(0, +)
+            while start > 0, used + minWidths[start - 1] <= available {
+                start -= 1
+                used += minWidths[start]
+            }
+        }
+        return start..<(max(end, start) + 1)
     }
 }

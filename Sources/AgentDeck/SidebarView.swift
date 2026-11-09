@@ -18,7 +18,7 @@ struct SidebarView: View {
     @ObservedObject private var launch: LaunchSettings
     /// 도크에 도구가 하나뿐이면 머리 줄에 "spaces" 를 보인다(둘이면 위 도구 버튼 줄이 보인다)
     var showsTitle = true
-    /// 머리 줄 오른쪽 클릭: 왼쪽·오른쪽으로 옮기기, 숨기기
+    /// 머리 줄 오른쪽 클릭: 왼쪽·오른쪽으로 옮기기, 가리기
     var onDock: ((DockSide) -> Void)?
     var currentSide: DockSide = .left
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
@@ -87,6 +87,8 @@ struct SidebarView: View {
         }
         .frame(minWidth: 220, maxHeight: .infinity)
         .background(Color(TermAppearance.chrome))
+        // 오른쪽 도크 맨 위는 투명 제목 줄 밑까지 올라온다: 호스팅 뷰가 제목 줄 높이(28pt)만큼 안전 영역을 주면 머리 줄이 탭 줄(32pt)보다 아래로 밀리므로 받지 않는다
+        .ignoresSafeArea(.container, edges: .top)
         .environment(\.uiScale, ui)
     }
 
@@ -266,7 +268,7 @@ struct SidebarView: View {
                 Toggle("왼쪽에 두기", isOn: Binding(get: { currentSide == .left }, set: { _ in onDock(.left) }))
                 Toggle("오른쪽에 두기", isOn: Binding(get: { currentSide == .right }, set: { _ in onDock(.right) }))
                 Divider()
-                Button("숨기기") { onDock(.hidden) }
+                Button("가리기") { onDock(.hidden) }
             }
         }
     }
@@ -440,11 +442,11 @@ struct SidebarPressStyle: ButtonStyle {
     }
 }
 
-/// 사이드바 위 글자 버튼: (선택) 그림 + 이름(+ 경고). 누르는 자리는 높이 24.
+/// 사이드바 위 글자 버튼: (선택) 그림 + 이름(+ 위험 점). 누르는 자리는 높이 24.
 struct ChromeButton: View {
     let title: String
     var symbol: String? = nil
-    /// 기본 옵션이 위험할 때 이름 뒤에 노란 경고 표시
+    /// 기본 옵션이 위험할 때 모서리에 작은 위험 색 점(폭을 늘리지 않는다)
     var warning = false
     let help: String
     let action: () -> Void
@@ -460,17 +462,20 @@ struct ChromeButton: View {
                 }
                 Text(title)
                     .uiTextFont(TypeSize.secondary, weight: .medium)
-                if warning {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: ui(TypeSize.caption)))
-                        .foregroundStyle(Color(TermAppearance.danger))
-                        .accessibilityLabel("주의")
-                }
             }
             .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textSecondary))
             .padding(.horizontal, ui(Space.sm))
             .frame(height: ui(Space.xxl))
             .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)).opacity(hovering ? 1 : 0))
+            // 위험한 기본 옵션: 글 폭을 늘리지 않는 작은 점(머리 줄이 "+ 새 세션" 으로 접히지 않게). 이유는 풍선 도움말과 설정 톱니의 ⚠ 가 말한다.
+            .overlay(alignment: .topTrailing) {
+                if warning {
+                    Circle().fill(Color(TermAppearance.danger))
+                        .frame(width: ui(6), height: ui(6))
+                        .padding(.top, ui(4)).padding(.trailing, ui(2))
+                        .accessibilityHidden(true)
+                }
+            }
             .contentShape(Rectangle())
             .animation(Motion.ease(Motion.fast), value: hovering)
         }
@@ -1511,6 +1516,7 @@ struct StatusFooterView: View {
             if let codex = codexUsage { UsageLineView(line: codex) }
             HStack(alignment: .center, spacing: ui(Space.sm)) {
                 Text(Self.versionShort)
+                    .uiFont(TypeSize.secondary) // 버전은 데이터라 JetBrains Mono
                     .monospacedDigit()
                     .lineLimit(1)
                     .truncationMode(.tail)

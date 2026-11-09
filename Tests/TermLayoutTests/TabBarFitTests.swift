@@ -73,6 +73,32 @@ final class TabBarFitTests: XCTestCase {
         }
     }
 
+    func testVisibleRangeStaysPutWhileSelectionIsInsideIt() {
+        let widths = Array(repeating: 100.0, count: 7)
+        // 지난 구간 2..<7 에서 3번을 골라도 구간은 그대로(예전에는 0..<5 로 되돌아갔다)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 3, available: 520, previousStart: 2), 2..<7)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 2, available: 520, previousStart: 2), 2..<7)
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 6, available: 520, previousStart: 2), 2..<7)
+    }
+
+    func testVisibleRangeShiftsOnlyAsFarAsNeededToRevealSelection() {
+        let widths = Array(repeating: 100.0, count: 7)
+        // 왼쪽 밖: 고른 탭이 맨 앞이 될 만큼만
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 1, available: 520, previousStart: 2), 1..<6)
+        // 오른쪽 밖: 한 칸씩 민다
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 5, available: 520, previousStart: 0), 1..<6)
+        // 처음(지난 구간 없음)은 예전대로 맨 앞부터
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 1, available: 520), 0..<5)
+    }
+
+    func testVisibleRangePullsBackWhenSlackAppearsAtTheRightEnd() {
+        let widths = Array(repeating: 100.0, count: 7)
+        // 탭이 닫히거나 창이 넓어져 2..<7 의 오른쪽에 빈자리가 생기면 그만큼만 왼쪽을 더 보인다
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: widths, selected: 6, available: 620, previousStart: 2), 1..<7)
+        // 지난 시작이 탭 수를 넘어도(탭이 많이 닫힘) 안전
+        XCTAssertEqual(TabBarFit.visibleRange(minWidths: Array(repeating: 100.0, count: 4), selected: 3, available: 250, previousStart: 9), 2..<4)
+    }
+
     func testBranchFollowsWorktreeFolderName() {
         XCTAssertTrue(GitWorktrees.branchFollowsName("side-ux-polish", name: "side-ux-polish"))
         XCTAssertTrue(GitWorktrees.branchFollowsName("side/ux-polish-20261109", name: "side-ux-polish-20261109"))

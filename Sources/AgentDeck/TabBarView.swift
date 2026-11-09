@@ -125,6 +125,10 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         var warning: String?
         /// 제목 앞 아이콘: 탭의 포커스 화면 종류(세션 목록과 같은 판별 — TermModel 줄에서 읽기만 한다)
         var kind: SessionKind = .shell
+        /// 탭 식별(탭 순서가 바뀌거나 탭이 닫혀도 같은 탭을 가리킨다 — ⌄ 메뉴가 쓴다)
+        var id: String = ""
+        /// 고른 화면의 폴더(⌄ 메뉴에서 같은 이름의 탭을 가른다). 홈은 ~ 로 줄인 글.
+        var folder: String = ""
     }
 
     /// 상태 점 지름과 제목까지 간격
@@ -160,6 +164,8 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     /// 안 들어가는 탭을 모아 보이는 ⌄ 단추 자리(다 들어가면 .zero). 안 보이는 탭의 `tabRects` 는 폭 0 이다(왼쪽에 숨으면 맨 앞, 오른쪽에 숨으면 보이는 끝).
     private var overflowRect: CGRect = .zero
     private var hiddenTabs: [Int] = []
+    /// 지난번에 보인 탭 구간의 첫 탭(구간이 제멋대로 되돌아가지 않게 — TabBarFit.visibleRange)
+    private var visibleStart: Int?
     private var hoveringOverflow = false
     private var overflowMenuOpen = false
 
@@ -393,8 +399,9 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         let overflowing = bounds.width > 0 && minWidths.reduce(0, +) + Double(plusWidth) > Double(room)
         let range = overflowing
             ? TabBarFit.visibleRange(minWidths: minWidths, selected: selected,
-                                     available: max(0, Double(room - plusWidth - overflowWidth)))
+                                     available: max(0, Double(room - plusWidth - overflowWidth)), previousStart: visibleStart)
             : 0..<tabs.count
+        visibleStart = overflowing ? range.lowerBound : nil
         let visible = Array(range)
         // 보이는 탭의 제목은 남은 폭에 맞춘다(긴 제목부터 줄인다)
         let fitted = bounds.width > 0
@@ -472,8 +479,10 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         if let selection {
             TermAppearance.background.setFill()
             selection.fill()
+            // 강조 줄은 창 맨 위 가장자리(제목 줄의 윗선)에 붙지 않게 1pt 띄우고 양옆도 들인다
             TermAppearance.accent.setFill()
-            CGRect(x: selection.minX, y: 0, width: selection.width, height: 2).fill()
+            NSBezierPath(roundedRect: CGRect(x: selection.minX + ui(8), y: 1, width: max(0, selection.width - ui(16)), height: 2),
+                         xRadius: 1, yRadius: 1).fill()
         }
         let rects = displayRects()
         for (index, tab) in tabs.enumerated() where index < rects.count {
@@ -672,16 +681,30 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
     }
 
-    /// ⌄: 안 보이는 탭 목록(종류 아이콘 + 이름 + 상태). 고르면 그 탭으로 가고 탭 줄이 그 탭이 보이게 밀린다.
+    /// ⌄: 탭 목록(종류 아이콘 + 이름 + 상태 + 폴더, ⌘숫자, 지금 탭에 ✓). 줄 모양은 모든 탭이 같고, 고르면 그 탭으로 가고 탭 줄이 그 탭이 보이게 밀린다.
+    /// 고르는 순간 탭 번호가 아니라 탭 식별로 찾는다(메뉴가 열려 있는 동안 탭이 닫히거나 옮겨져도 엉뚱한 탭으로 가지 않는다).
     private func makeOverflowMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        for index in hiddenTabs where tabs.indices.contains(index) {
-            let tab = tabs[index]
-            let item = MenuAction(title: Self.short(tab.title, limit: 36)) { [weak self] in self?.onSelect?(index) }
+        for (index, tab) in tabs.enumerated() {
+            let tabID = tab.id
+            let item = MenuAction(title: Self.short(tab.title, limit: 36)) { [weak self] in
+                guard let self, let current = self.tabs.firstIndex(where: { $0.id == tabID }) else { return }
+                self.onSelect?(current)
+            }
+            if let key = trailing(index)?.dropFirst(), !key.isEmpty {
+                item.keyEquivalent = String(key)
+                item.keyEquivalentModifierMask = .command
+            }
+            item.state = index == selected ? .on : .off
             let title = NSMutableAttributedString(string: item.title)
             if let status = tab.status.label {
                 title.append(NSAttributedString(string: "  " + status, attributes: [.foregroundColor: NSColor.secondaryLabelColor]))
+            }
+            if !tab.folder.isEmpty {
+                title.append(NSAttributedString(string: "  " + Self.short(tab.folder, limit: 30),
+                                                attributes: [.foregroundColor: NSColor.secondaryLabelColor,
+                                                             .font: TermAppearance.uiFont(11)]))
             }
             item.attributedTitle = title
             let kind = tab.kind
