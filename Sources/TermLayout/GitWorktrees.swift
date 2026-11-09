@@ -28,6 +28,11 @@ public struct Worktree: Equatable, Hashable {
 }
 
 public enum GitWorktrees {
+    /// 브랜치가 작업 트리 폴더 이름과 같은 말인가(`/` 를 `-` 로 바꾼 것까지 — 폴더는 보통 브랜치 이름에서 만든다). 같으면 목록에서 한 번만 보인다.
+    public static func branchFollowsName(_ branch: String, name: String) -> Bool {
+        branch == name || branch.replacingOccurrences(of: "/", with: "-") == name
+    }
+
     /// path 에서 위로 올라가며 .git 을 찾는다
     public static func locate(_ path: String) -> GitLocation? {
         let fm = FileManager.default

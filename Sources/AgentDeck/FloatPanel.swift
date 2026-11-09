@@ -48,6 +48,7 @@ final class FloatPanel: NSView {
     private var windowObservers: [NSObjectProtocol] = []
     private var responderObservation: NSKeyValueObservation?
     private var debugObserver: NSObjectProtocol?
+    private var transparencyObserver: NSObjectProtocol?
     private var stripHeightConstraint: NSLayoutConstraint!
     private let edgeCursors = FloatEdgeCursorView()
     private let row = NSStackView()
@@ -201,7 +202,7 @@ final class FloatPanel: NSView {
         guard view !== content || view?.superview !== container else { return }
         if let old = content, old.superview === container {
             // 내용을 떼면 사라지는 모습에 빈 틀만 남으므로 떼기 전에 찍어 둔다(곧 창도 떼어질 때 쓴다)
-            if view == nil, window != nil, !Motion.reduced { exitSnapshot = FloatFx.snapshot(self) }
+            if view == nil, window != nil, !Motion.reduced, !isFadedOut { exitSnapshot = FloatFx.snapshot(self) }
             old.removeFromSuperview()
         }
         content = view
@@ -266,6 +267,14 @@ final class FloatPanel: NSView {
         responderObservation = window.observe(\.firstResponder, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.focusChanged() }
         }
+        // 손쉬운 사용 설정이 바뀌면(투명도 줄이기) 바로 다시 맞춘다
+        if transparencyObserver == nil {
+            transparencyObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+                self?.applyTerminalBackground()
+                self?.refreshOpacity(animated: false)
+            }
+        }
         if debugObserver == nil {
             debugObserver = NotificationCenter.default.addObserver(forName: FloatOpacity.debugNotification, object: nil, queue: .main) { [weak self] note in
                 self?.debugCommand(note)
@@ -281,11 +290,17 @@ final class FloatPanel: NSView {
     deinit {
         windowObservers.forEach(NotificationCenter.default.removeObserver)
         if let debugObserver { NotificationCenter.default.removeObserver(debugObserver) }
+        if let transparencyObserver { NSWorkspace.shared.notificationCenter.removeObserver(transparencyObserver) }
     }
 
-    /// 지금 있어야 할 불투명도: 포인터가 위에 있거나 키보드가 안에 있거나 끄는 중이면 1, 아니면 고른 값
+    /// 손쉬운 사용의 "투명도 줄이기"가 켜져 있으면 고른 값과 상관없이 100%(저장된 값은 그대로 — 끄면 다시 고른 값)
+    private var effectivePercent: Int {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency ? 100 : opacityPercent
+    }
+
+    /// 지금 있어야 할 불투명도: 포인터가 위에 있거나 키보드가 안에 있거나 끄는 중이면 1, 아니면 고른 값(투명도 줄이기면 1)
     private var targetLevel: CGFloat {
-        pointerInside || keyFocused || drag != nil ? 1 : CGFloat(opacityPercent) / 100
+        pointerInside || keyFocused || drag != nil ? 1 : CGFloat(effectivePercent) / 100
     }
 
     /// 투명도를 목표에 맞춘다. animated 면 Motion.standard(ease-out)로 서서히(동작 줄이기·창 밖이면 바로).
@@ -327,7 +342,7 @@ final class FloatPanel: NSView {
     /// 작은 터미널 뷰의 기본 바탕: 100% 면 터미널이 칠하고(예전 그대로), 아니면 투명하게 두고 clip 레이어가 칠한다(그 알파가 투명도)
     private func applyTerminalBackground() {
         guard !isBrowser, let terminal = (content as? TerminalPaneSurface)?.terminal else { return }
-        terminal.backgroundOpacity = opacityPercent >= 100 ? 1 : 0
+        terminal.backgroundOpacity = effectivePercent >= 100 ? 1 : 0
     }
 
     private func setOpacityPercent(_ percent: Int, persist: Bool = true) {
@@ -514,9 +529,13 @@ final class FloatPanel: NSView {
         return Date().timeIntervalSince(launched) > 3
     }
 
+    /// 창 자체가 거의 투명하다(바깥에서 `alphaValue` 로 사라지게 한 뒤)
+    private var isFadedOut: Bool { alphaValue < 0.01 }
+
     /// 닫힐 때 그 자리에서 투명해지며 조금 내려앉는다(떼는 것은 바로 — 아래 그림만 남아 사라진다)
     override func removeFromSuperview() {
-        if let host = superview, window != nil, !Motion.reduced, Self.pastLaunch {
+        // 이미 투명하게 사라진 창(자동으로 닫는 쪽이 alphaValue 로 먼저 걷었다)은 그림을 또 올려 두 번 사라지지 않게 한다
+        if let host = superview, window != nil, !Motion.reduced, Self.pastLaunch, !isFadedOut {
             FloatFx.ghost(exitSnapshot ?? FloatFx.snapshot(self), frame: frame, in: host, above: self, duration: Motion.standard, dy: -6)
         }
         exitSnapshot = nil

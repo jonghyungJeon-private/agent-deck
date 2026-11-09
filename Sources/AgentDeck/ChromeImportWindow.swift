@@ -345,6 +345,7 @@ struct ChromeImportView: View {
                     .help("가져온 로그인을 새 화면에 더는 쓰지 않습니다(이미 열린 화면의 브라우저는 그대로).")
                 Spacer()
                 Button("가져오기") { model.importSelected() }
+                    .buttonStyle(.borderedProminent) // 이 창에서 끝을 맺는 동작 하나 — 기본 버튼(Return)
                     .keyboardShortcut(.defaultAction)
                     .disabled(model.selected.isEmpty || model.busy)
             }

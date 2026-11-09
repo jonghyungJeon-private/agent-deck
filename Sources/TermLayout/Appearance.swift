@@ -49,7 +49,7 @@ public enum AppearanceMode: String, CaseIterable, Codable, Sendable {
 /// - `type*` = 어느 에이전트인가(Claude 주황 ✻ · Codex 청록 ‹› · 셸 중립 ›_). 상태에는 쓰지 않는다.
 /// - `status*` = 상태. 색을 쓰는 건 둘뿐 — 빨강 `statusAttention`(내 조작 필요: 입력 대기·오류), 초록 `statusDone`(결과가 나옴).
 ///   작업 중·쉼·오케스트레이션·없음은 중립 모양(작업 중은 천천히 숨 쉬는 점)이라 색으로 주의를 끌지 않는다.
-/// - `warning`/`warnText` 호박색 = 경고와 사용량 80% 이상만(작업 중에는 쓰지 않는다).
+/// - `warning`/`warnText` 호박색 = 경고와 사용량 70% 이상만(작업 중에는 쓰지 않는다).
 /// - `agent` 초록 = 브라우저에서 AI 가 조작 중(테두리·알약·커서). `human` = 내가 조작 중(중립).
 /// 대비 하한: 글자(12pt 이하) 4.5:1, 점·아이콘·포커스 표시 3:1 — 각 표면(chrome·chromeRaised·background)에서.
 /// 어두운·밝은 값 한 쌍은 순수 데이터라 시험한다. 화면 쪽(TermAppearance)이 이 표로 `NSColor(name:dynamicProvider:)` 를 만든다.

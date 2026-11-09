@@ -554,7 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
     ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
     ///   데이터 위치: location(위치·모드·데몬). 옮기기는 action relocate-data
-    ///   상태 모양: fake-session-states [off](디버그 빌드 전용, 화면들의 종류·상태를 메모리에서만 덧씌움)
+    ///   상태 모양: fake-session-states [off](디버그 빌드 전용, 화면들의 종류·상태를 보이는 목록·묶음에만 덧씌움 — 알림·Dock 배지·"봤음"·되살리기 정보는 진짜 줄로만)
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
         let snapshotDir = AgentDeckEnv.nonEmpty("SNAPSHOT", in: env)

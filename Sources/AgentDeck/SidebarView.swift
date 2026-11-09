@@ -280,17 +280,16 @@ struct SidebarView: View {
     private var noticeKey: [String] { notices.map(\.id) + (model.notice == nil ? [] : ["info"]) }
 
     /// 머리 줄 아래·목록 위에 붙박이로 놓는 알림: hook·스킬·브라우저 연결이 필요하거나 막혔을 때, 한 줄 제목 + 작은 버튼, 설명은 "자세히".
-    /// 버튼은 접히지 않는다(자세히는 설명만). 버튼이 있는 알림 중 맨 위(가장 급한 것) 하나만 강조 버튼으로 그린다.
+    /// 버튼은 접히지 않는다(자세히는 설명만). 알림 버튼은 모두 같은 보통 버튼이다(사이드바는 탐색이라 완료하는 주 동작이 없다).
     @ViewBuilder
     private var noticeStack: some View {
         let items = notices
         let info = model.notice
         if !items.isEmpty || info != nil {
-            let prominent = items.first { $0.action != nil }?.id
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(items) { notice in
-                        NoticeRow(notice: notice, prominent: notice.id == prominent,
+                        NoticeRow(notice: notice,
                                   expanded: Binding(get: { openNotice == notice.id },
                                                     set: { openNotice = $0 ? notice.id : nil }))
                             .transition(.opacity)
@@ -387,7 +386,7 @@ struct SidebarView: View {
             }
             guard !needs.isEmpty else { return nil }
             return ("브라우저 연결 필요",
-                    "브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 제목 줄 🌐 로 볼 수 있습니다.",
+                    "브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 오른쪽 위 지구본 버튼으로 볼 수 있습니다.",
                     skill == .ok || skill == .unknown ? "브라우저 받기" : "브라우저 연결하기",
                     "globe", TermAppearance.textSecondary)
         }()
@@ -526,35 +525,27 @@ struct SidebarNotice: Identifiable {
     let action: Action?
 }
 
-/// 알림 버튼: 작은 테두리 버튼, 가장 급한 하나만 강조색 채움
+/// 알림 버튼: 작은 테두리 버튼. 알림마다 같은 일(연결·갱신)이라 모두 같은 모양이다 — 설정 › 연결의 두 버튼과 같다. 강조색은 쓰지 않는다.
 private struct NoticeButtonStyle: ButtonStyle {
-    let prominent: Bool
-
     func makeBody(configuration: Configuration) -> some View {
-        NoticeButtonBody(label: configuration.label, pressed: configuration.isPressed, prominent: prominent)
+        NoticeButtonBody(label: configuration.label, pressed: configuration.isPressed)
     }
 }
 
 private struct NoticeButtonBody<Label: View>: View {
     let label: Label
     let pressed: Bool
-    let prominent: Bool
     @Environment(\.uiScale) private var ui
 
     var body: some View {
         label
             .uiTextFont(TypeSize.secondary, weight: .semibold)
-            .foregroundStyle(Color(prominent ? TermAppearance.onAccent : TermAppearance.textPrimary))
+            .foregroundStyle(Color(TermAppearance.textPrimary))
             .lineLimit(1)
             .padding(.horizontal, ui(Space.sm))
-            .frame(minHeight: ui(Space.xxl))
-            .background(RoundedRectangle(cornerRadius: ui(6))
-                .fill(Color(prominent ? TermAppearance.accentFill : TermAppearance.chromeRaised)))
-            .overlay {
-                if !prominent {
-                    RoundedRectangle(cornerRadius: ui(6)).strokeBorder(Color(TermAppearance.border), lineWidth: 1)
-                }
-            }
+            .frame(minHeight: ui(Space.xl))
+            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)))
+            .overlay { RoundedRectangle(cornerRadius: ui(6)).strokeBorder(Color(TermAppearance.border), lineWidth: 1) }
             .brightness(pressed ? -0.08 : 0)
             .animation(pressed ? nil : Motion.ease(Motion.fast), value: pressed)
             .contentShape(Rectangle())
@@ -564,7 +555,6 @@ private struct NoticeButtonBody<Label: View>: View {
 /// 알림 한 줄(모든 알림이 같은 모양): 첫 줄 [기호 · 한 줄 제목], 둘째 줄 [자세히 … 버튼(오른쪽)]. 설명은 자세히를 눌러야 펼친다.
 private struct NoticeRow: View {
     let notice: SidebarNotice
-    let prominent: Bool
     @Binding var expanded: Bool
     @Environment(\.uiScale) private var ui
 
@@ -629,7 +619,7 @@ private struct NoticeRow: View {
     private var actionButton: some View {
         if let action = notice.action {
             let button = Button(action.title, action: action.action)
-                .buttonStyle(NoticeButtonStyle(prominent: prominent))
+                .buttonStyle(NoticeButtonStyle())
             if let help = action.help { button.help(help) } else { button }
         }
     }
@@ -661,7 +651,7 @@ private struct InfoNoticeRow: View {
 }
 
 /// 한 줄 목록 칸의 바탕 짙기: 고른 줄 > 고른 줄을 품은 접힌 줄 > 마우스가 올라온 줄. 셋이 서로 확실히 다르다.
-/// (바탕 위 4.5:1 글자 대비 때문에 고른 줄의 채움을 더 어둡게 할 수 없어, 고른 줄만 얇은 테두리를 더 두른다.)
+/// (바탕 위 4.5:1 글자 대비 때문에 채움을 더 어둡게 할 수 없어 짙기만 달리하고 테두리는 두르지 않는다 — 시스템 소스 목록의 고른 줄처럼 채움 하나.)
 private enum PillLevel {
     static let none = 0.0
     static let hover = 0.4
@@ -669,37 +659,37 @@ private enum PillLevel {
     static let selected = 1.0
 }
 
-/// 한 줄 목록 칸의 바탕: 둘레를 4pt 띄운 둥근 채움. 짙기(level)는 `PillLevel`, 고른 줄(level 1)만 `border` 테두리를 더한다.
+/// 한 줄 목록 칸의 바탕 = 목록 선택 모양의 공통 규칙: 둘레를 4pt 띄운 반지름 6 둥근 `chromeRaised` 채움, 테두리 없음.
+/// 파일 목록(`FileRowView`)·세션 전환(`NavigatorTableView`)이 같은 규칙을 쓴다. 짙기(level)는 `PillLevel`.
 /// 늘 그려 두고 짙기만 바꿔 서서히 겹쳐 바뀐다(고른 줄이 옮겨 가면 앞 줄은 옅어지고 새 줄은 짙어진다).
 private extension View {
     func sidebarPill(_ level: Double, _ ui: UIScale) -> some View {
         background {
             RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised))
                 .opacity(level)
-                .overlay {
-                    RoundedRectangle(cornerRadius: ui(6)).strokeBorder(Color(TermAppearance.border), lineWidth: 1)
-                        .opacity(level >= PillLevel.selected ? 1 : 0)
-                }
                 .padding(.horizontal, ui(Space.xs))
                 .animation(Motion.ease(Motion.fast), value: level)
         }
     }
 }
 
-/// 상태 점(8pt). 모양은 `WorkStatus.dotShape`: 작업 중·완료·상태 없음 = 찬 점, 쉬는 중·꺼진 화면 = 속 빈 고리, 입력 대기 = 테두리 두른 점 ◉,
-/// 오케스트레이션 = 점선 고리 + 가운데 점, 오류 = 찬 점에 "!" 뚫기(색만으로 구분하지 않는다). 작업 중은 공용 시계로 숨 쉰다(`.workingPulse`).
+/// 상태 점(8pt). 모양은 `WorkStatus.dotShape`: 작업 중·완료 = 찬 점, 쉬는 중 = 속 빈 고리, 입력 대기 = 테두리 두른 점 ◉,
+/// 오케스트레이션 = 점선 고리 + 가운데 점, 오류 = 찬 점에 "!" 뚫기(색만으로 구분하지 않는다). 작업 중은 공용 시계로 숨 쉰다(`PulsingDot`).
+/// 상태가 없으면(셸·연결 전 claude/codex)·꺼진 화면은 점을 그리지 않는다 — 탭·세션 전환과 같다. 점 칸(8pt)만 남아 이름이 어긋나지 않는다.
 /// 상태가 바뀌면 `Motion.fast` 로 겹쳐 바뀐다.
 struct StatusDot: View {
     let status: WorkStatus
     var dormant = false
     @Environment(\.uiScale) private var ui
 
-    private var shape: WorkStatus.DotShape { dormant ? .ring : status.dotShape }
+    private var shape: WorkStatus.DotShape? { dormant ? nil : status.dotShape }
 
     var body: some View {
-        let color = Color(dormant ? TermAppearance.statusNone : status.color)
+        let color = Color(status.color)
         Group {
             switch shape {
+            case .none:
+                Color.clear
             case .ring:
                 Circle().strokeBorder(color, lineWidth: 1.2)
             case .ringedDot:
@@ -709,22 +699,27 @@ struct StatusDot: View {
                 Circle().fill(color).padding(ui(2.6))
                     .overlay(Circle().strokeBorder(color, style: StrokeStyle(lineWidth: 1.2, dash: [1.8, 1.3])))
             case .errorMark:
-                // 찬 점에서 "!" 를 뚫어 낸다(막대 + 점)
-                ZStack {
-                    Circle().fill(color)
-                    VStack(spacing: ui(0.9)) {
-                        RoundedRectangle(cornerRadius: ui(0.6)).frame(width: ui(1.4), height: ui(3.2))
-                        Circle().frame(width: ui(1.5), height: ui(1.5))
-                    }
-                    .blendMode(.destinationOut)
+                // 찬 점에서 "!" 를 뚫어 낸다(막대 + 점): 겹침 방식(blendMode)이 아니라 짝수-홀수 채우기로 구멍을 낸 한 모양이라 어디서 다시 그려도 같다
+                Canvas { context, size in
+                    let side = min(size.width, size.height)
+                    let center = CGPoint(x: size.width / 2, y: size.height / 2)
+                    let origin = CGPoint(x: center.x - side / 2, y: center.y - side / 2)
+                    let barWidth = max(1.2, side * 0.16)
+                    var path = Path(ellipseIn: CGRect(origin: origin, size: CGSize(width: side, height: side)))
+                    path.addRoundedRect(in: CGRect(x: center.x - barWidth / 2, y: origin.y + side * 0.2, width: barWidth, height: side * 0.36),
+                                        cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2))
+                    path.addEllipse(in: CGRect(x: center.x - barWidth / 2, y: origin.y + side * 0.64, width: barWidth, height: barWidth))
+                    context.fill(path, with: .color(color), style: FillStyle(eoFill: true))
                 }
-                .compositingGroup()
             case .filled:
-                Circle().fill(color)
+                if status.pulses {
+                    PulsingDot(color: status.color)
+                } else {
+                    Circle().fill(color)
+                }
             }
         }
         .frame(width: ui(8), height: ui(8))
-        .workingPulse(status.pulses && !dormant)
         .animation(Motion.ease(Motion.fast), value: shape)
         .animation(Motion.ease(Motion.fast), value: status.color)
     }
@@ -937,19 +932,19 @@ struct WorktreeRowView: View {
                 .foregroundStyle(Color(section.isClaude ? TermAppearance.typeClaude : TermAppearance.textSecondary))
                 .frame(width: ui(Space.lg), height: line, alignment: .leading)
             VStack(alignment: .leading, spacing: ui(2)) {
-                TitleWithAside {
-                    Text(section.name)
-                        .uiFont(TypeSize.secondary)
-                        .foregroundStyle(Color(TermAppearance.textSecondary))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                } aside: {
-                    if let branch = section.branch {
-                        Text(branch)
-                            .uiFont(TypeSize.caption)
-                            .foregroundStyle(Color(TermAppearance.textSecondary))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
+                if section.rows.isEmpty {
+                    // 세션이 없는 작업 트리는 한 줄(이름 + 오른쪽 한마디). 브랜치는 이름에서 짐작되지 않을 때만, 한 줄에 들어갈 때만 — 아니면 풍선 도움말에 있다.
+                    ViewThatFits(in: .horizontal) {
+                        if let branch = section.branch, !GitWorktrees.branchFollowsName(branch, name: section.name) {
+                            HStack(spacing: ui(Space.sm)) { name; Spacer(minLength: 0); branchText(branch) }
+                        }
+                        name
+                    }
+                } else {
+                    TitleWithAside {
+                        name
+                    } aside: {
+                        if let branch = section.branch { branchText(branch) }
                     }
                 }
                 if let summary {
@@ -977,12 +972,28 @@ struct WorktreeRowView: View {
               + (collapsed ? "\n누르면 펼칩니다" : "\n누르면 접습니다"))
     }
 
+    private var name: some View {
+        Text(section.name)
+            .uiFont(TypeSize.secondary)
+            .foregroundStyle(Color(TermAppearance.textSecondary))
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    private func branchText(_ branch: String) -> some View {
+        Text(branch)
+            .uiFont(TypeSize.caption)
+            .foregroundStyle(Color(TermAppearance.textSecondary))
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
     /// 오른쪽 끝 한마디(펼쳐 있을 때만): 일하는 하위 에이전트 수·최근 작업·세션 없음
     @ViewBuilder
     private var trailing: some View {
         if section.agents.contains(where: \.isRunning) {
             HStack(spacing: ui(Space.xs)) {
-                Circle().fill(Color(TermAppearance.statusWorking)).frame(width: ui(6), height: ui(6)).workingPulse(true)
+                PulsingDot(color: TermAppearance.statusWorking).frame(width: ui(6), height: ui(6))
                 Text("작업 중 \(section.agents.filter(\.isRunning).count)")
                     .uiTextFont(TypeSize.caption, weight: .semibold)
             }
@@ -1020,7 +1031,8 @@ struct SessionRowView: View {
                 HStack(spacing: ui(Space.xs)) {
                     Text(row.title)
                         .uiFont(TypeSize.row)
-                        .foregroundStyle(Color(TermAppearance.textPrimary))
+                        // 꺼진 화면은 점이 없는 대신 이름도 한 단계 조용하게(둘째 줄이 "꺼짐"을 말한다)
+                        .foregroundStyle(Color(row.dormant ? TermAppearance.textSecondary : TermAppearance.textPrimary))
                         .lineLimit(1)
                         .truncationMode(.middle)
                     if row.launchWarning != nil {
@@ -1086,21 +1098,23 @@ struct SessionRowView: View {
         } else if case .orchestrating = row.status {
             // 오케스트레이션 중: 남은 일 수가 핵심이라 줄을 하나 더 써서 잘리지 않게(폴더는 묶음 머리에 있다)
             Text(row.status.label ?? "")
-                .foregroundStyle(Color(row.status.color))
+                .foregroundStyle(Color(row.status.wordColor))
                 .uiTextFont(TypeSize.caption)
             Text(row.status.detail ?? "")
                 .foregroundStyle(Color(TermAppearance.textPrimary))
                 .uiTextFont(TypeSize.caption)
         } else {
-            HStack(alignment: .firstTextBaseline, spacing: 0) {
+            // 색은 둘까지: 상태 말(사람이 봐야 하는 상태만 그 색)·프로그램 말(종류 색), 나머지는 보조 글자색. 구분점은 하나의 모양·같은 간격.
+            HStack(alignment: .firstTextBaseline, spacing: ui(Space.xs)) {
                 if let label = row.status.label {
-                    Text(label + " · ")
-                        .uiTextFont(TypeSize.caption, weight: row.status.needsAttention ? .bold : .regular)
-                        .foregroundStyle(Color(row.status.color))
+                    Text(label)
+                        .uiTextFont(TypeSize.caption)
+                        .foregroundStyle(Color(row.status.wordColor))
                         .layoutPriority(2)
+                    separator
                 }
+                // 프로그램 단어는 종류 색(셸은 회색), 상태 설명은 보조 글자색
                 Group {
-                    // 프로그램 단어는 종류 색(셸은 회색), 상태 설명은 보조 글자색
                     if let detail = row.status.detail {
                         Text(detail).uiTextFont(TypeSize.caption).foregroundStyle(Color(TermAppearance.textSecondary))
                     } else {
@@ -1109,12 +1123,21 @@ struct SessionRowView: View {
                 }
                 .layoutPriority(1)
                 // 제목이 이미 폴더 이름이면 같은 말을 되풀이하지 않고 터미널 장치로 구분한다
-                Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")
-                    .uiFont(TypeSize.caption)
-                    .foregroundStyle(Color(TermAppearance.textSecondary))
-                    .truncationMode(.middle)
+                let place = row.title == row.folder ? (row.pane.tty ?? "") : row.folder
+                if !place.isEmpty {
+                    separator
+                    Text(place)
+                        .uiFont(TypeSize.caption)
+                        .foregroundStyle(Color(TermAppearance.textSecondary))
+                        .truncationMode(.middle)
+                }
             }
         }
+    }
+
+    /// 둘째 줄의 구분점(말 사이 같은 모양·같은 간격)
+    private var separator: some View {
+        Text("·").uiTextFont(TypeSize.caption).foregroundStyle(Color(TermAppearance.textSecondary)).layoutPriority(2)
     }
 }
 
@@ -1531,7 +1554,7 @@ private struct LegacyDaemonLine: View {
             }
             if !relocating {
                 Button("지금 옮기기…", action: action)
-                    .buttonStyle(NoticeButtonStyle(prominent: false))
+                    .buttonStyle(NoticeButtonStyle())
                     .help("예전 데몬을 끄고 데이터를 새 위치로 옮깁니다. 열린 셸·claude 가 멈추고, claude·codex 화면은 탭을 열면 되살아납니다.")
             }
         }

@@ -67,9 +67,10 @@ enum WorkStatus: Equatable {
         }
     }
 
-    /// 점 모양(색만으로 구분하지 않는다). 모든 표면(사이드바·탭·분할 제목)이 같은 모양을 그린다.
+    /// 점 모양(색만으로 구분하지 않는다). 모든 표면(사이드바·탭·세션 전환·분할 제목)이 같은 모양을 그린다.
+    /// 상태가 없으면(셸·연결 전 claude/codex) 점이 없다 — `dotShape` 가 nil. 점 자리(칸)만 남아 이름이 어긋나지 않는다.
     enum DotShape: Equatable {
-        /// 찬 점(작업 중·완료·상태 없음)
+        /// 찬 점(작업 중·완료)
         case filled
         /// 속 빈 고리(쉼)
         case ring
@@ -81,9 +82,11 @@ enum WorkStatus: Equatable {
         case errorMark
     }
 
-    var dotShape: DotShape {
+    /// nil = 그리지 않는다(상태 없음)
+    var dotShape: DotShape? {
         switch self {
-        case .none, .unknown, .codexUnknown, .working, .done: return .filled
+        case .none, .unknown, .codexUnknown: return nil
+        case .working, .done: return .filled
         case .idle: return .ring
         case .waiting: return .ringedDot
         case .orchestrating: return .dottedRing
@@ -91,7 +94,10 @@ enum WorkStatus: Equatable {
         }
     }
 
-    /// 점이 숨 쉬어야 하는가(작업 중만) — `.workingPulse(_:)` / `layer.setWorkingPulse(_:)`
+    /// 둘째 줄의 상태 말 색: 사람이 봐야 하는 상태(입력 대기·오류·완료)만 그 상태 색, 나머지는 보조 글자색. 사이드바·세션 전환이 같이 쓴다.
+    var wordColor: NSColor { needsAttention ? color : TermAppearance.textSecondary }
+
+    /// 점이 숨 쉬어야 하는가(작업 중만) — `PulsingDot` / `layer.setWorkingPulse(_:)`
     var pulses: Bool { self == .working }
 
     /// 묶음·탭에 대표로 보일 상태(먼저 볼 것부터)
@@ -266,10 +272,10 @@ struct SessionKindIcon: View {
 }
 
 extension WorkStatus {
-    /// AppKit 상태 점(사이드바 `StatusDot` 과 같은 약속 — 탭 제목·세션 전환이 같이 쓴다): 작업 중 = 으뜸 글자색 찬 점(`pulse` 면 숨 쉼),
+    /// AppKit 상태 점(사이드바 `StatusDot` 과 같은 약속 — 탭 제목·세션 전환이 같이 쓴다): 작업 중 = 으뜸 글자색 찬 점(정지 모양),
     /// 입력 대기 = 붉은 고리 + 점(◉), 오류 = 붉은 점에 "!" 도려냄, 끝 = 세이지 찬 점, 쉼 = 회색 고리, 오케스트레이션 = 회색 점선 고리.
-    /// 상태가 없거나 아직 모르면 그리지 않는다. rect = 점 상자(8~9pt), cutout = 점 아래 바탕색(! 를 도려낼 때).
-    func drawDot(in rect: CGRect, cutout: NSColor, pulse: Bool = true) {
+    /// 상태가 없거나 아직 모르면 그리지 않는다(`dotShape` nil). rect = 점 상자(8~9pt), cutout = 점 아래 바탕색(! 를 도려낼 때).
+    func drawDot(in rect: CGRect, cutout: NSColor) {
         let size = rect.width
         let center = CGPoint(x: rect.midX, y: rect.midY)
         let color = self.color
@@ -304,14 +310,9 @@ extension WorkStatus {
                          xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
             NSBezierPath(ovalIn: CGRect(x: center.x - barWidth / 2, y: rect.minY + size * 0.64, width: barWidth, height: barWidth)).fill()
         case .working:
-            let context = NSGraphicsContext.current?.cgContext
-            context?.saveGState()
-            if pulse, WorkingPulse.shared.isRunning {
-                context?.setAlpha(CGFloat(WorkingPulseSpec.opacity(at: Date.timeIntervalSinceReferenceDate)))
-            }
+            // 정지 모양(불투명 1.0). 숨 쉬는 점은 레이어가 맡는다(탭 줄 `TabBarView.syncDotLayers`·사이드바 `PulsingDot`).
             color.setFill()
             NSBezierPath(ovalIn: rect).fill()
-            context?.restoreGState()
         case .done:
             color.setFill()
             NSBezierPath(ovalIn: rect).fill()

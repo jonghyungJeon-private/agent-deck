@@ -1,7 +1,7 @@
 import AppKit
 
 /// 세션 창 오른쪽 아래, 🌐 버튼 왼쪽의 터미널 버튼: 누르면 고른 세션의 작은 터미널 창을 켜고 끈다(⌃`).
-/// 28pt 둥근 모서리 버튼(15pt 가는 기호, 평소 textSecondary). 열려 있으면 속이 찬 기호 + 한 단계 밝은 바탕,
+/// 28pt 둥근 모서리 버튼(15pt 가는 기호, 평소 textSecondary). 열려 있으면 두꺼운 기호 + 한 단계 밝은 바탕,
 /// 창을 닫아 둔 채 명령이 돌고 있으면 오른쪽 위에 숨 쉬는 점(작업 중 점과 같은 시계).
 final class ScratchToggleButton: FloatPillButton {
     /// 닫아 둔 작은 터미널에서 명령이 돌고 있음(앞에서 도는 프로그램이 셸이 아님)
@@ -61,8 +61,9 @@ final class ScratchToggleButton: FloatPillButton {
 
     override func draw(_ dirtyRect: NSRect) {
         let side = Self.symbolSide
-        guard let image = NSImage(systemSymbolName: isOn ? "terminal.fill" : "terminal", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: side, weight: .regular)
+        // 켜지면 같은 기호를 두껍게(속이 찬 기호는 밝은 바탕에서 검은 덩어리로 보인다) — 🌐 와 같은 약속, 바탕이 한 단계 밝아진다
+        guard let image = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: side, weight: isOn ? .semibold : .regular)
                 .applying(.init(paletteColors: [emphasized ? TermAppearance.textPrimary : TermAppearance.textSecondary]))) else { return }
         let size = image.size
         image.draw(in: NSRect(x: (bounds.width - size.width) / 2, y: (bounds.height - size.height) / 2, width: size.width, height: size.height))

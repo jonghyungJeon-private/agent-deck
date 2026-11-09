@@ -68,6 +68,7 @@ func lerpRect(_ a: CGRect, _ b: CGRect, _ t: CGFloat) -> CGRect {
 /// SF Symbol 을 글자 두께로 칠해 상자 가운데에 그린다(그리는 뷰 좌표가 뒤집혀 있어도 바로 선다).
 enum SymbolDrawing {
     private static var cache: [String: NSImage] = [:]
+    private static var tintedCache: [String: NSImage] = [:]
 
     static func image(_ name: String, size: CGFloat, weight: NSFont.Weight) -> NSImage? {
         let key = "\(name)|\(size)|\(weight.rawValue)"
@@ -79,20 +80,36 @@ enum SymbolDrawing {
         return image
     }
 
-    /// 그린 가로 길이
-    @discardableResult
-    static func draw(_ name: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor, centeredIn box: CGRect) -> CGFloat {
-        guard let base = image(name, size: size, weight: weight) else { return 0 }
-        let tinted = NSImage(size: base.size, flipped: false) { rect in
+    /// 칠한 그림(기호 + 현재 모양에서 풀린 색마다 한 장 — 그릴 때마다 새로 만들지 않는다)
+    private static func tinted(_ base: NSImage, key: String, color: NSColor) -> NSImage {
+        let resolved = color.usingColorSpace(.sRGB) ?? color
+        let full = "\(key)|\(resolved.redComponent),\(resolved.greenComponent),\(resolved.blueComponent),\(resolved.alphaComponent)"
+        if let cached = tintedCache[full] { return cached }
+        let image = NSImage(size: base.size, flipped: false) { rect in
             base.draw(in: rect)
             color.set()
             rect.fill(using: .sourceAtop)
             return true
         }
-        let rect = CGRect(x: box.midX - base.size.width / 2, y: box.midY - base.size.height / 2,
-                          width: base.size.width, height: base.size.height)
+        if tintedCache.count > 200 { tintedCache.removeAll() }
+        tintedCache[full] = image
+        return image
+    }
+
+    /// 그린 가로 길이. `fit` 이면 상자보다 큰 기호는 가로세로 비율을 지킨 채 상자에 들어가게 줄여 그린다(‹› 처럼 가로로 넓은 기호).
+    @discardableResult
+    static func draw(_ name: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor, centeredIn box: CGRect,
+                     fit: Bool = false) -> CGFloat {
+        guard let base = image(name, size: size, weight: weight) else { return 0 }
+        let tinted = tinted(base, key: "\(name)|\(size)|\(weight.rawValue)", color: color)
+        var drawSize = base.size
+        if fit, drawSize.width > 0, drawSize.height > 0 {
+            let scale = min(1, box.width / drawSize.width, box.height / drawSize.height)
+            drawSize = CGSize(width: drawSize.width * scale, height: drawSize.height * scale)
+        }
+        let rect = CGRect(x: box.midX - drawSize.width / 2, y: box.midY - drawSize.height / 2, width: drawSize.width, height: drawSize.height)
         tinted.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
-        return base.size.width
+        return drawSize.width
     }
 }
 
@@ -113,9 +130,12 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     /// 상태 점 지름과 제목까지 간격
     private static var dotSize: CGFloat { TermAppearance.scaled(8) }
     private static var dotGap: CGFloat { TermAppearance.scaled(8) }
-    /// 종류 아이콘 상자와 제목까지 간격
-    private static var iconBox: CGFloat { TermAppearance.scaled(12) }
-    private static var iconGap: CGFloat { TermAppearance.scaled(6) }
+    /// 종류 아이콘 상자(가로 14 × 세로 12 — ✻·셸·‹› 가 같은 상자에 맞춰 그려진다)와 제목까지 간격
+    static var iconBoxWidth: CGFloat { TermAppearance.scaled(14) }
+    static var iconBoxHeight: CGFloat { TermAppearance.scaled(12) }
+    static var iconGap: CGFloat { TermAppearance.scaled(6) }
+    /// 제목을 줄이는 한계(이보다 좁아지지는 않는다)
+    private static var minTitleWidth: CGFloat { TermAppearance.scaled(24) }
     /// 배율을 곱한 길이
     private func ui(_ value: CGFloat) -> CGFloat { TermAppearance.scaled(value) }
 
@@ -140,9 +160,28 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     private var fromPlus: CGRect = .zero
     private var fromSelection: CGRect?
     private var ghost: (tab: Tab, rect: CGRect)?
-    private var pulseTimer: Timer?
+    /// 작업 중인 탭의 점 레이어(GPU 가 숨 쉬게 한다 — 점이 숨 쉬는 동안 탭 줄을 다시 그리지 않는다)
+    private var dotLayers: [CALayer] = []
     private var pulseObserver: NSObjectProtocol?
+    /// 탭마다 줄이지 않은 제목 폭과 줄인 뒤의 폭(오른쪽 여백 때문에 좁을 때만 다르다)
+    private var titleWidths: [CGFloat] = []
+    /// 끌기용 그림을 찍는 동안: 작업 중 점을 그림에 칠한다(평소엔 레이어가 그린다)
+    private var paintsWorkingDots = false
 
+    /// 탭 줄 오른쪽에서 비워 둘 폭: 오른쪽 위 구석의 🌐·⌨ 알약이 탭 줄 안에 있을 때 그 폭(없으면 0).
+    /// 탭과 "+" 는 이 안쪽에만 놓이고, 안 들어가면 제목을 줄인다.
+    var trailingReserve: CGFloat = 0 {
+        didSet {
+            guard trailingReserve != oldValue else { return }
+            relayoutAnimated()
+        }
+    }
+    /// 탭마다 제목을 최소 폭까지 줄여도 필요한 폭(탭 + "+") — 이보다 좁으면 알약을 탭 줄 안에 둘 수 없다
+    private(set) var minimumContentWidth: CGFloat = 0
+    /// `minimumContentWidth` 가 바뀜(탭이 생기고 사라짐·제목·배율)
+    var onContentChanged: (() -> Void)?
+    /// 탭과 "+" 를 놓을 수 있는 폭
+    private var contentWidth: CGFloat { max(0, bounds.width - trailingReserve) }
     override var isFlipped: Bool { true }
 
     override init(frame frameRect: NSRect) {
@@ -153,21 +192,28 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     required init?(coder: NSCoder) { fatalError() }
 
     private func setup() {
-        tween.onTick = { [weak self] in self?.needsDisplay = true }
-        pulseObserver = NotificationCenter.default.addObserver(forName: WorkingPulse.didChange, object: nil, queue: .main) { [weak self] _ in
+        tween.onTick = { [weak self] in
             self?.needsDisplay = true
-            self?.syncPulse()
+            self?.syncDotLayers()
+        }
+        wantsLayer = true
+        pulseObserver = NotificationCenter.default.addObserver(forName: WorkingPulse.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.syncDotLayers()
         }
     }
 
     deinit {
-        pulseTimer?.invalidate()
         if let pulseObserver { NotificationCenter.default.removeObserver(pulseObserver) }
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        syncPulse()
+        syncDotLayers()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        syncDotLayers()
     }
 
     /// 글꼴 크기 배율이 바뀜: 탭 폭·글꼴을 다시(움직임 없이)
@@ -175,6 +221,28 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         layoutTabs()
         settle()
         needsDisplay = true
+        syncDotLayers()
+    }
+
+    /// 오른쪽 여백이 바뀜(알약이 늘거나 줄어듦): 탭이 미끄러져 새 폭에 맞는다(움직임 없이 해야 하면 바로)
+    private func relayoutAnimated() {
+        guard !tabs.isEmpty else { layoutTabs(); settle(); return }
+        let previousRects = displayRects()
+        let previousSelection = currentSelectionRect()
+        let previousPlus = displayPlus()
+        layoutTabs()
+        if drag == nil, window?.isVisible == true, !Motion.reduced, previousRects.count == tabRects.count {
+            fromRects = previousRects
+            fromAlpha = Array(repeating: 1, count: tabRects.count)
+            fromPlus = previousPlus
+            fromSelection = previousSelection
+            ghost = nil
+            tween.run(duration: Motion.standard)
+        } else {
+            settle()
+        }
+        needsDisplay = true
+        syncDotLayers()
     }
 
     func update(tabs: [Tab], selected: Int?) {
@@ -199,7 +267,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             settle()
         }
         needsDisplay = true
-        syncPulse()
+        syncDotLayers()
     }
 
     /// 바뀐 모양을 한 번의 끼움·빼기·같은 자리 변화로 풀 수 있으면 (새 탭마다 이전 탭 번호, 빠진 이전 탭 번호). 순서를 바꾼 것 등은 nil(움직임 없음).
@@ -253,28 +321,24 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         return String(title.prefix(limit - 9)) + "…" + String(title.suffix(8))
     }
 
-    /// 제목은 두께를 늘 같게(고르면 폭이 변하지 않게). 지금 탭 = 으뜸 글자색, 나머지 = 보조 글자색.
-    private func titleAttributes(selected isSelected: Bool, hovered: Bool, waiting: Bool) -> [NSAttributedString.Key: Any] {
-        let color = isSelected || hovered || waiting ? TermAppearance.textPrimary : TermAppearance.textSecondary
-        return [.font: TermAppearance.scaledUIFont(12), .foregroundColor: color]
+    /// 제목은 두께를 늘 같게(고르면 폭이 변하지 않게). 지금 탭 = 으뜸 글자색, 나머지 = 보조 글자색. 입력 대기도 점만 다르다(탭 모양은 그대로).
+    private func titleAttributes(selected isSelected: Bool, hovered: Bool, truncating: Bool = false) -> [NSAttributedString.Key: Any] {
+        let color = isSelected || hovered ? TermAppearance.textPrimary : TermAppearance.textSecondary
+        var attributes: [NSAttributedString.Key: Any] = [.font: TermAppearance.scaledUIFont(12), .foregroundColor: color]
+        if truncating {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byTruncatingTail
+            attributes[.paragraphStyle] = paragraph
+        }
+        return attributes
     }
 
     private var smallAttributes: [NSAttributedString.Key: Any] {
         [.font: TermAppearance.scaledUIFont(10), .foregroundColor: TermAppearance.textSecondary]
     }
 
-    private func isWaiting(_ tab: Tab) -> Bool {
-        if case .waiting = tab.status { return true }
-        return false
-    }
-
-    /// 점을 그릴 상태(claude 인데 아직 상태를 모르는 것은 종류 아이콘이 이미 알려 주므로 점을 안 둔다)
-    private func showsDot(_ status: WorkStatus) -> Bool {
-        switch status {
-        case .none, .unknown, .codexUnknown: return false
-        default: return true
-        }
-    }
+    /// 점을 그릴 상태(상태가 없는 셸·아직 모르는 claude 는 종류 아이콘이 이미 알려 주므로 점을 안 둔다)
+    private func showsDot(_ status: WorkStatus) -> Bool { status.dotShape != nil }
 
     private func trailing(_ index: Int) -> String? {
         index < 9 ? "⌘\(index + 1)" : nil
@@ -293,17 +357,32 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     private func layoutTabs() {
         tabRects = []
         closeRects = []
-        var x: CGFloat = 0
-        let height = bounds.height
+        var fixed: [Double] = [], natural: [Double] = []
         for (index, tab) in tabs.enumerated() {
             var width: CGFloat = ui(12)
             if showsDot(tab.status) { width += Self.dotSize + Self.dotGap }
-            width += Self.iconBox + Self.iconGap
-            width += (Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(selected: false, hovered: false, waiting: false)).width
+            width += Self.iconBoxWidth + Self.iconGap
             if let badge = badgeWidth(tab) { width += ui(8) + badge }
+            width += ui(12) + tailWidth(index) + ui(12)
+            fixed.append(Double(width))
+            natural.append(Double(ceil((Self.short(tab.title) as NSString).size(withAttributes: titleAttributes(selected: false, hovered: false)).width)))
+        }
+        // 오른쪽 여백을 뺀 폭에 안 들어가면 제목을 줄인다(긴 제목부터, 최소 폭까지)
+        let widths = bounds.width > 0
+            ? TabBarFit.titleWidths(titles: natural, fixed: fixed, extra: Double(ui(32)), available: Double(contentWidth),
+                                    minTitle: Double(Self.minTitleWidth))
+            : natural
+        titleWidths = widths.map { CGFloat($0) }
+        let minimum = CGFloat(fixed.reduce(0, +) + natural.reduce(0) { $0 + min($1, Double(Self.minTitleWidth)) }) + ui(32)
+        if minimum != minimumContentWidth {
+            minimumContentWidth = minimum
+            DispatchQueue.main.async { [weak self] in self?.onContentChanged?() }
+        }
+        var x: CGFloat = 0
+        let height = bounds.height
+        for index in tabs.indices {
+            let rect = CGRect(x: x, y: 0, width: ceil(CGFloat(fixed[index] + widths[index])), height: height)
             let tail = tailWidth(index)
-            width += ui(12) + tail + ui(12)
-            let rect = CGRect(x: x, y: 0, width: ceil(width), height: height)
             tabRects.append(rect)
             closeRects.append(CGRect(x: rect.maxX - ui(12) - tail - ui(4), y: 0, width: tail + ui(8), height: height))
             x = rect.maxX
@@ -311,7 +390,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         plusRect = CGRect(x: x, y: 0, width: ui(32), height: height)
         // 풍선 도움말: 줄이지 않은 제목(+ 위험한 실행 옵션)
         removeAllToolTips()
-        for rect in tabRects { addToolTip(rect, owner: self, userData: nil) }
+        for rect in tabRects where rect.minX < contentWidth { addToolTip(rect, owner: self, userData: nil) }
     }
 
     func view(_ view: NSView, stringForToolTip tag: NSView.ToolTipTag, point: NSPoint, userData data: UnsafeMutableRawPointer?) -> String {
@@ -324,6 +403,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         super.setFrameSize(newSize)
         layoutTabs()
         settle()
+        syncDotLayers()
     }
 
     // MARK: - 그리기
@@ -342,6 +422,8 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
         // 끄는 동안엔 탭을 층(그림)으로 옮겨 그리므로 바탕만
         guard drag == nil else { return }
+        // 오른쪽 여백(알약 자리)에는 탭도 "+" 도 그리지 않는다
+        NSBezierPath(rect: CGRect(x: 0, y: 0, width: contentWidth, height: bounds.height)).addClip()
         if let selection {
             TermAppearance.background.setFill()
             selection.fill()
@@ -391,7 +473,6 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
         let isSelected = index != nil && index == selected
         let isHovered = index != nil && index == hovered
-        let waiting = isWaiting(tab)
         var background = TermAppearance.chrome
         if isSelected {
             background = TermAppearance.background
@@ -400,25 +481,22 @@ final class TabBarView: NSView, NSViewToolTipOwner {
             background.setFill()
             rect.fill()
         }
-        // 안 보고 있는 탭이 입력 대기면 바탕을 붉게 물들이고 아래에 붉은 줄(색과 모양 둘 다로 눈에 띄게)
-        if !isSelected, waiting {
-            TermAppearance.statusAttention.withAlphaComponent(isHovered ? 0.2 : 0.14).setFill()
-            rect.fill()
-            TermAppearance.statusAttention.setFill()
-            CGRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
-        }
         var x = rect.minX + ui(12)
         if showsDot(tab.status) {
-            tab.status.drawDot(in: CGRect(x: x, y: rect.midY - Self.dotSize / 2, width: Self.dotSize, height: Self.dotSize), cutout: background)
+            // 작업 중 점은 레이어가 그린다(숨 쉬는 동안 다시 그리지 않게). 끌기용 그림을 찍을 때만 여기서 칠한다.
+            if tab.status != .working || paintsWorkingDots {
+                tab.status.drawDot(in: CGRect(x: x, y: rect.midY - Self.dotSize / 2, width: Self.dotSize, height: Self.dotSize), cutout: background)
+            }
             x += Self.dotSize + Self.dotGap
         }
-        tab.kind.drawIcon(size: ui(11), in: CGRect(x: x, y: rect.midY - Self.iconBox / 2, width: Self.iconBox, height: Self.iconBox))
-        x += Self.iconBox + Self.iconGap
+        tab.kind.drawIcon(size: ui(11), in: CGRect(x: x, y: rect.midY - Self.iconBoxHeight / 2, width: Self.iconBoxWidth, height: Self.iconBoxHeight))
+        x += Self.iconBoxWidth + Self.iconGap
         let title = Self.short(tab.title) as NSString
-        let attributes = titleAttributes(selected: isSelected, hovered: isHovered, waiting: waiting)
+        let attributes = titleAttributes(selected: isSelected, hovered: isHovered, truncating: true)
         let size = title.size(withAttributes: attributes)
-        title.draw(at: CGPoint(x: x, y: rect.midY - size.height / 2), withAttributes: attributes)
-        x += size.width
+        let titleWidth = index.flatMap { titleWidths.indices.contains($0) ? titleWidths[$0] : nil } ?? ceil(size.width)
+        title.draw(in: CGRect(x: x, y: rect.midY - size.height / 2, width: titleWidth, height: size.height), withAttributes: attributes)
+        x += titleWidth
         if tab.paneCount > 1 {
             x += ui(8)
             SymbolDrawing.draw(tab.zoomed ? "arrow.up.left.and.arrow.down.right" : "square.split.2x1", size: ui(10), weight: .regular,
@@ -444,26 +522,33 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
     }
 
-    /// 작업 중인 탭이 있으면 점만 30fps 로 다시 그려 숨 쉬게 한다(멈춰야 하면 타이머도 멈춤 — WorkingPulse 기준)
-    private func syncPulse() {
-        let needs = drag == nil && window != nil && WorkingPulse.shared.isRunning && tabs.contains { $0.status == .working }
-        if needs, pulseTimer == nil {
-            let timer = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.invalidateWorkingDots() }
-            RunLoop.main.add(timer, forMode: .common)
-            pulseTimer = timer
-        } else if !needs, pulseTimer != nil {
-            pulseTimer?.invalidate()
-            pulseTimer = nil
-        }
-    }
-
-    private func invalidateWorkingDots() {
-        guard drag == nil else { return }
+    /// 작업 중인 탭마다 점 레이어를 두고 공용 숨 쉬기 애니메이션(`setWorkingPulse` — 모든 점 같은 위상)을 붙인다. 탭이 움직이면 자리만 옮긴다.
+    /// 끄는 동안·창이 없을 때는 없앤다. 겹쳐 둔 holder 는 탭이 생기고 사라질 때의 옅음을 따른다(숨 쉬기는 안쪽 점 레이어).
+    private func syncDotLayers() {
         let rects = displayRects()
-        for (index, tab) in tabs.enumerated() where tab.status == .working && index < rects.count {
-            setNeedsDisplay(CGRect(x: rects[index].minX + ui(12) - 2, y: rects[index].midY - Self.dotSize, width: Self.dotSize + 4,
-                                   height: Self.dotSize * 2))
+        let indices = drag == nil && window != nil
+            ? tabs.indices.filter { tabs[$0].status == .working && $0 < rects.count && rects[$0].minX < contentWidth } : []
+        guard let root = layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        while dotLayers.count > indices.count { dotLayers.removeLast().removeFromSuperlayer() }
+        while dotLayers.count < indices.count {
+            let holder = CALayer()
+            holder.addSublayer(CALayer())
+            root.addSublayer(holder)
+            dotLayers.append(holder)
         }
+        for (holder, index) in zip(dotLayers, indices) {
+            let rect = rects[index]
+            holder.frame = CGRect(x: rect.minX + ui(12), y: rect.midY - Self.dotSize / 2, width: Self.dotSize, height: Self.dotSize)
+            holder.opacity = Float(displayAlpha(index))
+            guard let dot = holder.sublayers?.first else { continue }
+            dot.frame = holder.bounds
+            dot.cornerRadius = Self.dotSize / 2
+            dot.backgroundColor = TermAppearance.statusWorking.cg(in: self)
+            dot.setWorkingPulse(true)
+        }
+        CATransaction.commit()
     }
 
     // MARK: - 마우스
@@ -475,11 +560,19 @@ final class TabBarView: NSView, NSViewToolTipOwner {
                                        owner: self))
     }
 
+    /// 그 자리의 탭(오른쪽 여백 = 알약 자리는 탭이 아니다)
+    private func tabIndex(at point: CGPoint) -> Int? {
+        guard point.x < contentWidth else { return nil }
+        return tabRects.firstIndex { $0.contains(point) }
+    }
+
+    private func isPlus(_ point: CGPoint) -> Bool { point.x < contentWidth && plusRect.contains(point) }
+
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let index = tabRects.firstIndex { $0.contains(point) }
+        let index = tabIndex(at: point)
         let close = index.map { closeRects[$0].contains(point) } ?? false
-        let plus = plusRect.contains(point)
+        let plus = isPlus(point)
         guard index != hovered || close != hoveringClose || plus != hoveringPlus else { return }
         hovered = index
         hoveringClose = close
@@ -497,9 +590,9 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         press = nil
-        if plusRect.contains(point) {
+        if isPlus(point) {
             onNew?()
-        } else if let index = tabRects.firstIndex(where: { $0.contains(point) }) {
+        } else if let index = tabIndex(at: point) {
             if closeRects[index].contains(point) {
                 onClose?(index)
             } else if event.clickCount == 2 {
@@ -535,7 +628,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
     /// 오른쪽 클릭: 이름 바꾸기·탭 닫기
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard let index = tabRects.firstIndex(where: { $0.contains(point) }) else { return nil }
+        guard let index = tabIndex(at: point) else { return nil }
         let menu = NSMenu()
         menu.addItem(MenuAction(title: "이름 바꾸기…") { [weak self] in self?.onRename?(index) })
         menu.addItem(MenuAction(title: "탭 닫기") { [weak self] in self?.onClose?(index) })
@@ -595,6 +688,9 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         needsDisplay = true
     }
 
+    /// 시험용: 탭과 "+" 의 오른쪽 끝
+    var debugContentMaxX: CGFloat { tabs.isEmpty ? 0 : plusRect.maxX }
+
     /// 시험용: 탭 자리(창 좌표)
     var windowTabRects: [CGRect] { tabRects.map { convert($0, to: nil) } }
 
@@ -610,7 +706,9 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         hoveringPlus = false
         settle()
         wantsLayer = true
+        paintsWorkingDots = true
         let images = tabRects.map(snapshot) // 바탕만 그리기 전에 찍는다
+        paintsWorkingDots = false
         var layers: [CALayer] = []
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -631,8 +729,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         }
         CATransaction.commit()
         drag = Drag(index: index, rects: tabRects, grab: grab, layers: layers, to: index)
-        pulseTimer?.invalidate()
-        pulseTimer = nil
+        syncDotLayers()
         needsDisplay = true
     }
 
@@ -683,7 +780,7 @@ final class TabBarView: NSView, NSViewToolTipOwner {
         CATransaction.commit()
         self.drag = nil
         needsDisplay = true
-        syncPulse()
+        syncDotLayers()
         onDragOutside?(drag.index, nil)
         guard drag.rects.count == tabs.count else { return } // 끄는 사이 탭이 열리거나 닫힘
         if !drag.inside {

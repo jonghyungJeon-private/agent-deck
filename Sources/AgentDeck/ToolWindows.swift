@@ -129,10 +129,12 @@ final class ToolWindowsController: NSObject {
                 self?.save()
             }
         host.onTabBarHeightChanged = { [weak self] in
-            self?.updateButtonsVisibility()
+            self?.tabBarChanged()
             self?.layoutFloat()
         }
-        updateButtonsVisibility()
+        browserButton.onSizeChange = { [weak self] in self?.tabBarChanged() }
+        host.onTabBarContentChanged = { [weak self] in self?.tabBarChanged() }
+        tabBarChanged()
         scratchButton.onClick = { [weak self] in self?.toggleScratch() }
         scratchPanel.addTitleButton(symbol: "power", tip: "끝내기 — 이 작은 터미널의 셸을 끝냅니다(다음에 열면 새 셸)") { [weak self] in self?.endScratch() }
         floatPanel.addTitleButton(symbol: "rectangle.portrait.and.arrow.right", tip: "별도 창으로 떼기") { [weak self] in self?.popOutBrowser() }
@@ -253,60 +255,100 @@ final class ToolWindowsController: NSObject {
     // MARK: 버튼 구석
 
     private var buttonConstraints: [NSLayoutConstraint] = []
+    private var anchoredInTabRow = false
 
-    /// 🌐·⌨ 를 설정한 구석에 붙인다(바꾸면 다시 붙인다). 오른쪽 위는 탭 줄 오른쪽 끝(세로 가운데, 오른쪽에서 8pt)에 앉혀
-    /// 화면 위쪽(찾기 막대·편집기 첫 줄·오른쪽 분할 화면 모서리)을 덮지 않는다. 오른쪽 아래는 터미널 스크롤바(약 15pt)를 피해 오른쪽에서 22pt.
+    /// 🌐·⌨ 를 설정한 구석에 붙인다(바꾸면 다시 붙인다). 오른쪽 위는 탭 줄이 있으면 탭 줄 오른쪽 끝(세로 가운데, 오른쪽에서 8pt)에 앉혀
+    /// 화면 위쪽(찾기 막대·편집기 첫 줄·오른쪽 분할 화면 모서리)을 덮지 않고(탭 줄은 그 폭만큼 오른쪽을 비운다 — `updateTabBarReserve`),
+    /// 탭이 하나도 없으면 예전처럼 맨 위 10pt 아래·오른쪽에서 22pt. 오른쪽 아래는 터미널 스크롤바(약 15pt)를 피해 오른쪽에서 22pt.
     private func anchorButtons() {
         NSLayoutConstraint.deactivate(buttonConstraints)
         switch layout.floatCorner {
-        case .topRight:
+        case .topRight where pillsInTabRow:
             buttonConstraints = [
                 browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.tabRowSideInset),
                 browserButton.centerYAnchor.constraint(equalTo: host.tabBarCenterYAnchor),
-                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -8),
+                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -Self.pillGap),
                 scratchButton.centerYAnchor.constraint(equalTo: browserButton.centerYAnchor),
+            ]
+        case .topRight:
+            buttonConstraints = [
+                browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.bottomSideInset),
+                browserButton.topAnchor.constraint(equalTo: host.belowTabBarAnchor, constant: Self.topInset),
+                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -Self.pillGap),
+                scratchButton.topAnchor.constraint(equalTo: browserButton.topAnchor),
             ]
         case .bottomRight:
             buttonConstraints = [
                 browserButton.trailingAnchor.constraint(equalTo: host.view.trailingAnchor, constant: -Self.bottomSideInset),
                 browserButton.bottomAnchor.constraint(equalTo: host.view.bottomAnchor, constant: -12),
-                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -8),
+                scratchButton.trailingAnchor.constraint(equalTo: browserButton.leadingAnchor, constant: -Self.pillGap),
                 scratchButton.bottomAnchor.constraint(equalTo: browserButton.bottomAnchor),
             ]
         }
         NSLayoutConstraint.activate(buttonConstraints)
+        anchoredInTabRow = pillsInTabRow
     }
 
     /// 탭 줄 안 오른쪽 여백(오른쪽 위 구석)
     private static let tabRowSideInset: CGFloat = 8
-    /// 오른쪽 아래 구석: 터미널 스크롤바를 피한 여백
+    /// 오른쪽 아래·탭이 없을 때 오른쪽 위: 터미널 스크롤바를 피한 여백
     private static let bottomSideInset: CGFloat = 22
+    /// 탭이 없을 때 오른쪽 위 알약의 위쪽 간격
+    private static let topInset: CGFloat = 10
+    /// 두 알약 사이 간격과, 탭 줄이 알약 앞에 남기는 여유
+    private static let pillGap: CGFloat = 8
+    private static let pillClearance: CGFloat = 8
+
+    /// 알약 묶음이 탭 줄 오른쪽에서 차지할 폭(🌐 가 상태 글자로 늘어나면 따라 늘어난다)
+    private var pillClusterReserve: Double {
+        let widths = [scratchButton, browserButton].filter { !$0.isHidden }.map { Double($0.intrinsicContentSize.width) }
+        return TabBarFit.reserve(pillWidths: widths, gap: Double(Self.pillGap), trailing: Double(Self.tabRowSideInset),
+                                 clearance: Double(Self.pillClearance))
+    }
+
+    /// 알약이 탭 줄 안에 앉는가: 오른쪽 위 구석이고 탭 줄이 있으며, 알약 폭을 뺀 나머지에 탭 제목을 최소로 줄인 탭 + "+" 가 들어갈 때.
+    /// 탭이 없거나 아무리 줄여도 안 들어가면(좁은 창에 탭이 많음) 알약은 예전처럼 탭 줄 아래 맨 위에 앉는다 — 탭·"+" 를 가리지 않는다.
+    private var pillsInTabRow: Bool {
+        guard layout.floatCorner == .topRight, host.tabBarInset > 0 else { return false }
+        let width = Double(host.view.bounds.width)
+        return width <= 0 || width - pillClusterReserve >= Double(host.tabBarMinimumContentWidth)
+    }
+
+    /// 탭 줄 높이·탭·호스트 폭이 바뀜: 알약 자리(탭 줄 안 ↔ 탭 줄 아래)와 탭 줄의 오른쪽 여백을 맞춘다
+    private func tabBarChanged() {
+        if anchoredInTabRow != pillsInTabRow {
+            anchorButtons()
+            host.view.layoutSubtreeIfNeeded()
+            layoutFloat()
+        }
+        updateTabBarReserve()
+    }
+
+    /// 탭 줄이 오른쪽에 비워 둘 폭 = 알약이 탭 줄 안이면 알약 묶음 폭, 아니면 0.
+    private func updateTabBarReserve() {
+        host.setTabBarTrailingReserve(pillsInTabRow ? CGFloat(pillClusterReserve) : 0)
+    }
 
     /// 설정에서 구석을 바꿈: 버튼을 다시 붙이고, 두 작은 창의 저장된 자리는 지워 새 구석의 처음 자리로 다시 연다(열림은 그대로)
     func setFloatCorner(_ corner: FloatCorner) {
         guard corner != layout.floatCorner else { return }
         layout.setFloatCorner(corner)
         anchorButtons()
+        updateTabBarReserve()
         host.view.layoutSubtreeIfNeeded()
         layoutFloat()
         save()
-    }
-
-    /// 화면(탭)이 하나도 없으면 🌐·⌨ 는 할 일이 없어 숨긴다(빈 화면에 떠 있지 않게)
-    private func updateButtonsVisibility() {
-        let hidden = host.tabBarInset == 0
-        browserButton.isHidden = hidden
-        scratchButton.isHidden = hidden
     }
 
     /// 시험 명령 `float-corner <top|bottom>`
     var floatCorner: FloatCorner { layout.floatCorner }
 
     /// 구석 쪽 세로 가장자리에서 띄울 거리. 오른쪽 아래: 브라우저는 🌐 버튼 윗선 + 14pt, 작은 터미널은 아래 가장자리 + 14pt.
-    /// 오른쪽 위: 둘 다 탭 줄 아래 + 14pt(버튼이 탭 줄 안에 있어 따로 비우지 않는다).
+    /// 오른쪽 위: 버튼이 탭 줄 안에 있으면 둘 다 탭 줄 아래 + 14pt(따로 비우지 않는다), 탭이 없어 버튼이 맨 위에 있으면 버튼 줄(10pt + 버튼 높이) 아래 + 14pt.
     private func edgeInset(_ kind: FloatKind) -> Double {
         switch layout.floatCorner {
         case .topRight:
+            if !pillsInTabRow { return Double(host.tabBarInset + Self.topInset + BrowserToggleButton.size) + FloatSpec.margin }
             return Double(host.tabBarInset) + FloatSpec.margin
         case .bottomRight:
             return kind == .browser ? 12 + Double(BrowserToggleButton.size) + FloatSpec.margin : FloatSpec.margin
@@ -381,7 +423,10 @@ final class ToolWindowsController: NSObject {
         return "🌐 브라우저" + (name.map { " · \($0)" } ?? "")
     }
 
-    @objc private func hostResized() { layoutFloat() }
+    @objc private func hostResized() {
+        tabBarChanged()
+        layoutFloat()
+    }
 
     /// 사람이 끌어 옮기거나 크기를 바꿈: 호스트 대비 비율로 저장(자리는 창 종류마다 하나를 함께 쓴다)
     private func floatFrameChanged(_ kind: FloatKind, _ frame: NSRect) {
@@ -588,6 +633,12 @@ final class ToolWindowsController: NSObject {
             let b = browserButton.convert(browserButton.bounds, to: nil)
             text += String(format: " button(window)=x=%.0f y=%.0f w=%.0f h=%.0f", b.minX, b.minY, b.width, b.height)
         }
+        // 탭과 "+" 가 알약 아래로 들어가지 않는지(탭 줄 안에 알약이 있을 때만 뜻이 있다)
+        if pillsInTabRow {
+            let pillMinX = [scratchButton, browserButton].filter { !$0.isHidden }.map { $0.convert($0.bounds, to: nil).minX }.min() ?? 0
+            let tabsMaxX = host.debugTabRowMaxX
+            text += String(format: " tab-row tabs+plus-maxX=%.0f pills-minX=%.0f overlap=%@", tabsMaxX, pillMinX, tabsMaxX > pillMinX ? "YES" : "no")
+        }
         return text
     }
 
@@ -634,6 +685,7 @@ final class ToolWindowsController: NSObject {
         docks.values.forEach { $0.scaleChanged() }
         browserButton.scaleChanged()
         scratchButton.scaleChanged()
+        tabBarChanged()
         floatPanel.scaleChanged()
         scratchPanel.scaleChanged()
         model.scratch.applyFont()
@@ -697,14 +749,8 @@ final class ToolWindowsController: NSObject {
         let visible = model.browserWindows.dock.owner == id && host.view.window != nil
         let animate = visible && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if open {
+            // 나타남은 작은 창이 붙을 때 스스로 한 번 옅게 떠오른다(`FloatPanel.viewDidMoveToWindow`) — 여기서 또 옅게 하지 않는다
             commitAutoBrowserFloat(id, key: key, open: true)
-            if animate, floatPanel.superview === host.view {
-                floatPanel.alphaValue = 0
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.2
-                    floatPanel.animator().alphaValue = 1
-                }
-            }
         } else if animate, floatPanel.superview === host.view {
             let run = model.browserAuto.states[id]?.runStartedAt
             NSAnimationContext.runAnimationGroup({ context in

@@ -20,6 +20,13 @@ final class BrowserToggleButton: FloatPillButton {
     private static var globeSide: CGFloat { TermAppearance.scaled(15) }
     private static var labelFont: NSFont { TermAppearance.uiTextFont(TermAppearance.scaled(11), weight: .medium) }
     private let attentionDot = CALayer()
+    /// 알약 폭이 바뀜(상태 글자가 생기고 사라짐·글꼴 배율): 탭 줄이 오른쪽 여백을 맞춘다
+    var onSizeChange: (() -> Void)?
+
+    override func invalidateIntrinsicContentSize() {
+        super.invalidateIntrinsicContentSize()
+        onSizeChange?()
+    }
 
     override init(frame: NSRect) {
         super.init(frame: frame)

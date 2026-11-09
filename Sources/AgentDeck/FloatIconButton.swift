@@ -126,9 +126,21 @@ class FloatPillButton: NSView {
     override func mouseDown(with event: NSEvent) {
         pressed = true
         onClick?()
-        // 눌린 채 밖으로 끌어도 뗄 때까지 모양을 유지한다(mouseUp 이 이 뷰로 온다)
+        // 눌린 채 밖으로 끌어도 뗄 때까지 모양을 유지한다(mouseUp 이 이 뷰로 온다).
+        // 동작이 메뉴·모달을 열어 뗌이 이 뷰로 오지 않았으면 이미 뗀 것이므로 바로 푼다.
+        if NSEvent.pressedMouseButtons & 1 == 0 { pressed = false }
     }
     override func mouseUp(with event: NSEvent) { pressed = false }
+    /// 뗌이 다른 곳으로 갔다가(뷰가 사라지거나 옮겨짐) 눌림·올림 모양이 남지 않게
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { pressed = false; hovering = false }
+    }
+    override func viewDidHide() {
+        super.viewDidHide()
+        pressed = false
+        hovering = false
+    }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .arrow) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var mouseDownCanMoveWindow: Bool { false }

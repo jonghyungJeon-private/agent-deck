@@ -137,7 +137,7 @@ enum TermAppearance {
     static let statusOrchestrating = NSColor.palette(.statusOrchestrating)
     static let statusNone = NSColor.palette(.statusNone)
 
-    /// 경고 ▲ 아이콘·사용량 80% 이상 막대(호박색) / 그 글자
+    /// 경고 ▲ 아이콘·사용량 70% 이상 막대(호박색) / 그 글자
     static let warning = NSColor.palette(.warning)
     static let warnText = NSColor.palette(.warnText)
 

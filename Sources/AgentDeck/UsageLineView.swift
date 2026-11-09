@@ -51,10 +51,14 @@ private struct UsageCellView: View {
     let stale: Bool
     @Environment(\.uiScale) private var ui
 
-    /// 막대·숫자 색: 평소 중립, 80% 이상 경고(호박색), 90% 이상(critical)은 빨강 — 오래된 값은 늘 중립
+    /// 막대·숫자 색: 평소 중립, 70% 이상 경고(호박색), 90% 이상(critical)은 빨강 — 단계는 `UsageTier` 하나가 정한다(SessionCore). 오래된 값은 늘 중립
     private var level: Level {
-        guard !stale, let percent = cell.percent else { return .normal }
-        return cell.tier == .critical ? .critical : percent >= 80 ? .warn : .normal
+        guard !stale else { return .normal }
+        switch cell.tier {
+        case .normal: return .normal
+        case .warn: return .warn
+        case .critical: return .critical
+        }
     }
 
     private enum Level { case normal, warn, critical }

@@ -29,6 +29,14 @@ final class TerminalHostController: NSViewController {
     var tabBarCenterYAnchor: NSLayoutYAxisAnchor { tabBar.centerYAnchor }
     /// 탭 줄 높이(없으면 0)
     var tabBarInset: CGFloat { tabBarHeight?.constant ?? 0 }
+    /// 탭 줄 오른쪽에서 비울 폭(탭 줄 안에 앉은 🌐·⌨ 알약 폭 — 탭과 "+" 가 알약 아래로 들어가지 않게)
+    func setTabBarTrailingReserve(_ width: CGFloat) { tabBar.trailingReserve = width }
+    /// 탭 제목을 최소 폭까지 줄였을 때 탭 + "+" 가 차지하는 폭(알약이 탭 줄 안에 들어갈 수 있는지 가늠한다)
+    var tabBarMinimumContentWidth: CGFloat { tabBar.minimumContentWidth }
+    /// 탭이 생기고 사라지거나 제목·배율이 바뀌어 `tabBarMinimumContentWidth` 가 바뀜
+    var onTabBarContentChanged: (() -> Void)?
+    /// 시험용: 탭과 "+" 가 차지하는 오른쪽 끝(창 좌표 x)
+    var debugTabRowMaxX: CGFloat { tabBar.convert(CGPoint(x: tabBar.debugContentMaxX, y: 0), to: nil).x }
     /// 탭 줄 높이가 바뀜(작은 창 자리를 다시 맞춘다)
     var onTabBarHeightChanged: (() -> Void)?
     private var monitors: [Any] = []
@@ -97,6 +105,7 @@ final class TerminalHostController: NSViewController {
             self?.model.closeTab()
         }
         tabBar.onNew = { [weak self] in self?.model.newPane() }
+        tabBar.onContentChanged = { [weak self] in self?.onTabBarContentChanged?() }
         tabBar.onRename = { [weak self] index in
             guard let self, self.model.workspace.tabs.indices.contains(index) else { return }
             self.model.selectTab(index)

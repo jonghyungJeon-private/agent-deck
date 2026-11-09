@@ -17,6 +17,8 @@ struct NavigatorRow {
     var kind: SessionKind?
     /// 아래 줄 맨 앞의 말(시스템 글꼴 — "작업 중" 같은 상태 글. 뒤따르는 `detail` 은 경로라 고정폭)
     var detailLead: String?
+    /// 그 말의 색(사이드바 둘째 줄과 같은 규칙: 사람이 봐야 하는 상태만 상태 색, 나머지 보조 글자색)
+    var detailLeadColor: NSColor = TermAppearance.textSecondary
 }
 
 /// IntelliJ 식 작은 목록 창(창 안에 겹쳐 보이는 뷰 — 창 그림 시험에도 담긴다).
@@ -25,6 +27,9 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
     static let maxVisibleRows = 12
     // 머리 줄·찾기 칸·꼬리 줄은 글꼴 크기 배율을 따른다(창은 열 때마다 새로 만든다)
     static var headerHeight: CGFloat { TermAppearance.scaled(30) }
+    /// 제목이 없는 목록(세션 전환 — 찾기 칸 자신이 무슨 목록인지 말해 준다)은 머리 줄이 없고, 개수 표시는 꼬리 줄 오른쪽으로 간다
+    private var hasHeader: Bool { !titleLabel.stringValue.isEmpty }
+    private var headerExtent: CGFloat { hasHeader ? Self.headerHeight : 0 }
     static var fieldHeight: CGFloat { TermAppearance.scaled(44) }
     static var footerHeight: CGFloat { TermAppearance.scaled(24) }
     /// 창 모서리 반지름 · 고른 줄 알약의 안쪽 여백과 반지름(바깥 12 − 여백 6 = 안쪽 6: 같은 중심의 둥근 모서리)
@@ -147,7 +152,7 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
     /// 지금 줄 수에 맞는 높이(최대 12줄)
     var preferredHeight: CGFloat {
         let visible = CGFloat(max(1, min(rows.count, Self.maxVisibleRows)))
-        return Self.headerHeight + (searchable ? Self.fieldHeight : 0) + visible * Self.rowHeight + Self.footerHeight + 4
+        return headerExtent + (searchable ? Self.fieldHeight : 0) + visible * Self.rowHeight + Self.footerHeight + 4
     }
 
     override func layout() {
@@ -156,8 +161,12 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         let ui = TermAppearance.uiScale
         let inset = Self.textInset
         titleLabel.frame = NSRect(x: inset, y: ui(7), width: w * 0.6 - inset, height: ui(17))
-        statusLabel.frame = NSRect(x: w * 0.6, y: ui(8), width: w * 0.4 - inset, height: ui(16))
-        var y = Self.headerHeight
+        if hasHeader {
+            statusLabel.frame = NSRect(x: w * 0.6, y: ui(8), width: w * 0.4 - inset, height: ui(16))
+        } else {
+            statusLabel.frame = NSRect(x: w * 0.6, y: bounds.height - Self.footerHeight + ui(4), width: w * 0.4 - inset, height: ui(15))
+        }
+        var y = headerExtent
         if searchable {
             // 12pt 안쪽 여백 · 28pt 칸이 44pt 줄 가운데에
             let height = max(ui(28), field.intrinsicContentSize.height)
@@ -168,7 +177,7 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
         let listHeight = bounds.height - y - Self.footerHeight - 2
         scroll.frame = NSRect(x: 1, y: y, width: w - 2, height: max(listHeight, 0))
         emptyLabel.frame = NSRect(x: inset, y: y + max(listHeight, 0) / 2 - ui(9), width: w - 2 * inset, height: ui(18))
-        footerLabel.frame = NSRect(x: inset, y: bounds.height - Self.footerHeight + ui(4), width: w - 2 * inset, height: ui(15))
+        footerLabel.frame = NSRect(x: inset, y: bounds.height - Self.footerHeight + ui(4), width: (hasHeader ? w : w * 0.6) - 2 * inset, height: ui(15))
         table.tableColumns.first?.width = scroll.contentSize.width
         table.updatePill(animated: false)
     }
@@ -176,7 +185,7 @@ final class NavigatorPopupView: NSView, NSTableViewDataSource, NSTableViewDelega
     override func draw(_ dirtyRect: NSRect) {
         // 머리 줄·꼬리 줄 경계
         TermAppearance.border.setFill()
-        NSRect(x: 0, y: Self.headerHeight - 1, width: bounds.width, height: 1).fill()
+        if hasHeader { NSRect(x: 0, y: Self.headerHeight - 1, width: bounds.width, height: 1).fill() }
         NSRect(x: 0, y: bounds.height - Self.footerHeight - 1, width: bounds.width, height: 1).fill()
     }
 
@@ -416,17 +425,18 @@ final class NavigatorCellView: NSView {
         }
         // 세션 전환: 맨 점 + 종류 아이콘. 점 자리는 상태가 없어도 비워 둔다(이름 줄이 어긋나지 않게).
         if row.kind != nil || row.status != nil {
-            let dot = TermAppearance.scaled(9)
+            // 점 8pt·종류 아이콘 상자 14×12·간격 8/6: 탭 제목과 같은 크기(점 크기는 사이드바·탭과 같다)
+            let dot = TermAppearance.scaled(8)
             if let status = row.status {
                 let selected = (superview as? NSTableRowView)?.isSelected == true
                 status.drawDot(in: NSRect(x: x, y: centerY - dot / 2, width: dot, height: dot),
-                               cutout: selected ? TermAppearance.chromeRaised : TermAppearance.chrome, pulse: false)
+                               cutout: selected ? TermAppearance.chromeRaised : TermAppearance.chrome)
             }
             x += dot + TermAppearance.scaled(8)
             if let kind = row.kind {
-                let side = TermAppearance.scaled(13)
-                kind.drawIcon(size: side, in: CGRect(x: x, y: centerY - side / 2, width: side, height: side))
-                x += side + TermAppearance.scaled(6)
+                kind.drawIcon(size: TermAppearance.scaled(11),
+                              in: CGRect(x: x, y: centerY - TabBarView.iconBoxHeight / 2, width: TabBarView.iconBoxWidth, height: TabBarView.iconBoxHeight))
+                x += TabBarView.iconBoxWidth + TabBarView.iconGap
             }
         }
         var tagWidth: CGFloat = 0
@@ -443,8 +453,9 @@ final class NavigatorCellView: NSView {
         paragraph.lineBreakMode = .byTruncatingHead
         let detail = NSMutableAttributedString()
         if let lead = row.detailLead {
-            detail.append(NSAttributedString(string: lead + " · ", attributes: [
-                .font: TermAppearance.uiTextFont(TermAppearance.scaled(11)), .foregroundColor: TermAppearance.textSecondary]))
+            let font = TermAppearance.uiTextFont(TermAppearance.scaled(11))
+            detail.append(NSAttributedString(string: lead, attributes: [.font: font, .foregroundColor: row.detailLeadColor]))
+            detail.append(NSAttributedString(string: " · ", attributes: [.font: font, .foregroundColor: TermAppearance.textSecondary]))
         }
         detail.append(NSAttributedString(string: row.detail, attributes: [
             .font: TermAppearance.scaledUIFont(11), .foregroundColor: TermAppearance.textSecondary]))

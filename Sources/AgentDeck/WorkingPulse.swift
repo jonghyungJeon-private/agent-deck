@@ -5,7 +5,7 @@ import TermLayout
 /// "작업 중" 점의 숨 쉬기 — 모든 점이 한 시계(절대 시각)를 써서 같은 위상으로 숨 쉰다(`WorkingPulseSpec`: 1.0 ↔ 0.55, 1.6초).
 /// - 멈추는 때(정지 상태 = 불투명도 1.0): macOS "동작 줄이기", 앱 숨김, 보이는 창이 하나도 없음(가려지거나 최소화).
 ///   바뀌면 `isRunning`(SwiftUI 갱신)과 `didChange` 알림(AppKit 뷰가 다시 `apply`)이 나간다.
-/// - SwiftUI: `.workingPulse(isWorking)`. AppKit(CALayer): `layer.setWorkingPulse(isWorking)` — 상태가 바뀔 때와 `didChange` 를 받을 때 부른다.
+/// - SwiftUI: `PulsingDot`(점 하나가 CALayer). AppKit(CALayer): `layer.setWorkingPulse(isWorking)` — 상태가 바뀔 때와 `didChange` 를 받을 때 부른다.
 /// 메인 스레드에서만 쓴다.
 final class WorkingPulse: ObservableObject {
     static let shared = WorkingPulse()
@@ -77,26 +77,60 @@ extension CALayer {
     }
 }
 
-/// SwiftUI: 작업 중인 점·아이콘에 붙인다. 하나의 시계(`TimelineView` 의 절대 시각)로 불투명도를 정해 모든 점이 같은 위상이다.
-/// 멈춰야 하면 타임라인 없이 그대로(불투명도 1.0).
-struct WorkingPulseModifier: ViewModifier {
-    var active: Bool
-    @ObservedObject private var pulse = WorkingPulse.shared
+/// SwiftUI: 숨 쉬는 "작업 중" 점. 점은 CALayer 하나이고 숨 쉬기는 레이어 애니메이션(`setWorkingPulse` — GPU 가 돌리고, 시작 시각을 주기 배수에 맞춰
+/// 모든 점이 같은 위상)이라 SwiftUI 가 프레임마다 다시 그리지 않는다. 멈춰야 하면(동작 줄이기·창 가림·앱 숨김) 불투명도 1.0 으로 가만히.
+struct PulsingDot: NSViewRepresentable {
+    var color: NSColor
 
-    func body(content: Content) -> some View {
-        if active && pulse.isRunning {
-            TimelineView(.animation(minimumInterval: 1.0 / 30)) { context in
-                content.opacity(WorkingPulseSpec.opacity(at: context.date.timeIntervalSinceReferenceDate))
-            }
-        } else {
-            content
-        }
-    }
+    func makeNSView(context: Context) -> PulsingDotView { PulsingDotView() }
+
+    func updateNSView(_ view: PulsingDotView, context: Context) { view.color = color }
 }
 
-extension View {
-    /// 작업 중(`active`)이면 숨 쉬듯 옅어졌다 돌아온다(1.0 ↔ 0.55, 1.6초, 모든 점 같은 위상). 동작 줄이기·창 가림·앱 숨김에서는 멈춘다.
-    func workingPulse(_ active: Bool) -> some View {
-        modifier(WorkingPulseModifier(active: active))
+final class PulsingDotView: NSView {
+    var color: NSColor = .white { didSet { applyColor() } }
+    private let dot = CALayer()
+    private var observer: NSObjectProtocol?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.addSublayer(dot)
+        observer = NotificationCenter.default.addObserver(forName: WorkingPulse.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.dot.setWorkingPulse(true)
+        }
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dot.frame = bounds
+        dot.cornerRadius = min(bounds.width, bounds.height) / 2
+        CATransaction.commit()
+    }
+
+    private func applyColor() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        dot.backgroundColor = color.cg(in: self)
+        CATransaction.commit()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyColor()
+        dot.setWorkingPulse(true)
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColor()
     }
 }

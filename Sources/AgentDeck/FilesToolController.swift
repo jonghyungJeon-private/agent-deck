@@ -427,7 +427,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
             }
             guard let folder = rootNode.find(rel: folders[index]), folder.isDirectory else { return }
             if folder.children == nil {
-                loadChildren(folder, expand: true) { step(index + 1) }
+                loadChildren(folder, expand: true, animated: false) { step(index + 1) }
             } else {
                 if !outline.isItemExpanded(folder) { outline.expandItem(folder) }
                 step(index + 1)
@@ -481,7 +481,8 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
 
     // MARK: - 폴더 읽기
 
-    private func loadChildren(_ node: FileNode, expand: Bool, then done: (() -> Void)? = nil) {
+    /// animated: 펼침을 부드럽게 보일지(드러내기·복원은 움직임 없이 — 이미 읽은 폴더를 펼칠 때와 같다)
+    private func loadChildren(_ node: FileNode, expand: Bool, animated: Bool = true, then done: (() -> Void)? = nil) {
         guard node.isDirectory, node.children == nil, !node.loading else { return }
         node.loading = true
         let generation = self.generation
@@ -492,7 +493,9 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
                 node.loading = false
                 node.children = entries.map { node.child(rel: node.rel, entry: $0) }
                 self.outline.reloadItem(node, reloadChildren: true)
-                if expand { self.outline.animateExpansion { $0.expandItem(node) } }
+                if expand {
+                    if animated { self.outline.animateExpansion { $0.expandItem(node) } } else { self.outline.expandItem(node) }
+                }
                 self.watcher.loadedDirectories = self.loadedDirectories()
                 done?()
             }
@@ -855,7 +858,9 @@ final class FilesOutlineView: NSOutlineView {
         switch event.keyCode {
         case 36, 76: onEnter?()
         case 53: onEscape?()
-        default: withNativeMotion { super.keyDown(with: event) }
+        // 접고 펴는 화살표(← →)만 움직임 틀에 넣는다 — 글자 찾기·Space·↑↓ 는 그대로(안에서 바뀌는 것에 0.2초가 번지지 않게)
+        case 123, 124: withNativeMotion { super.keyDown(with: event) }
+        default: super.keyDown(with: event)
         }
     }
 
@@ -869,7 +874,8 @@ final class FilesOutlineView: NSOutlineView {
     }
 }
 
-/// 고른 줄: 포커스가 있으면 강조색을 옅게, 없으면 한 단계 밝은 바탕
+/// 고른 줄: 사이드바·세션 전환과 같은 선택 모양 — 둘레를 4pt 띄운 반지름 6 둥근 `chromeRaised` 채움, 테두리 없음.
+/// 목록에 키보드 포커스가 있으면 같은 채움 왼쪽에 `accent` 2pt 막대 하나만 더한다(강조색은 포커스에만).
 final class FileRowView: NSTableRowView {
     static let identifier = NSUserInterfaceItemIdentifier("FileRow")
 
@@ -881,15 +887,14 @@ final class FileRowView: NSTableRowView {
     required init?(coder: NSCoder) { fatalError() }
 
     override func drawSelection(in dirtyRect: NSRect) {
-        let rect = bounds
+        let pill = bounds.insetBy(dx: TermAppearance.scaled(Space.xs), dy: TermAppearance.scaled(1))
+        TermAppearance.chromeRaised.setFill()
+        NSBezierPath(roundedRect: pill, xRadius: TermAppearance.scaled(6), yRadius: TermAppearance.scaled(6)).fill()
         if isEmphasized {
-            TermAppearance.accent.withAlphaComponent(0.22).setFill()
-            rect.fill()
+            let bar = NSRect(x: pill.minX + TermAppearance.scaled(2), y: pill.minY + TermAppearance.scaled(4),
+                             width: 2, height: max(0, pill.height - 2 * TermAppearance.scaled(4)))
             TermAppearance.accent.setFill()
-            NSRect(x: 0, y: 0, width: 2, height: rect.height).fill()
-        } else {
-            TermAppearance.chromeRaised.setFill()
-            rect.fill()
+            NSBezierPath(roundedRect: bar, xRadius: 1, yRadius: 1).fill()
         }
     }
 

@@ -68,8 +68,9 @@ final class SessionSwitcher {
             previousField = editor.delegate as? NSTextField
         } else { previousField = nil }
         candidates = host.model.sessionTargets
-        let popup = NavigatorPopupView(title: "세션 빠른 전환", searchable: true, placeholder: "세션 이름 · 폴더 · 작업 트리 검색")
+        let popup = NavigatorPopupView(title: "", searchable: true, placeholder: "세션 이름 · 폴더 · 작업 트리 검색")
         self.popup = popup
+        popup.setAccessibilityLabel("세션 빠른 전환") // 머리 줄이 없는 대신
         popup.onQuery = { [weak self] in self?.filter($0) }
         popup.onClose = { [weak self] in self?.close(restoreFocus: true) }
         popup.onChoose = { [weak self] index in
@@ -104,7 +105,8 @@ final class SessionSwitcher {
                 title: NSAttributedString(string: target.name, attributes: [.font: EditorStyle.font, .foregroundColor: TermAppearance.textPrimary]),
                 detail: (target.folder as NSString).abbreviatingWithTildeInPath,
                 tag: target.tab <= 8 ? "⌘\(target.tab)" : target.tab == host.model.workspace.tabs.count ? "⌘9 · 탭 \(target.tab)" : "탭 \(target.tab)",
-                status: status, kind: kind, detailLead: label)
+                status: status, kind: kind, detailLead: label,
+                detailLeadColor: row?.dormant == true ? TermAppearance.textSecondary : status.wordColor)
         }, empty: "일치하는 세션이 없습니다")
         // 거르는 중일 때만 "3 / 6"(걸러지지 않았으면 같은 말을 두 번 하지 않는다)
         popup.setStatus(query.isEmpty ? nil : "\(targets.count) / \(candidates.count)")

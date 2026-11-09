@@ -669,12 +669,14 @@ final class TermModel: ObservableObject {
             var newRows = self.makeRows(regularPanes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
             let agents = self.scanAgents(newRows)
             newRows = Self.applyCodexOrchestration(newRows, agents: agents)
+            // 시험용 덧씌움(`fake-session-states`)은 보이는 목록·묶음에만 — 알림·Dock 배지·"봤음"·되살리기 정보는 진짜 줄(newRows)로만 만든다
+            var displayRows = newRows
             #if DEBUG
-            newRows = Self.applyDebugFakeStates(newRows, fake: fakeStates)
+            displayRows = Self.applyDebugFakeStates(newRows, fake: fakeStates)
             #endif
-            let newGroups = Self.makeGroups(newRows, agents: agents)
+            let newGroups = Self.makeGroups(displayRows, agents: agents)
             DispatchQueue.main.async {
-                self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance)
+                self.show(newRows, display: displayRows, newGroups, daemonPid: state.pid, instance: state.instance)
                 self.updateScratch(scratchInfos, liveOwners: Set(newRows.map(\.id)))
             }
         }
@@ -840,9 +842,11 @@ final class TermModel: ObservableObject {
         }
     }
 
-    private func show(_ newRows: [PaneRow], _ newGroups: [FolderGroup], daemonPid: Int32, instance: String?) {
-        if newRows != rows {
-            rows = newRows
+    /// newRows = 진짜 줄(알림·배지·되살리기 정보), displayRows = 보이는 줄(시험용 덧씌움이 없으면 같다)
+    private func show(_ newRows: [PaneRow], display displayRows: [PaneRow], _ newGroups: [FolderGroup], daemonPid: Int32, instance: String?) {
+        realRows = newRows
+        if displayRows != rows {
+            rows = displayRows
             host?.refreshTitles()
         }
         // 세션 목록을 처음 받음: 브라우저 상태를 한 번 더 내보내게 해서 자동 열기의 "처음 본 것" 기준을 이 목록으로 잡는다
@@ -898,6 +902,9 @@ final class TermModel: ObservableObject {
         if newlyDormant { client.list() } // 꺼진 화면을 목록에 바로 보이게
     }
 
+    /// 덧씌우지 않은 진짜 목록(`rows` 는 보이는 목록 — 시험용 덧씌움이 없으면 같다). 알림·배지·"봤음" 판단은 이것으로.
+    private var realRows: [PaneRow] = []
+
     /// 화면에서 확인한 "완료"의 시각(세션별). 이보다 늦은 완료만 "완료"로, 아니면 "쉬는 중"으로 보인다.
     private var seenDone: [String: WorkStateRules.Seen] = [:]
 
@@ -944,7 +951,7 @@ final class TermModel: ObservableObject {
 
     /// 지금 보고 있는 화면의 "완료"는 확인한 것으로 친다(앱이 앞에 있을 때만)
     func markSeen() {
-        guard NSApp.isActive, let id = selectedId, let row = row(id), row.status == .done,
+        guard NSApp.isActive, let id = selectedId, let row = realRows.first(where: { $0.id == id }), row.status == .done,
               let sid = row.statusSessionId, let at = row.statusAt,
               !WorkStateRules.isSeen(seenDone[sid], seq: row.statusSeq, at: at)
         else { return }
@@ -978,7 +985,7 @@ final class TermModel: ObservableObject {
     /// Dock 아이콘에 확인이 필요한 화면 수
     private func updateDockBadge() {
         // 터미널이 기다리는 화면과 브라우저가 기다리는 화면을 합쳐 한 번씩만 센다
-        let waiting = Set(rows.filter { !$0.dormant && $0.status.needsAttention }.map(\.id))
+        let waiting = Set(realRows.filter { !$0.dormant && $0.status.needsAttention }.map(\.id))
             .union(browserStates.compactMap { BrowserIndicator($0.value)?.needsAttention == true ? $0.key : nil })
         let count = waiting.count
         let label = count > 0 ? "\(count)" : nil

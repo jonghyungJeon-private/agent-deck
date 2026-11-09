@@ -264,7 +264,8 @@ private struct SettingStatus {
         case .ok: return "checkmark.circle.fill"
         case .warn: return "exclamationmark.triangle.fill"
         case .bad: return "exclamationmark.octagon.fill"
-        case .neutral: return "circle.dotted"
+        // 점선 고리는 상태 어휘의 "오케스트레이션"이라 쓰지 않는다
+        case .neutral: return "minus.circle"
         }
     }
 }

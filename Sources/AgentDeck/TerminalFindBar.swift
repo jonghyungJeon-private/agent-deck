@@ -75,7 +75,7 @@ final class TerminalFindBar: NSView, NSSearchFieldDelegate {
         field.cell?.isScrollable = true
         field.cell?.usesSingleLineMode = true
         count.textColor = TermAppearance.textSecondary
-        count.alignment = .right
+        count.alignment = .left
         caseButton.setButtonType(.pushOnPushOff)
         caseButton.bezelStyle = .recessed
         caseButton.controlSize = .small
@@ -146,28 +146,31 @@ final class TerminalFindBar: NSView, NSSearchFieldDelegate {
         needsLayout = true
     }
 
-    /// 오른쪽부터: 닫기 · ↑↓ · Aa · 개수, 나머지 폭은 찾기 칸. 모두 세로 가운데(높이 32 × 배율).
+    /// 왼쪽부터: 찾기 칸(너비는 320 × 배율까지 — 시스템 찾기 막대처럼 길게 늘이지 않는다) · 개수 · Aa · ↑↓, 맨 오른쪽 닫기. 남는 폭은 빈 막대. 모두 세로 가운데(높이 32 × 배율).
     override func layout() {
         super.layout()
         let u = TermAppearance.uiScale
         let h = bounds.height
-        func centered(_ size: NSSize, right: CGFloat) -> NSRect {
-            NSRect(x: right - size.width, y: ((h - size.height) / 2).rounded(), width: size.width, height: size.height)
+        func centered(_ size: NSSize, x: CGFloat) -> NSRect {
+            NSRect(x: x, y: ((h - size.height) / 2).rounded(), width: size.width, height: size.height)
         }
-        var x = bounds.width - u(8)
-        closeButton.frame = centered(NSSize(width: u(24), height: u(24)), right: x)
-        x = closeButton.frame.minX - u(4)
+        closeButton.frame = centered(NSSize(width: u(24), height: u(24)), x: bounds.width - u(8) - u(24))
         stepper.sizeToFit()
-        stepper.frame = centered(NSSize(width: max(stepper.frame.width, u(52)), height: stepper.frame.height), right: x)
-        x = stepper.frame.minX - u(8)
         caseButton.sizeToFit()
-        caseButton.frame = centered(NSSize(width: max(caseButton.frame.width, u(34)), height: caseButton.frame.height), right: x)
-        x = caseButton.frame.minX - u(8)
+        let stepperSize = NSSize(width: max(stepper.frame.width, u(52)), height: stepper.frame.height)
+        let caseSize = NSSize(width: max(caseButton.frame.width, u(34)), height: caseButton.frame.height)
         let counterWidth = min(u(64), max(u(40), bounds.width * 0.14))
-        count.frame = centered(NSSize(width: counterWidth, height: u(16)), right: x)
-        x = count.frame.minX - u(8)
+        let tail = counterWidth + u(8) + caseSize.width + u(8) + stepperSize.width
+        let right = closeButton.frame.minX - u(4)
         let fieldHeight = max(field.intrinsicContentSize.height, u(22))
-        field.frame = NSRect(x: u(8), y: ((h - fieldHeight) / 2).rounded(), width: max(24, x - u(8)), height: fieldHeight)
+        let fieldWidth = max(24, min(u(320), right - u(8) - u(8) - tail))
+        field.frame = NSRect(x: u(8), y: ((h - fieldHeight) / 2).rounded(), width: fieldWidth, height: fieldHeight)
+        var x = field.frame.maxX + u(8)
+        count.frame = centered(NSSize(width: counterWidth, height: u(16)), x: x)
+        x = count.frame.maxX + u(8)
+        caseButton.frame = centered(caseSize, x: x)
+        x = caseButton.frame.maxX + u(8)
+        stepper.frame = centered(stepperSize, x: x)
     }
 
     var fieldHasFocus: Bool {
@@ -241,7 +244,8 @@ final class TerminalFindBar: NSView, NSSearchFieldDelegate {
     private func updateCount() {
         let total = cursor.matches.count
         count.stringValue = "\(cursor.currentIndex.map { $0 + 1 } ?? 0)/\(total)"
-        count.textColor = !cachedQuery.isEmpty && total == 0 ? TermAppearance.statusAttention : TermAppearance.textSecondary
+        // 일치 없음도 보조 글자색(빨강은 "내 조작 필요"에만 — 찾아서 없는 것은 그 뜻이 아니다)
+        count.textColor = TermAppearance.textSecondary
         count.toolTip = "\(total)개 일치"
     }
 
