@@ -81,7 +81,7 @@ zip 을 직접 받았다면 설치 스크립트로 연다: `bash install.sh Agen
 
 ## 처음 실행
 
-1. 사이드바 아래 **연결하기** 를 누른다. Claude Code 설정 `~/.claude/settings.json` 에 hook 7개
+1. 사이드바 맨 위(머리 줄 바로 아래, 목록 위에 고정) 알림의 **연결하기** 를 누른다. Claude Code 설정 `~/.claude/settings.json` 에 hook 7개
    (`SessionStart`·`SessionEnd`·`UserPromptSubmit`·`Stop`·`StopFailure`·`Notification`·`PermissionRequest`)를 더한다. 각 항목은 이런 모양이다:
 
    ```json
@@ -93,8 +93,8 @@ zip 을 직접 받았다면 설치 스크립트로 연다: `bash install.sh Agen
    - 바꾸기 전에 `settings.json.agentdeck-backup-<시각>` 백업을 남기고, 다른 hook·설정은 그대로 둔다.
    - **앱을 지우거나 옮겨도 안전하다**: 실행 파일이 없으면 아무것도 하지 않고 끝나 어떤 터미널의 claude 에도 오류가 나지 않는다.
    - 새로 시작하는(또는 다시 연) claude 세션부터 적용된다.
-2. Codex 를 쓰면 **Codex 연결하기** 를 누른 뒤, Codex 의 `/hooks` 에서 AgentDeckDaemon 훅을 검토·신뢰한다.
-3. 에이전트에게 브라우저를 쓰게 하려면 사이드바 아래 **브라우저 연결하기** 를 누른다(설정 → 브라우저에서도 할 수 있다).
+2. Codex 를 쓰면 같은 자리 Codex 알림의 **연결하기** 를 누른 뒤, Codex 의 `/hooks` 에서 AgentDeckDaemon 훅을 검토·신뢰한다.
+3. 에이전트에게 브라우저를 쓰게 하려면 사이드바 맨 위 알림의 **브라우저 연결하기** 를 누른다(설정 → 브라우저에서도 할 수 있다).
    abx 스킬을 `~/.claude/skills/abx`·`~/.agents/skills/abx` 에 넣고, 전용 브라우저(Chrome for Testing, 약 190MB)를 `~/.abx/browsers` 에 받는다.
    `abx` 실행 파일은 앱에 들어 있어 따로 설치하지 않는다 — 이 앱에서 연 세션의 PATH 에 자동으로 잡힌다(다른 터미널 앱에서는 안 보인다).
 4. 위 **+ claude**·**+ codex**·**+ 셸** 이나 ⌘T 로 시작한다. 이미 떠 있던 claude·codex 는 새로 시작해야 연결·스킬이 적용된다.

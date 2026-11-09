@@ -135,6 +135,11 @@ enum TermAppearance {
             ?? NSFont.monospacedSystemFont(ofSize: size, weight: bold ? .bold : .regular)
     }
 
+    /// 문장·버튼·안내 글(언어)용 시스템 글꼴. 이름·경로·tty·숫자(데이터)는 `uiFont`(JetBrains Mono)를 쓴다. 크기는 그대로 쓴다(배율은 SwiftUI 쪽 `View.uiTextFont` 가 곱한다).
+    static func uiTextFont(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.systemFont(ofSize: size, weight: weight)
+    }
+
     // MARK: - 앱 테두리 배율(⌘+ ⌘− 를 도구 창·탭 줄·분할 제목·상태 줄·이동 목록도 따라간다)
 
     /// 지금 글꼴 크기의 배율(0.8~1.6). 크기가 바뀌면 `fontSizeChanged` 가 온다.

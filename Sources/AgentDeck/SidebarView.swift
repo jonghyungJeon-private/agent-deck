@@ -22,6 +22,10 @@ struct SidebarView: View {
     var currentSide: DockSide = .left
     /// 펼쳐 본 하위 에이전트(마지막 메시지를 보여 준다)
     @State private var expandedAgent: String?
+    /// 연결된 뒤 잠시 지나서야 켠다: 앱을 켜고 처음 목록이 채워지는 것은 움직이지 않는다
+    @State private var motionReady = false
+    /// "자세히"를 펼친 알림 하나(한 번에 하나만 — 붙박이 알림 칸이 목록을 다 밀어내지 않게)
+    @State private var openNotice: String?
     /// 글꼴 크기 배율(⌘+ ⌘−) — 안쪽 뷰에는 `\.uiScale` 로 내려 준다
     @ObservedObject private var scaling = UIScaleModel.shared
     private var ui: UIScale { scaling.scale }
@@ -36,21 +40,28 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // 묶음 접기·펼치기·줄 생김/사라짐은 줄 id 집합이 바뀔 때만 움직인다(끌어 놓아 순서만 바뀌는 것·글꼴 크기 바뀜은 그대로)
+        let items = SidebarItem.flatten(model.groups, spaces: spaces.state)
+        let listMotion = motionReady ? Motion.ease() : nil
+        let hintOwners = tabHintOwners(items)
+        return VStack(spacing: 0) {
             header
+            // 알림은 머리 줄 바로 아래, 목록 밖에 붙박이로: 연결하기·갱신하기·받는 중 표시가 늘 손에 닿는다
+            noticeStack
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if model.groups.isEmpty {
                         Text(model.connectionStatusText ?? "열린 세션이 없습니다.\n위 + 버튼으로 시작하세요.")
-                            .uiFont(11)
-                            .foregroundStyle(Color(TermAppearance.textDim))
-                            .padding(ui(14))
+                            .uiTextFont(TypeSize.secondary)
+                            .foregroundStyle(Color(TermAppearance.textSecondary))
+                            .padding(.horizontal, ui(Space.md))
+                            .padding(.vertical, ui(Space.md))
                     }
                     // 묶음·작업 트리·세션을 한 줄짜리 목록으로 펼쳐 그린다.
                     // ForEach 를 겹쳐 쓰면 안쪽 줄이 바뀐 것을 SwiftUI 가 놓쳐 이름이 늦게 바뀌었다.
-                    let items = SidebarItem.flatten(model.groups, spaces: spaces.state)
                     ForEach(items) { item in
-                        row(item)
+                        row(item, hintOwners: hintOwners)
+                            .transition(rowTransition)
                             .opacity(isDragged(item) ? 0.35 : 1)
                             .overlay(alignment: insertion(item) == .below ? .bottom : .top) {
                                 if let edge = insertion(item) { InsertionLine(edge: edge, indent: ui(item.indent)) }
@@ -63,23 +74,36 @@ struct SidebarView: View {
                             }
                     }
                 }
-                .padding(.vertical, ui(4))
+                .padding(.vertical, ui(Space.xs))
+                .animation(listMotion, value: Set(items.map(\.id)))
             }
-            hookBanner
-            codexHookBanner
-            browserSkillBanner
+        }
+        .animation(motionReady ? Motion.ease() : nil, value: noticeKey)
+        .task(id: model.connected) {
+            guard model.connected, !motionReady else { return }
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            motionReady = true
         }
         .frame(minWidth: 220, maxHeight: .infinity)
         .background(Color(TermAppearance.chrome))
         .environment(\.uiScale, ui)
     }
 
+    /// 사라지는 줄은 빨리 걷히고(아래 줄이 올라오며 겹치기 전에), 생기는 줄은 아래 줄이 비켜 준 뒤에 서서히 나타난다.
+    /// 켜는 동안(motionReady 전)은 움직임 없이 목록과 같이 바뀐다.
+    private var rowTransition: AnyTransition {
+        guard motionReady else { return .opacity }
+        return .asymmetric(insertion: .opacity.animation(Motion.ease(Motion.standard)?.delay(Motion.exit)),
+                           removal: .opacity.animation(Motion.ease(Motion.exit)))
+    }
+
     @ViewBuilder
-    private func row(_ item: SidebarItem) -> some View {
+    private func row(_ item: SidebarItem, hintOwners: TabHintOwners) -> some View {
         switch item {
         case .group(let group, let collapsed, let summary):
             GroupRowView(group: group, collapsed: collapsed, summary: summary,
                          holdsSelection: collapsed && group.sections.contains { $0.rows.contains { $0.id == model.selectedId } },
+                         hiddenTabs: hintOwners.collapsed[item.id] ?? [],
                          onToggle: { spaces.toggle(SpacesState.groupKey(group.path)) },
                          menu: { openMenu(group.path) },
                          context: {
@@ -95,6 +119,7 @@ struct SidebarView: View {
         case .worktree(let section, _, let collapsed, let summary):
             WorktreeRowView(section: section, collapsed: collapsed, summary: summary,
                             holdsSelection: collapsed && section.rows.contains { $0.id == model.selectedId },
+                            hiddenTabs: hintOwners.collapsed[item.id] ?? [],
                             onToggle: { spaces.toggle(SpacesState.worktreeKey(section.path)) })
                 .contextMenu {
                     Button(collapsed ? "펼치기" : "접기") { spaces.toggle(SpacesState.worktreeKey(section.path)) }
@@ -105,6 +130,7 @@ struct SidebarView: View {
             SessionRowView(row: row, depth: depth,
                            selected: row.id == model.selectedId,
                            tabNumber: model.workspace.tabIndex(containing: row.id).map { $0 + 1 },
+                           showsTabHint: hintOwners.sessions.contains(row.id),
                            browser: model.browserIndicator(row.id),
                            openBrowser: { model.openBrowser(owner: row.id) })
                 .onTapGesture { model.focus(pane: row.id) }
@@ -123,12 +149,45 @@ struct SidebarView: View {
                 .onTapGesture {
                     // 띄운 에이전트 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
                     model.focus(pane: agent.paneId)
-                    expandedAgent = expandedAgent == agent.id ? nil : agent.id
+                    withAnimation(Motion.ease()) { expandedAgent = expandedAgent == agent.id ? nil : agent.id }
                 }
         case .gap:
             // 묶음 끝 틈: 묶음을 끌어 내릴 때 놓을 자리 줄이 여기 그려진다
-            Color.clear.frame(height: ui(10)).contentShape(Rectangle())
+            Color.clear.frame(height: ui(Space.md)).contentShape(Rectangle())
         }
+    }
+
+    /// ⌘N 힌트는 탭마다 한 번만: 보이는 줄 중 그 탭에서 입력을 받는 세션 줄(없으면 탭의 첫 보이는 세션 줄)에.
+    /// 탭의 세션이 모두 접힌 묶음·작업 트리 안이면 그 접힌 줄에 보인다. 다른 줄은 풍선 도움말에만 적는다(보이는 것만 다르다).
+    struct TabHintOwners {
+        var sessions: Set<String> = []
+        /// 접힌 묶음·작업 트리 줄 id → 그 안에 숨은 탭 번호(1부터)
+        var collapsed: [String: [Int]] = [:]
+    }
+
+    private func tabHintOwners(_ items: [SidebarItem]) -> TabHintOwners {
+        var out = TabHintOwners()
+        var visible = Set<String>()
+        for case .session(let row, _, _, _) in items { visible.insert(row.id) }
+        // 숨은 세션이 든 가장 가까운 접힌 줄
+        var hider: [String: String] = [:]
+        for group in model.groups {
+            let groupCollapsed = spaces.state.isCollapsed(SpacesState.groupKey(group.path))
+            for section in group.sections {
+                let key = groupCollapsed ? "g:" + group.path
+                    : (!section.isMain && spaces.state.isCollapsed(SpacesState.worktreeKey(section.path))) ? "w:" + section.path : nil
+                if let key { for row in section.rows { hider[row.id] = key } }
+            }
+        }
+        for (index, tab) in model.workspace.tabs.enumerated() {
+            let candidates = ([tab.focused] + tab.root.panes).filter { model.row($0) != nil }
+            if let shown = candidates.first(where: { visible.contains($0) }) {
+                out.sessions.insert(shown)
+            } else if let key = candidates.lazy.compactMap({ hider[$0] }).first {
+                out.collapsed[key, default: []].append(index + 1)
+            }
+        }
+        return out
     }
 
     private func isDragged(_ item: SidebarItem) -> Bool {
@@ -164,11 +223,11 @@ struct SidebarView: View {
     }
 
     private var header: some View {
-        HStack(spacing: ui(4)) {
+        HStack(spacing: ui(Space.xs)) {
             if showsTitle {
                 Text("spaces")
-                    .uiFont(11)
-                    .foregroundStyle(Color(TermAppearance.textDim))
+                    .uiTextFont(TypeSize.secondary, weight: .semibold)
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
             }
             Spacer()
             if !model.groups.isEmpty {
@@ -179,20 +238,23 @@ struct SidebarView: View {
                 }
             }
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: ui(4)) {
+                HStack(spacing: ui(Space.xs)) {
                     agentButton(.claude)
                     agentButton(.codex)
-                    ChromeButton(label: "+ 셸", help: "홈 폴더에서 새 셸 탭 (지금 화면 폴더는 ⌘T)") {
+                    ChromeButton(title: "셸", symbol: "plus", help: "홈 폴더에서 새 셸 탭 (지금 화면 폴더는 ⌘T)") {
                         model.newPane(cwd: NSHomeDirectory())
                     }
                 }
                 .fixedSize()
-                Menu("+ 새 세션") { newSessionItems }
-                    .fixedSize()
+                Menu { newSessionItems } label: {
+                    Label("새 세션", systemImage: "plus")
+                }
+                .uiTextFont(TypeSize.secondary)
+                .fixedSize()
             }
         }
-        .padding(.leading, ui(14))
-        .padding(.trailing, ui(8))
+        .padding(.leading, ui(Space.md))
+        .padding(.trailing, ui(Space.sm))
         .frame(height: TerminalHostController.tabBarHeight)
         .contentShape(Rectangle())
         .contextMenu {
@@ -214,126 +276,128 @@ struct SidebarView: View {
         Button("셸") { model.newPane(cwd: NSHomeDirectory()) }
     }
 
-    /// hook 이 없거나 예전 앱 것이면 눈에 띄게 알린다(이름·되살리기·상태 표시가 여기에 달려 있다)
+    /// 알림이 바뀌었는지(생김·사라짐 움직임의 기준)
+    private var noticeKey: [String] { notices.map(\.id) + (model.notice == nil ? [] : ["info"]) }
+
+    /// 머리 줄 아래·목록 위에 붙박이로 놓는 알림: hook·스킬·브라우저 연결이 필요하거나 막혔을 때, 한 줄 제목 + 작은 버튼, 설명은 "자세히".
+    /// 버튼은 접히지 않는다(자세히는 설명만). 버튼이 있는 알림 중 맨 위(가장 급한 것) 하나만 강조 버튼으로 그린다.
     @ViewBuilder
-    private var hookBanner: some View {
-        let message: String? = {
-            switch model.hookState {
-            case .missing: return "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다."
-            case .update: return "Claude Code 연결이 예전 판(예전 이름 ClaudeTerm·ClaudeSessions 포함)이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다."
-            case .error(let detail): return "Claude Code 설정을 읽지 못했습니다: \(detail)"
-            default: return nil
-            }
-        }()
-        let canConnect: Bool = {
-            if case .error = model.hookState { return false }
-            return true
-        }()
-        if let message {
-            VStack(alignment: .leading, spacing: ui(6)) {
-                Text(message)
-                    .uiFont(11)
-                    .foregroundStyle(Color(TermAppearance.textPrimary))
-                    .fixedSize(horizontal: false, vertical: true)
-                if canConnect {
-                    Button {
-                        model.connectHooks()
-                    } label: {
-                        Text(model.hookState == .update ? "갱신하기" : "연결하기")
-                            .uiFont(11, bold: true)
-                            .foregroundStyle(Color(TermAppearance.chrome))
-                            .padding(.horizontal, ui(10))
-                            .padding(.vertical, ui(4))
-                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent)))
+    private var noticeStack: some View {
+        let items = notices
+        let info = model.notice
+        if !items.isEmpty || info != nil {
+            let prominent = items.first { $0.action != nil }?.id
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(items) { notice in
+                        NoticeRow(notice: notice, prominent: notice.id == prominent,
+                                  expanded: Binding(get: { openNotice == notice.id },
+                                                    set: { openNotice = $0 ? notice.id : nil }))
+                            .transition(.opacity)
                     }
-                    .buttonStyle(.plain)
-                    .help("~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로). 앱을 지우면 hook 은 아무것도 하지 않습니다.")
+                    if let info {
+                        InfoNoticeRow(text: info) { model.notice = nil }.transition(.opacity)
+                    }
                 }
+                .padding(.vertical, ui(Space.xs))
+                Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1)
             }
-            .padding(ui(10))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(TermAppearance.accent), lineWidth: 1))
-            .padding(.horizontal, ui(10))
-            .padding(.bottom, ui(8))
-        }
-        if let notice = model.notice {
-            Text(notice)
-                .uiFont(10)
-                .foregroundStyle(Color(TermAppearance.textDim))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, ui(14))
-                .padding(.bottom, ui(6))
-                .onTapGesture { model.notice = nil }
+            .transition(.opacity)
         }
     }
 
-    @ViewBuilder
-    private var codexHookBanner: some View {
+    /// hook 이 없거나 예전 앱 것이면 눈에 띄게 알린다(이름·되살리기·상태 표시가 여기에 달려 있다)
+    private var notices: [SidebarNotice] {
+        var out: [SidebarNotice] = []
+        switch model.hookState {
+        case .missing:
+            out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.yellow,
+                                     title: "Claude Code 연결 필요",
+                                     detail: "Claude Code 와 연결되지 않았습니다. 세션 이름·되살리기·상태 표시에 필요합니다.",
+                                     action: claudeHookAction("연결하기")))
+        case .update:
+            out.append(SidebarNotice(id: "claude-hook", symbol: "arrow.triangle.2.circlepath", tint: TermAppearance.textSecondary,
+                                     title: "Claude Code 연결 갱신 필요",
+                                     detail: "Claude Code 연결이 예전 판(예전 이름 ClaudeTerm·ClaudeSessions 포함)이거나 다른 위치(옮기기 전 앱)를 가리킵니다. 갱신하면 이 앱으로 바로잡고, 앱을 지우거나 옮겨도 오류가 나지 않는 형태로 바꿉니다.",
+                                     action: claudeHookAction("갱신하기")))
+        case .error(let detail):
+            out.append(SidebarNotice(id: "claude-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.red,
+                                     title: "Claude Code 설정을 읽지 못함",
+                                     detail: "Claude Code 설정을 읽지 못했습니다: \(detail)", action: nil))
+        default: break
+        }
         if model.codexHookState != .unknown && model.codexHookState != .ok {
-            VStack(alignment: .leading, spacing: ui(6)) {
-                Text(model.codexHookState == .update
-                     ? "Codex 연결이 예전 판이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks 에서 훅을 다시 신뢰하세요."
-                     : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요.")
-                    .fixedSize(horizontal: false, vertical: true)
-                if case .error(let detail) = model.codexHookState {
-                    Text(detail).foregroundStyle(Color(TermAppearance.red))
-                } else {
-                    Button(model.codexHookState == .update ? "Codex 연결 갱신" : "Codex 연결하기") { model.connectCodexHooks() }
-                }
+            let update = model.codexHookState == .update
+            let message = update
+                ? "Codex 연결이 예전 판이거나 다른 위치의 앱을 가리킵니다. 갱신한 뒤 Codex의 /hooks 에서 훅을 다시 신뢰하세요."
+                : "Codex의 권한 요청·완료 알림을 연결할 수 있습니다. 연결 후 Codex의 /hooks 에서 훅을 검토·신뢰하세요."
+            if case .error(let detail) = model.codexHookState {
+                out.append(SidebarNotice(id: "codex-hook", symbol: "exclamationmark.triangle.fill", tint: TermAppearance.red,
+                                         title: "Codex 연결 오류", detail: message + "\n" + detail, action: nil))
+            } else {
+                out.append(SidebarNotice(id: "codex-hook", symbol: update ? "arrow.triangle.2.circlepath" : "link",
+                                         tint: TermAppearance.textSecondary,
+                                         title: update ? "Codex 연결 갱신 필요" : "Codex 알림 연결 가능",
+                                         detail: message,
+                                         // 제목이 이미 Codex 라고 말하므로 버튼은 Claude 줄과 같은 말
+                                         action: SidebarNotice.Action(title: update ? "갱신하기" : "연결하기", help: nil) {
+                                             model.connectCodexHooks()
+                                         }))
             }
-            .uiFont(10)
-            .foregroundStyle(Color(TermAppearance.textDim))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, ui(14))
-            .padding(.bottom, ui(8))
+        }
+        if let browser = browserNotice { out.append(browser) }
+        return out
+    }
+
+    private func claudeHookAction(_ title: String) -> SidebarNotice.Action {
+        SidebarNotice.Action(title: title,
+                             help: "~/.claude/settings.json 에 세션 기록·작업 상태 hook 을 넣습니다(바꾸기 전 백업, 다른 hook 은 그대로). 앱을 지우면 hook 은 아무것도 하지 않습니다.") {
+            model.connectHooks()
         }
     }
 
     /// 브라우저 준비: abx 스킬(Claude Code·Codex)과 에이전트 전용 브라우저(Chrome for Testing). abx 를 찾았을 때만 보인다.
     /// 떠 있는 데몬이 예전 판이면 그것부터 알린다(화면에 브라우저 연결이 안 된다).
-    @ViewBuilder
-    private var browserSkillBanner: some View {
+    private var browserNotice: SidebarNotice? {
         let skill = model.browserSkillState
         let chrome = model.browserChrome
-        let prompt: (text: String, button: String?)? = {
+        let help = "abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣고(직접 둔 스킬은 그대로), 에이전트 전용 브라우저를 ~/.abx/browsers 에 받습니다."
+        let prompt: (title: String, text: String, button: String?, symbol: String, tint: NSColor)? = {
             guard skill != .unknown else { return nil }
             if !model.daemonHasBrowser {
-                return ("세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 뜹니다.", nil)
+                return ("세션 데몬이 예전 판", "세션 데몬이 예전 판이라 화면에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 뜹니다.",
+                        nil, "exclamationmark.triangle.fill", TermAppearance.yellow)
             }
             if case .updateFailed(let detail) = skill {
-                return ("abx 스킬을 지금 abx 판으로 바꾸지 못했습니다 — \(detail)", "다시 시도")
+                return ("abx 스킬 갱신 실패", "abx 스킬을 지금 abx 판으로 바꾸지 못했습니다 — \(detail)", "다시 시도",
+                        "exclamationmark.triangle.fill", TermAppearance.red)
             }
             var needs: [String] = []
             if case .missing(let targets) = skill { needs.append("\(targets.joined(separator: "·"))에 abx 스킬 넣기") }
             switch chrome {
             case .installing(let percent):
-                return ("에이전트 전용 브라우저(Chrome for Testing)를 받는 중… \(percent)%", nil)
+                return ("에이전트 전용 브라우저 받는 중 \(percent)%", "에이전트 전용 브라우저(Chrome for Testing)를 받는 중… \(percent)%", nil,
+                        "arrow.down.circle", TermAppearance.textSecondary)
             case .failed(let detail):
-                return ("에이전트 전용 브라우저를 받지 못했습니다: \(detail)", "다시 시도")
+                return ("에이전트 전용 브라우저 받기 실패", "에이전트 전용 브라우저를 받지 못했습니다: \(detail)", "다시 시도",
+                        "exclamationmark.triangle.fill", TermAppearance.red)
             case .missing:
                 needs.append("에이전트 전용 브라우저(Chrome for Testing, 약 190MB) 받기 — 받기 전에는 설치된 Chrome 을 씁니다")
             default: break
             }
             guard !needs.isEmpty else { return nil }
-            return ("브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 제목 줄 🌐 로 볼 수 있습니다.",
-                    skill == .ok || skill == .unknown ? "브라우저 받기" : "브라우저 연결하기")
+            return ("브라우저 연결 필요",
+                    "브라우저 연결: " + needs.joined(separator: ", ") + ". 연결하면 에이전트가 abx 로 브라우저를 쓰고, 화면 제목 줄 🌐 로 볼 수 있습니다.",
+                    skill == .ok || skill == .unknown ? "브라우저 받기" : "브라우저 연결하기",
+                    "globe", TermAppearance.textSecondary)
         }()
-        if let prompt {
-            VStack(alignment: .leading, spacing: ui(6)) {
-                Text(prompt.text).fixedSize(horizontal: false, vertical: true)
-                if let button = prompt.button {
-                    Button(button) {
-                        if case .updateFailed = skill { model.checkBrowserSkill() } else { model.connectBrowserSkill() }
-                    }
-                        .help("abx 스킬(SKILL.md)을 Claude Code(~/.claude/skills/abx)·Codex(~/.agents/skills/abx)에 넣고(직접 둔 스킬은 그대로), 에이전트 전용 브라우저를 ~/.abx/browsers 에 받습니다.")
-                }
-            }
-            .uiFont(10)
-            .foregroundStyle(Color(TermAppearance.textDim))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, ui(14))
-            .padding(.bottom, ui(8))
-        }
+        guard let prompt else { return nil }
+        return SidebarNotice(id: "browser", symbol: prompt.symbol, tint: prompt.tint, title: prompt.title, detail: prompt.text,
+                             action: prompt.button.map { title in
+                                 SidebarNotice.Action(title: title, help: help) {
+                                     if case .updateFailed = skill { model.checkBrowserSkill() } else { model.connectBrowserSkill() }
+                                 }
+                             })
     }
 
     /// 폴더·작업 트리에서 새로 열기
@@ -345,10 +409,10 @@ struct SidebarView: View {
         Button("Finder 에서 보기") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path) }
     }
 
-    /// + claude·+ codex: 기본 옵션이 위험하면 ⚠ 를 붙이고, 풍선 도움말에 실제 명령을 보인다
+    /// + claude·+ codex: 기본 옵션이 위험하면 경고 표시를 붙이고, 풍선 도움말에 실제 명령을 보인다
     private func agentButton(_ kind: AgentKind) -> some View {
         let warning = launch.danger(kind)
-        return ChromeButton(label: "+ \(kind.rawValue)" + (warning == nil ? "" : " ⚠"),
+        return ChromeButton(title: kind.rawValue, symbol: "plus", warning: warning != nil,
                             help: "폴더를 골라 새 탭에서 실행: \(launch.command(kind))"
                                 + (warning.map { "\n⚠ \($0)" } ?? "") + "\n기본 옵션은 설정(⌘,)에서 바꿉니다") {
             pickFolder(kind) { model.newAgent(kind, cwd: $0) }
@@ -366,9 +430,21 @@ struct SidebarView: View {
     }
 }
 
-/// 사이드바 위 글자 버튼
+/// 사이드바 버튼 공통 눌림 모양: 누르는 동안 살짝 흐려질 뿐 크기는 그대로(튕기지 않는다). 눌리는 순간 바로, 뗄 때만 부드럽게.
+struct SidebarPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .animation(configuration.isPressed ? nil : Motion.ease(Motion.fast), value: configuration.isPressed)
+    }
+}
+
+/// 사이드바 위 글자 버튼: (선택) 그림 + 이름(+ 경고). 누르는 자리는 높이 24.
 struct ChromeButton: View {
-    let label: String
+    let title: String
+    var symbol: String? = nil
+    /// 기본 옵션이 위험할 때 이름 뒤에 노란 경고 표시
+    var warning = false
     let help: String
     let action: () -> Void
     @State private var hovering = false
@@ -376,21 +452,34 @@ struct ChromeButton: View {
 
     var body: some View {
         Button(action: action) {
-            Text(label)
-                .uiFont(11)
-                .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
-                .padding(.horizontal, ui(7))
-                .padding(.vertical, 3)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
-                .contentShape(Rectangle())
+            HStack(spacing: ui(Space.xs)) {
+                if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                }
+                Text(title)
+                    .uiTextFont(TypeSize.secondary, weight: .medium)
+                if warning {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: ui(TypeSize.caption)))
+                        .foregroundStyle(Color(TermAppearance.yellow))
+                        .accessibilityLabel("주의")
+                }
+            }
+            .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textSecondary))
+            .padding(.horizontal, ui(Space.sm))
+            .frame(height: ui(Space.xxl))
+            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)).opacity(hovering ? 1 : 0))
+            .contentShape(Rectangle())
+            .animation(Motion.ease(Motion.fast), value: hovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarPressStyle())
         .onHover { hovering = $0 }
         .help(help)
     }
 }
 
-/// 사이드바 위 그림 버튼(글자 버튼과 같은 모양)
+/// 사이드바 위 그림 버튼(글자 버튼과 같은 모양). 누르는 자리 24×24. 그림이 바뀌면(접기↔펼치기) 겹쳐 바뀐다.
 struct IconChromeButton: View {
     let symbol: String
     let help: String
@@ -400,16 +489,187 @@ struct IconChromeButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: ui(11), weight: .medium))
-                .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
-                .frame(width: ui(22), height: ui(20))
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
-                .contentShape(Rectangle())
+            ZStack {
+                Image(systemName: symbol)
+                    .font(.system(size: ui(TypeSize.secondary), weight: .medium))
+                    .id(symbol)
+                    .transition(.opacity)
+            }
+            .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textSecondary))
+            .frame(width: ui(Space.xxl), height: ui(Space.xxl))
+            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)).opacity(hovering ? 1 : 0))
+            .contentShape(Rectangle())
+            .animation(Motion.ease(Motion.fast), value: hovering)
+            .animation(Motion.ease(Motion.fast), value: symbol)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarPressStyle())
         .onHover { hovering = $0 }
         .help(help)
+    }
+}
+
+/// 목록 위 알림 한 건(알림 줄이 그린다). 기호 색: 안내·갱신은 중립, 경고는 노랑, 오류는 빨강(강조색은 버튼에만).
+struct SidebarNotice: Identifiable {
+    /// 알림 오른쪽 버튼(SwiftUI 의 Button 과 이름이 겹치지 않게 Action)
+    struct Action {
+        let title: String
+        let help: String?
+        let action: () -> Void
+    }
+    let id: String
+    let symbol: String
+    let tint: NSColor
+    /// 한 줄 제목(설명의 요약)
+    let title: String
+    /// 전체 설명("자세히"로 펼친다)
+    let detail: String?
+    let action: Action?
+}
+
+/// 알림 버튼: 작은 테두리 버튼, 가장 급한 하나만 강조색 채움
+private struct NoticeButtonStyle: ButtonStyle {
+    let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        NoticeButtonBody(label: configuration.label, pressed: configuration.isPressed, prominent: prominent)
+    }
+}
+
+private struct NoticeButtonBody<Label: View>: View {
+    let label: Label
+    let pressed: Bool
+    let prominent: Bool
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        label
+            .uiTextFont(TypeSize.secondary, weight: .semibold)
+            .foregroundStyle(Color(prominent ? TermAppearance.chrome : TermAppearance.textPrimary))
+            .lineLimit(1)
+            .padding(.horizontal, ui(Space.sm))
+            .frame(minHeight: ui(Space.xxl))
+            .background(RoundedRectangle(cornerRadius: ui(6))
+                .fill(Color(prominent ? TermAppearance.accent : TermAppearance.chromeRaised)))
+            .overlay {
+                if !prominent {
+                    RoundedRectangle(cornerRadius: ui(6)).strokeBorder(Color(TermAppearance.border), lineWidth: 1)
+                }
+            }
+            .brightness(pressed ? -0.08 : 0)
+            .animation(pressed ? nil : Motion.ease(Motion.fast), value: pressed)
+            .contentShape(Rectangle())
+    }
+}
+
+/// 알림 한 줄(모든 알림이 같은 모양): 첫 줄 [기호 · 한 줄 제목], 둘째 줄 [자세히 … 버튼(오른쪽)]. 설명은 자세히를 눌러야 펼친다.
+private struct NoticeRow: View {
+    let notice: SidebarNotice
+    let prominent: Bool
+    @Binding var expanded: Bool
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: ui(2)) {
+            HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) { icon; title }
+            HStack(alignment: .center, spacing: ui(Space.sm)) {
+                disclosure.padding(.leading, ui(Space.xl))
+                Spacer(minLength: ui(Space.sm))
+                actionButton
+            }
+            if expanded, let detail = notice.detail {
+                Text(detail)
+                    .uiTextFont(TypeSize.secondary)
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.leading, ui(Space.xl))
+                    .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, ui(Space.md))
+        .padding(.vertical, ui(Space.xs))
+    }
+
+    private var icon: some View {
+        Image(systemName: notice.symbol)
+            .font(.system(size: ui(TypeSize.secondary), weight: .semibold))
+            .foregroundStyle(Color(notice.tint))
+            .frame(width: ui(Space.md), alignment: .leading)
+    }
+
+    private var title: some View {
+        Text(notice.title)
+            .uiTextFont(TypeSize.secondary, weight: .semibold)
+            .foregroundStyle(Color(TermAppearance.textPrimary))
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+
+    @ViewBuilder
+    private var disclosure: some View {
+        if notice.detail != nil {
+            // 상태는 바로 바뀌고 보이는 것(펼침·화살표)만 부드럽게
+            Button { withAnimation(Motion.ease()) { expanded.toggle() } } label: {
+                HStack(spacing: ui(2)) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text("자세히").uiTextFont(TypeSize.caption)
+                }
+                .foregroundStyle(Color(TermAppearance.textSecondary))
+                .frame(minHeight: ui(Space.lg))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(SidebarPressStyle())
+            .accessibilityLabel(expanded ? "자세히 접기" : "자세히 보기")
+        }
+    }
+
+    @ViewBuilder
+    private var actionButton: some View {
+        if let action = notice.action {
+            let button = Button(action.title, action: action.action)
+                .buttonStyle(NoticeButtonStyle(prominent: prominent))
+            if let help = action.help { button.help(help) } else { button }
+        }
+    }
+}
+
+/// 결과 알림(model.notice): 한 줄 안내, 누르면 닫는다
+private struct InfoNoticeRow: View {
+    let text: String
+    let dismiss: () -> Void
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
+            Image(systemName: "info.circle")
+                .font(.system(size: ui(TypeSize.secondary), weight: .semibold))
+                .frame(width: ui(Space.md), alignment: .leading)
+            Text(text)
+                .uiTextFont(TypeSize.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(Color(TermAppearance.textSecondary))
+        .padding(.horizontal, ui(Space.md))
+        .padding(.vertical, ui(Space.xs))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: dismiss)
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// 한 줄 목록 칸의 바탕: 둘레를 4pt 띄운 둥근 채움. 짙기(level)로 고른 줄 1·마우스가 올라온 줄·고른 줄을 품은 접힌 줄 0.5·없음 0.
+/// 늘 그려 두고 짙기만 바꿔 서서히 겹쳐 바뀐다(고른 줄이 옮겨 가면 앞 줄은 옅어지고 새 줄은 짙어진다).
+private extension View {
+    func sidebarPill(_ level: Double, _ ui: UIScale) -> some View {
+        background {
+            RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised))
+                .padding(.horizontal, ui(Space.xs))
+                .opacity(level)
+                .animation(Motion.ease(Motion.fast), value: level)
+        }
     }
 }
 
@@ -448,10 +708,12 @@ struct DisclosureChevron: View {
 
     var body: some View {
         Image(systemName: "chevron.right")
-            .font(.system(size: ui(8), weight: .bold))
-            .foregroundStyle(Color(highlighted ? TermAppearance.textPrimary : TermAppearance.textDim))
+            .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+            .foregroundStyle(Color(highlighted ? TermAppearance.textPrimary : TermAppearance.textSecondary))
             .rotationEffect(.degrees(collapsed ? 0 : 90))
-            .frame(width: ui(10), height: ui(10))
+            .frame(width: ui(TypeSize.caption), height: ui(TypeSize.caption))
+            .animation(Motion.ease(), value: collapsed)
+            .animation(Motion.ease(Motion.fast), value: highlighted)
     }
 }
 
@@ -461,14 +723,14 @@ struct SpacesSummaryView: View {
     @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(spacing: ui(6)) {
+        HStack(spacing: ui(Space.xs)) {
             ForEach(SpacesSummary.Kind.allCases.filter { summary.count($0) > 0 }, id: \.self) { kind in
                 let attention = kind == .waiting || kind == .error
                 HStack(spacing: ui(3)) {
                     StatusDot(status: WorkStatus(summary: kind))
                     Text("\(summary.count(kind))")
-                        .uiFont(10, bold: attention)
-                        .foregroundStyle(Color(attention ? TermAppearance.red : TermAppearance.textPrimary).opacity(attention ? 1 : 0.85))
+                        .uiFont(TypeSize.caption, bold: attention)
+                        .foregroundStyle(Color(attention ? TermAppearance.red : TermAppearance.textPrimary))
                 }
                 .padding(.horizontal, attention ? ui(5) : 0)
                 .padding(.vertical, attention ? ui(1) : 0)
@@ -480,13 +742,16 @@ struct SpacesSummaryView: View {
                 }
             }
             if summary.runningAgents > 0 {
-                Text("↳\(summary.runningAgents)")
-                    .uiFont(10)
-                    .foregroundStyle(Color(TermAppearance.yellow))
+                HStack(spacing: ui(2)) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                    Text("\(summary.runningAgents)").uiFont(TypeSize.caption)
+                }
+                .foregroundStyle(Color(TermAppearance.yellow))
             }
             Text(summary.sessions > 0 ? "세션 \(summary.sessions)" : "세션 없음")
-                .uiFont(10)
-                .foregroundStyle(Color(TermAppearance.textDim))
+                .uiTextFont(TypeSize.caption)
+                .foregroundStyle(Color(TermAppearance.textSecondary))
         }
         .fixedSize()
         .help(helpText)
@@ -500,6 +765,47 @@ struct SpacesSummaryView: View {
     }
 }
 
+/// 한 줄 제목 + 곁 정보. 한 줄에 다 들어가면 오른쪽에, 모자라면 곁 정보(브랜치·경로)를 둘째 줄로 내린다 — 가린 채 두지 않는다.
+private struct TitleWithAside<Title: View, Aside: View>: View {
+    @ViewBuilder let title: () -> Title
+    @ViewBuilder let aside: () -> Aside
+    @Environment(\.uiScale) private var ui
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: ui(Space.sm)) {
+                title()
+                Spacer(minLength: 0)
+                aside()
+            }
+            VStack(alignment: .leading, spacing: ui(2)) {
+                title()
+                aside()
+            }
+        }
+    }
+}
+
+/// 제목 줄 한 줄의 높이(둘째 줄이 있어도 화살표·점·+ 는 이 첫 줄에 맞춘다)
+private func titleLineHeight(_ ui: UIScale, size: CGFloat, bold: Bool) -> CGFloat {
+    let font = TermAppearance.uiFont(ui(size), bold: bold)
+    return ceil(font.ascender - font.descender + font.leading)
+}
+
+/// 접힌 줄 안에 숨은 탭의 ⌘N(그 탭의 세션이 모두 접힌 줄 안에 있을 때 대신 보인다)
+private struct HiddenTabHints: View {
+    let tabs: [Int]
+
+    var body: some View {
+        Text(tabs.map { "⌘\($0)" }.joined(separator: " "))
+            .uiFont(TypeSize.caption)
+            .foregroundStyle(Color(TermAppearance.textSecondary))
+            .lineLimit(1)
+            .help(tabs.map { "탭 \($0)의 세션이 이 안에 있음" }.joined(separator: "\n"))
+    }
+}
+
+/// 묶음(폴더·저장소) 머리 줄: 구역 이름표처럼 조용하게(작은 굵은 글, 보조 색). 세션 줄이 이 목록의 주인공이다.
 struct GroupRowView<MenuContent: View, ContextContent: View>: View {
     let group: FolderGroup
     let collapsed: Bool
@@ -507,6 +813,8 @@ struct GroupRowView<MenuContent: View, ContextContent: View>: View {
     let summary: SpacesSummary?
     /// 접힌 묶음 안에 지금 고른 화면이 있다
     let holdsSelection: Bool
+    /// 접힌 묶음 안에 숨은 탭 번호(⌘N 힌트가 이 줄로 온다)
+    var hiddenTabs: [Int] = []
     let onToggle: () -> Void
     @ViewBuilder let menu: () -> MenuContent
     @ViewBuilder let context: () -> ContextContent
@@ -514,107 +822,146 @@ struct GroupRowView<MenuContent: View, ContextContent: View>: View {
     @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .center, spacing: ui(6)) {
-            // 화살표·이름 어디를 눌러도 접고 편다(+ 메뉴는 따로)
-            HStack(alignment: .center, spacing: ui(6)) {
-                DisclosureChevron(collapsed: collapsed, highlighted: hovering)
-                StatusDot(status: WorkStatus.top(group.sections.flatMap { $0.rows.map(\.status) }))
-                VStack(alignment: .leading, spacing: ui(2)) {
+        let line = titleLineHeight(ui, size: TypeSize.secondary, bold: true)
+        // 화살표·점·+ 는 제목 줄(첫 줄)의 가운데에 맞춘다 — 둘째 줄(브랜치·합계)이 있어도 같은 높이
+        HStack(alignment: .top, spacing: 0) {
+            DisclosureChevron(collapsed: collapsed, highlighted: hovering)
+                .frame(width: ui(Space.lg), height: line, alignment: .leading)
+            StatusDot(status: WorkStatus.top(group.sections.flatMap { $0.rows.map(\.status) }))
+                .frame(width: ui(Space.lg), height: line, alignment: .leading)
+            VStack(alignment: .leading, spacing: ui(2)) {
+                TitleWithAside {
                     Text(group.name)
-                        .uiFont(12, bold: true)
-                        .foregroundStyle(Color(TermAppearance.textPrimary))
-                    // 접혔으면 둘째 줄 앞에 안의 상태 합계(이름은 폭을 그대로 쓴다)
-                    HStack(spacing: ui(6)) {
-                        if let summary { SpacesSummaryView(summary: summary) }
-                        Text((summary == nil ? "" : "· ") + (group.branch ?? (group.path as NSString).abbreviatingWithTildeInPath))
-                            .uiFont(10)
-                            .foregroundStyle(Color(TermAppearance.textDim))
+                        .uiFont(TypeSize.secondary, bold: true)
+                        .foregroundStyle(Color(TermAppearance.textSecondary))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } aside: {
+                    Text(group.branch ?? (group.path as NSString).abbreviatingWithTildeInPath)
+                        .uiFont(TypeSize.caption)
+                        .foregroundStyle(Color(TermAppearance.textSecondary))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                // 접혔으면 다음 줄에 안의 상태 합계(+ 숨은 탭의 ⌘N)
+                if let summary {
+                    HStack(spacing: ui(Space.sm)) {
+                        SpacesSummaryView(summary: summary)
+                        if !hiddenTabs.isEmpty { HiddenTabHints(tabs: hiddenTabs) }
                     }
                 }
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .padding(.leading, 2)
-                Spacer(minLength: 4)
             }
-            .contentShape(Rectangle())
-            .onTapGesture(perform: onToggle)
+            Spacer(minLength: ui(Space.xs))
+        }
+        // 화살표·이름 어디를 눌러도 접고 편다(+ 메뉴는 따로, 오른쪽 끝)
+        .padding(.trailing, ui(Space.xxl))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onToggle)
+        .overlay(alignment: .topTrailing) {
             Menu {
                 menu()
             } label: {
-                Text("+").uiFont(13)
+                Image(systemName: "plus")
+                    .font(.system(size: ui(TypeSize.row), weight: .medium))
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
+                    .frame(width: ui(Space.xxl), height: ui(Space.xxl))
+                    .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(SidebarPressStyle())
             .menuIndicator(.hidden)
             .fixedSize()
-            .opacity(hovering ? 1 : 0.35)
+            .offset(y: (line - ui(Space.xxl)) / 2)
             .help("이 폴더에서 새로 열기")
         }
-        .padding(.leading, ui(8))
-        .padding(.trailing, ui(10))
-        .padding(.vertical, ui(6))
-        .background(Color(holdsSelection || hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
-        .overlay(alignment: .leading) {
-            if holdsSelection { Rectangle().fill(Color(TermAppearance.accent).opacity(0.7)).frame(width: 2) }
-        }
+        .padding(.leading, ui(Space.md))
+        .padding(.trailing, ui(Space.xs))
+        .padding(.vertical, ui(Space.xs))
+        .sidebarPill(holdsSelection || hovering ? 0.5 : 0, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { context() }
-        .help(group.path + (collapsed ? "\n누르면 펼칩니다 · 끌어서 순서를 바꿉니다" : "\n누르면 접습니다 · 끌어서 순서를 바꿉니다"))
+        .help(group.path + (group.branch.map { "\n브랜치 \($0)" } ?? "")
+              + (collapsed ? "\n누르면 펼칩니다 · 끌어서 순서를 바꿉니다" : "\n누르면 접습니다 · 끌어서 순서를 바꿉니다"))
     }
 }
 
+/// 작업 트리(worktree) 줄: 묶음 머리 아래 한 단계 들여, 묶음보다 더 조용하게(굵지 않은 보조 색 글)
 struct WorktreeRowView: View {
     let section: WorktreeSection
     let collapsed: Bool
     let summary: SpacesSummary?
     let holdsSelection: Bool
+    var hiddenTabs: [Int] = []
     let onToggle: () -> Void
     @State private var hovering = false
     @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .center, spacing: ui(6)) {
+        let line = titleLineHeight(ui, size: TypeSize.secondary, bold: false)
+        HStack(alignment: .top, spacing: 0) {
             DisclosureChevron(collapsed: collapsed, highlighted: hovering)
+                .frame(width: ui(Space.lg), height: line, alignment: .leading)
             Image(systemName: "arrow.triangle.branch")
-                .font(.system(size: ui(10), weight: .semibold))
-                .foregroundStyle(Color(section.isClaude ? TermAppearance.claudeColor : TermAppearance.textDim))
+                .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                .foregroundStyle(Color(section.isClaude ? TermAppearance.claudeColor : TermAppearance.textSecondary))
+                .frame(width: ui(Space.lg), height: line, alignment: .leading)
             VStack(alignment: .leading, spacing: ui(2)) {
-                Text(section.name)
-                    .uiFont(11, bold: true)
-                    .foregroundStyle(Color(TermAppearance.textPrimary))
-                HStack(spacing: ui(6)) {
-                    if let summary { SpacesSummaryView(summary: summary) }
-                    Text((summary == nil || section.branch == nil ? "" : "· ") + (section.branch ?? ""))
-                        .uiFont(10)
-                        .foregroundStyle(Color(TermAppearance.textDim))
+                TitleWithAside {
+                    Text(section.name)
+                        .uiFont(TypeSize.secondary)
+                        .foregroundStyle(Color(TermAppearance.textSecondary))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } aside: {
+                    if let branch = section.branch {
+                        Text(branch)
+                            .uiFont(TypeSize.caption)
+                            .foregroundStyle(Color(TermAppearance.textSecondary))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                if let summary {
+                    HStack(spacing: ui(Space.sm)) {
+                        SpacesSummaryView(summary: summary)
+                        if !hiddenTabs.isEmpty { HiddenTabHints(tabs: hiddenTabs) }
+                    }
                 }
             }
-            Spacer(minLength: 4)
-            if summary != nil {
-                EmptyView()
-            } else if section.agents.contains(where: \.isRunning) {
-                Text("● 작업 중 \(section.agents.filter(\.isRunning).count)")
-                    .uiFont(10, bold: true)
-                    .foregroundStyle(Color(TermAppearance.yellow))
-            } else if !section.agents.isEmpty {
-                Text("최근 작업").uiFont(10).foregroundStyle(Color(TermAppearance.textDim))
-            } else if section.rows.isEmpty {
-                Text("세션 없음").uiFont(10).foregroundStyle(Color(TermAppearance.textDim).opacity(0.7))
+            Spacer(minLength: ui(Space.sm))
+            if summary == nil {
+                trailing.frame(height: line)
             }
         }
         .lineLimit(1)
-        .truncationMode(.middle)
-        .padding(.leading, ui(14 + 7))
-        .padding(.trailing, ui(10))
-        .padding(.vertical, ui(4))
-        .background(Color(holdsSelection || hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
-        .overlay(alignment: .leading) {
-            if holdsSelection { Rectangle().fill(Color(TermAppearance.accent).opacity(0.7)).frame(width: 2) }
-        }
+        .padding(.leading, ui(Space.md + Space.lg))
+        .padding(.trailing, ui(Space.md))
+        .padding(.vertical, ui(Space.xs))
+        .sidebarPill(holdsSelection || hovering ? 0.5 : 0, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .onTapGesture(perform: onToggle)
-        .help((section.isClaude ? "claude 가 만든 작업 트리 · \(section.path)" : section.path) + (collapsed ? "\n누르면 펼칩니다" : "\n누르면 접습니다"))
+        .help((section.isClaude ? "claude 가 만든 작업 트리 · \(section.path)" : section.path)
+              + (section.branch.map { "\n브랜치 \($0)" } ?? "")
+              + (collapsed ? "\n누르면 펼칩니다" : "\n누르면 접습니다"))
+    }
+
+    /// 오른쪽 끝 한마디(펼쳐 있을 때만): 일하는 하위 에이전트 수·최근 작업·세션 없음
+    @ViewBuilder
+    private var trailing: some View {
+        if section.agents.contains(where: \.isRunning) {
+            HStack(spacing: ui(Space.xs)) {
+                Circle().fill(Color(TermAppearance.yellow)).frame(width: ui(6), height: ui(6))
+                Text("작업 중 \(section.agents.filter(\.isRunning).count)")
+                    .uiTextFont(TypeSize.caption, weight: .semibold)
+            }
+            .foregroundStyle(Color(TermAppearance.yellow))
+        } else if !section.agents.isEmpty {
+            Text("최근 작업").uiTextFont(TypeSize.caption).foregroundStyle(Color(TermAppearance.textSecondary))
+        } else if section.rows.isEmpty {
+            Text("세션 없음").uiTextFont(TypeSize.caption).foregroundStyle(Color(TermAppearance.textSecondary))
+        }
     }
 }
 
@@ -623,6 +970,8 @@ struct SessionRowView: View {
     let depth: Int
     let selected: Bool
     let tabNumber: Int?
+    /// ⌘N 힌트를 이 줄에 보인다(탭마다 한 줄만). 아니면 풍선 도움말에만 적는다.
+    var showsTabHint = true
     /// 이 세션의 브라우저(떠 있을 때만). spaces 는 상태판이라 브라우저 사용 여부도 보인다
     var browser: BrowserIndicator? = nil
     var openBrowser: () -> Void = {}
@@ -630,93 +979,109 @@ struct SessionRowView: View {
     @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: ui(8)) {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
             StatusDot(status: row.status, dormant: row.dormant)
+                .frame(width: ui(Space.lg), alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
-            VStack(alignment: .leading, spacing: ui(1)) {
-                HStack(spacing: ui(4)) {
+            VStack(alignment: .leading, spacing: ui(2)) {
+                HStack(spacing: ui(Space.xs)) {
                     Text(row.title)
-                        .uiFont(12, bold: selected)
+                        .uiFont(TypeSize.row)
                         .foregroundStyle(Color(TermAppearance.textPrimary))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                     if row.launchWarning != nil {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: ui(9)))
+                            .font(.system(size: ui(TypeSize.caption)))
                             .foregroundStyle(Color(TermAppearance.red))
                     }
                 }
-                if row.dormant {
-                    Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program) 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
-                        .uiFont(10)
-                        .foregroundStyle(Color(TermAppearance.textDim))
-                } else {
-                if case .orchestrating = row.status {
-                    // 오케스트레이션 중: 남은 일 수가 핵심이라 줄을 하나 더 써서 잘리지 않게(폴더는 묶음 머리에 있다)
-                    Text(row.status.label ?? "")
-                        .foregroundStyle(Color(row.status.color))
-                        .uiFont(10)
-                    Text(row.status.detail ?? "")
-                        .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
-                        .uiFont(10)
-                } else {
-                HStack(spacing: 0) {
-                    if let label = row.status.label {
-                        Text(label + " · ")
-                            .foregroundStyle(Color(row.status.color))
-                            .fontWeight(row.status.needsAttention ? .bold : .regular)
-                    }
-                    Text(row.status.detail ?? row.program)
-                        .foregroundStyle(Color(row.agentColor))
-                    // 제목이 이미 폴더 이름이면 같은 말을 되풀이하지 않고 터미널 장치로 구분한다
-                    Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")
-                        .foregroundStyle(Color(TermAppearance.textDim))
-                }
-                .uiFont(10)
-                }
-                }
+                detail
             }
             .lineLimit(1)
-            Spacer(minLength: 4)
+            Spacer(minLength: ui(Space.sm))
             if let browser {
                 // 🌐 + 상태 색(기다림은 !) — 누르면 그 세션의 브라우저 창
                 HStack(spacing: ui(2)) {
                     Image(systemName: "globe")
-                        .font(.system(size: ui(12), weight: .semibold))
+                        .font(.system(size: ui(TypeSize.row), weight: .semibold))
                     if browser.needsAttention {
-                        Text("!").uiFont(10, bold: true)
+                        Text("!").uiFont(TypeSize.caption, bold: true)
                     }
                 }
                 .foregroundStyle(Color(browser.color))
-                .padding(.horizontal, ui(4))
+                .padding(.horizontal, ui(Space.xs))
                 .padding(.vertical, ui(1))
                 .background(Capsule().fill(Color(browser.color).opacity(browser.needsAttention ? 0.22 : 0.12)))
                 .overlay(Capsule().strokeBorder(Color(browser.color).opacity(browser.needsAttention ? 1 : 0.55), lineWidth: 1))
                 // 누르는 자리를 넉넉히(작은 지구본만이 아니라 둘레까지)
-                .frame(minWidth: ui(24), minHeight: ui(22))
+                .frame(minWidth: ui(Space.xxl), minHeight: ui(22))
                 .contentShape(Rectangle())
                 .help("브라우저 · \(browser.label) — 눌러서 창 열기")
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("브라우저 \(browser.label)")
                 .accessibilityAddTraits(.isButton)
                 .onTapGesture(perform: openBrowser)
+                .padding(.leading, ui(Space.xs))
             }
-            if let tabNumber {
+            if let tabNumber, showsTabHint {
                 Text("⌘\(tabNumber)")
-                    .uiFont(10)
-                    .foregroundStyle(Color(selected ? TermAppearance.accent : TermAppearance.textDim).opacity(0.8))
+                    .uiFont(TypeSize.caption)
+                    .foregroundStyle(Color(selected ? TermAppearance.accent : TermAppearance.textSecondary))
                     .help("탭 \(tabNumber)에 있음")
+                    .padding(.leading, ui(Space.xs))
             }
         }
-        .padding(.leading, ui(14 + CGFloat(depth) * 15))
-        .padding(.trailing, ui(10))
-        .padding(.vertical, ui(5))
+        .padding(.leading, ui(Space.md + CGFloat(depth) * Space.lg))
+        .padding(.trailing, ui(Space.md))
+        .padding(.vertical, ui(6))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(selected ? TermAppearance.chromeRaised : hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
-        .overlay(alignment: .leading) {
-            if selected { Rectangle().fill(Color(TermAppearance.accent)).frame(width: 2) }
-        }
+        .sidebarPill(selected ? 1 : hovering ? 0.5 : 0, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help("\(row.name)\n\(row.cwd) · \(row.pane.tty ?? "")" + (row.launchWarning.map { "\n⚠ \($0)" } ?? ""))
+        .help("\(row.name)\n\(row.cwd) · \(row.pane.tty ?? "")" + (row.launchWarning.map { "\n⚠ \($0)" } ?? "")
+              + (tabNumber.map { showsTabHint ? "" : "\n탭 \($0)에 있음" } ?? ""))
+    }
+
+    /// 둘째 줄: 상태 · 프로그램(또는 상태 설명) · 폴더. 이름·tty 같은 데이터는 고정폭, 상태 말은 시스템 글꼴.
+    @ViewBuilder
+    private var detail: some View {
+        if row.dormant {
+            Text((row.isClaude || row.isCodex) ? "꺼짐 · 열면 \(row.program) 를 이어서 시작" : "꺼짐 · 열면 셸을 다시 시작")
+                .uiTextFont(TypeSize.caption)
+                .foregroundStyle(Color(TermAppearance.textSecondary))
+        } else if case .orchestrating = row.status {
+            // 오케스트레이션 중: 남은 일 수가 핵심이라 줄을 하나 더 써서 잘리지 않게(폴더는 묶음 머리에 있다)
+            Text(row.status.label ?? "")
+                .foregroundStyle(Color(row.status.color))
+                .uiTextFont(TypeSize.caption)
+            Text(row.status.detail ?? "")
+                .foregroundStyle(Color(TermAppearance.textPrimary))
+                .uiTextFont(TypeSize.caption)
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                if let label = row.status.label {
+                    Text(label + " · ")
+                        .uiTextFont(TypeSize.caption, weight: row.status.needsAttention ? .bold : .regular)
+                        .foregroundStyle(Color(row.status.color))
+                        .layoutPriority(2)
+                }
+                Group {
+                    if let detail = row.status.detail {
+                        Text(detail).uiTextFont(TypeSize.caption)
+                    } else {
+                        Text(row.program).uiFont(TypeSize.caption)
+                    }
+                }
+                .foregroundStyle(Color(row.agentColor))
+                .layoutPriority(1)
+                // 제목이 이미 폴더 이름이면 같은 말을 되풀이하지 않고 터미널 장치로 구분한다
+                Text(" · \(row.title == row.folder ? (row.pane.tty ?? "") : row.folder)")
+                    .uiFont(TypeSize.caption)
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
+                    .truncationMode(.middle)
+            }
+        }
     }
 }
 
@@ -750,11 +1115,11 @@ enum SidebarItem: Identifiable, Equatable {
         }
     }
 
-    /// 끌어 놓을 자리 줄을 들여 쓸 너비
+    /// 끌어 놓을 자리 줄을 들여 쓸 너비(줄의 첫 칸과 같은 자리, 배율 곱하기 전)
     var indent: CGFloat {
         switch self {
-        case .session(_, let depth, _, _): return 14 + CGFloat(depth) * 15
-        default: return 8
+        case .session(_, let depth, _, _): return Space.md + CGFloat(depth) * Space.lg
+        default: return Space.md
         }
     }
 
@@ -900,23 +1265,24 @@ struct AgentRowView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ui(4)) {
-            HStack(alignment: .firstTextBaseline, spacing: ui(6)) {
-                Text("↳")
-                    .uiFont(11)
-                    .foregroundStyle(Color(TermAppearance.textDim))
-                VStack(alignment: .leading, spacing: ui(1)) {
+        VStack(alignment: .leading, spacing: ui(Space.xs)) {
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: ui(TypeSize.caption), weight: .semibold))
+                    .foregroundStyle(Color(TermAppearance.textSecondary))
+                    .frame(width: ui(Space.lg), alignment: .leading)
+                VStack(alignment: .leading, spacing: ui(2)) {
                     Text(agent.description)
-                        .uiFont(11)
-                        .foregroundStyle(Color(agent.isRunning ? TermAppearance.textPrimary : TermAppearance.textDim))
+                        .uiFont(TypeSize.secondary)
+                        .foregroundStyle(Color(agent.isRunning ? TermAppearance.textPrimary : TermAppearance.textSecondary))
                     HStack(spacing: 0) {
                         Text(when)
-                            .foregroundStyle(Color(agent.isRunning ? TermAppearance.yellow : TermAppearance.textDim))
+                            .foregroundStyle(Color(agent.isRunning ? TermAppearance.yellow : TermAppearance.textSecondary))
                         Text([agent.agentType, owner.map { "\($0) 의 하위 에이전트" }].compactMap { $0 }
                             .map { " · " + $0 }.joined())
-                            .foregroundStyle(Color(TermAppearance.textDim))
+                            .foregroundStyle(Color(TermAppearance.textSecondary))
                     }
-                    .uiFont(10)
+                    .uiTextFont(TypeSize.caption)
                 }
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -924,20 +1290,21 @@ struct AgentRowView: View {
             }
             if expanded {
                 Text(agent.lastText ?? "아직 남긴 메시지가 없습니다.")
-                    .uiFont(10)
-                    .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
+                    .uiTextFont(TypeSize.caption)
+                    .foregroundStyle(Color(TermAppearance.textPrimary))
                     .lineLimit(8)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(ui(8))
+                    .padding(ui(Space.sm))
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.chromeRaised)))
+                    .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)))
+                    .transition(.opacity)
             }
         }
-        .padding(.leading, ui(14 + CGFloat(depth) * 15))
-        .padding(.trailing, ui(10))
-        .padding(.vertical, ui(3))
+        .padding(.leading, ui(Space.md + CGFloat(depth) * Space.lg))
+        .padding(.trailing, ui(Space.md))
+        .padding(.vertical, ui(Space.xs))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hovering ? TermAppearance.chromeRaised.withAlphaComponent(0.5) : .clear))
+        .sidebarPill(hovering ? 0.5 : 0, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help("누르면 이 에이전트를 띄운 에이전트 화면으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
@@ -969,40 +1336,50 @@ struct StatusFooterView: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ui(3)) {
+        VStack(alignment: .leading, spacing: ui(Space.xs)) {
             if let release = updates.available {
                 UpdateLine(tag: UpdateNotifier.display(release.tag)) { updates.presentUpdate() }
-                    .padding(.bottom, ui(3))
+                    .padding(.bottom, ui(Space.xs))
             }
             if model.legacyDaemon || model.relocating {
                 LegacyDaemonLine(relocating: model.relocating) { model.moveToNewLocation() }
-                    .padding(.bottom, ui(3))
+                    .padding(.bottom, ui(Space.xs))
             }
             if !model.migrationPending.isEmpty {
                 NoticeLine(color: TermAppearance.yellow, title: "데이터 옮기기 일부 실패", detail: "다음 실행 때 다시 시도합니다",
                            help: DataLocation.pendingNoticeDetail(model.migrationPending, legacy: DataLocation.legacyRoot(),
                                                                   logPath: Self.logPath))
-                    .padding(.bottom, ui(3))
+                    .padding(.bottom, ui(Space.xs))
             }
             if let error = model.lastError {
                 Text(error).foregroundStyle(Color(TermAppearance.red))
             }
             if let claude = usage.claude { UsageLineView(line: claude) }
             if let codex = usage.codex { UsageLineView(line: codex) }
-            Text("앱 \(Memory.format(model.appFootprint)) · 데몬 \(Memory.format(model.daemonFootprint))")
-            HStack(alignment: .center, spacing: ui(6)) {
+            // 이름은 시스템 글꼴, 크기(숫자)는 고정폭
+            HStack(alignment: .firstTextBaseline, spacing: 0) {
+                Text("앱 ")
+                Text(Memory.format(model.appFootprint)).uiFont(TypeSize.caption)
+                Text(" · 데몬 ")
+                Text(Memory.format(model.daemonFootprint)).uiFont(TypeSize.caption)
+            }
+            .lineLimit(1)
+            HStack(alignment: .center, spacing: ui(Space.sm)) {
                 Text(Self.versionLabel)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                     .textSelection(.enabled)
-                Spacer(minLength: ui(4))
+                Spacer(minLength: ui(Space.xs))
                 SettingsButton(warning: launch.danger(.claude) ?? launch.danger(.codex)) { model.openSettings() }
             }
             daemonLine
         }
-        .uiFont(10)
-        .foregroundStyle(Color(TermAppearance.textDim))
+        .uiTextFont(TypeSize.caption)
+        .foregroundStyle(Color(TermAppearance.textSecondary))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, ui(14))
-        .padding(.vertical, ui(10))
+        .padding(.horizontal, ui(Space.md))
+        .padding(.vertical, ui(Space.md))
         .background(Color(TermAppearance.chrome))
         .overlay(alignment: .top) { Rectangle().fill(Color(TermAppearance.border).opacity(0.5)).frame(height: 1) }
         .environment(\.uiScale, ui)
@@ -1044,16 +1421,16 @@ private struct NoticeLine: View {
     @Environment(\.uiScale) private var ui
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: ui(6)) {
+        HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
             Circle().fill(Color(color)).frame(width: ui(6), height: ui(6))
             VStack(alignment: .leading, spacing: ui(1)) {
                 Text(title)
-                    .uiFont(11, bold: true)
+                    .uiTextFont(TypeSize.secondary, weight: .semibold)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                 if let detail {
                     Text(detail)
-                        .uiFont(10)
-                        .foregroundStyle(Color(TermAppearance.textPrimary).opacity(0.85))
+                        .uiTextFont(TypeSize.caption)
+                        .foregroundStyle(Color(TermAppearance.textSecondary))
                 }
             }
             .lineLimit(1)
@@ -1065,7 +1442,7 @@ private struct NoticeLine: View {
     }
 }
 
-/// 상태 줄 오른쪽 "⚙ 설정"(⌘,). 새 세션 기본 옵션이 위험하면 빨간 ⚠ 를 덧붙인다.
+/// 상태 줄 오른쪽 "설정"(⌘,). 새 세션 기본 옵션이 위험하면 빨간 경고 표시를 덧붙인다.
 private struct SettingsButton: View {
     let warning: String?
     let action: () -> Void
@@ -1074,22 +1451,24 @@ private struct SettingsButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: ui(4)) {
+            HStack(spacing: ui(Space.xs)) {
                 if warning != nil {
-                    Text("⚠").foregroundStyle(Color(TermAppearance.red))
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Color(TermAppearance.red))
+                        .accessibilityLabel("주의")
                 }
                 Image(systemName: "gearshape")
                 Text("설정")
             }
-            .uiFont(11, bold: hovering)
-            .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textDim))
-            .padding(.horizontal, ui(7))
-            .padding(.vertical, ui(3))
-            .background(RoundedRectangle(cornerRadius: 4)
-                .fill(Color(hovering ? TermAppearance.chromeRaised : .clear)))
+            .uiTextFont(TypeSize.secondary)
+            .foregroundStyle(Color(hovering ? TermAppearance.textPrimary : TermAppearance.textSecondary))
+            .padding(.horizontal, ui(Space.sm))
+            .frame(minHeight: ui(Space.xxl))
+            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.chromeRaised)).opacity(hovering ? 1 : 0))
             .contentShape(Rectangle())
+            .animation(Motion.ease(Motion.fast), value: hovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarPressStyle())
         .onHover { hovering = $0 }
         .help(warning.map { "설정 (⌘,)\n기본 옵션 주의: \($0)" } ?? "설정 (⌘,)")
     }
@@ -1102,30 +1481,21 @@ private struct LegacyDaemonLine: View {
     @Environment(\.uiScale) private var ui
 
     var body: some View {
-        VStack(alignment: .leading, spacing: ui(5)) {
-            HStack(alignment: .firstTextBaseline, spacing: ui(6)) {
+        VStack(alignment: .leading, spacing: ui(Space.sm)) {
+            HStack(alignment: .firstTextBaseline, spacing: ui(Space.sm)) {
                 Circle().fill(Color(TermAppearance.yellow)).frame(width: ui(6), height: ui(6))
                 Text(relocating ? "새 위치로 옮기는 중…" : "이전 데몬에서 실행 중 — 재시작(또는 재부팅) 시 새 위치로 옮깁니다")
-                    .uiFont(11)
+                    .uiTextFont(TypeSize.secondary)
                     .foregroundStyle(Color(TermAppearance.textPrimary))
                     .fixedSize(horizontal: false, vertical: true)
             }
             if !relocating {
-                Button(action: action) {
-                    Text("지금 옮기기…")
-                        .uiFont(11, bold: true)
-                        .foregroundStyle(Color(TermAppearance.chrome))
-                        .padding(.horizontal, ui(10))
-                        .padding(.vertical, ui(3))
-                        .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.yellow)))
-                }
-                .buttonStyle(.plain)
-                .help("예전 데몬을 끄고 데이터를 새 위치로 옮깁니다. 열린 셸·claude 가 멈추고, claude·codex 화면은 탭을 열면 되살아납니다.")
+                Button("지금 옮기기…", action: action)
+                    .buttonStyle(NoticeButtonStyle(prominent: false))
+                    .help("예전 데몬을 끄고 데이터를 새 위치로 옮깁니다. 열린 셸·claude 가 멈추고, claude·codex 화면은 탭을 열면 되살아납니다.")
             }
         }
-        .padding(ui(8))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 4).strokeBorder(Color(TermAppearance.yellow).opacity(0.6), lineWidth: 1))
     }
 }
 
@@ -1138,20 +1508,21 @@ private struct UpdateLine: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: ui(6)) {
+            HStack(spacing: ui(Space.sm)) {
                 Circle().fill(Color(TermAppearance.accent)).frame(width: ui(6), height: ui(6))
                 Text("새 버전 \(tag) — 업데이트")
-                    .uiFont(11, bold: true)
+                    .uiTextFont(TypeSize.secondary, weight: .semibold)
                     .underline(hovering)
             }
             .foregroundStyle(Color(TermAppearance.accent))
-            .padding(.horizontal, ui(8))
-            .padding(.vertical, ui(4))
+            .padding(.horizontal, ui(Space.sm))
+            .padding(.vertical, ui(Space.xs))
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 4).fill(Color(TermAppearance.accent).opacity(hovering ? 0.18 : 0.1)))
+            .background(RoundedRectangle(cornerRadius: ui(6)).fill(Color(TermAppearance.accent).opacity(hovering ? 0.18 : 0.1)))
             .contentShape(Rectangle())
+            .animation(Motion.ease(Motion.fast), value: hovering)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(SidebarPressStyle())
         .onHover { inside in
             hovering = inside
             if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }

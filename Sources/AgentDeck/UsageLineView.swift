@@ -21,7 +21,7 @@ struct UsageLineView: View {
     private func row(bars: Bool, staleWord: Bool) -> some View {
         HStack(alignment: .center, spacing: ui(8)) {
             Text(line.provider)
-                .foregroundStyle(Color(TermAppearance.textPrimary).opacity(line.stale ? 0.55 : 0.85))
+                .foregroundStyle(Color(line.stale ? TermAppearance.textSecondary : TermAppearance.textPrimary))
                 .frame(minWidth: ui(38), alignment: .leading)
             if line.cells.isEmpty {
                 Text("사용량 정보 없음")
@@ -45,9 +45,9 @@ private struct UsageCellView: View {
     @Environment(\.uiScale) private var ui
 
     private var color: NSColor {
-        guard !stale else { return TermAppearance.textDim }
+        guard !stale else { return TermAppearance.textSecondary }
         switch cell.tier {
-        case .normal: return TermAppearance.textDim
+        case .normal: return TermAppearance.textSecondary
         case .warn: return TermAppearance.yellow
         case .critical: return TermAppearance.red
         }
@@ -56,13 +56,13 @@ private struct UsageCellView: View {
     var body: some View {
         HStack(alignment: .center, spacing: ui(4)) {
             Text(cell.label)
-                .opacity(0.8)
             if bar {
                 let width = ui(22)
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color(TermAppearance.textDim).opacity(0.22))
                     Capsule().fill(Color(color).opacity(stale ? 0.6 : 1))
                         .frame(width: width * min(1, max(0, (cell.percent ?? 0) / 100)))
+                        .animation(Motion.ease(), value: cell.percent)
                 }
                 .frame(width: width, height: ui(4))
             }
