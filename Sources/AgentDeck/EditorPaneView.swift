@@ -376,14 +376,7 @@ final class EditorPaneView: NSView, NSTextViewDelegate {
         document.showsPreview = on
         // Core Animation keeps the previous rendered surface for the fade;
         // document state, focus and view teardown still change immediately.
-        body.layer?.removeAnimation(forKey: "editorMode")
-        if window != nil, !Motion.reduced {
-            let fade = CATransition()
-            fade.type = .fade
-            fade.duration = Motion.standard
-            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            body.layer?.add(fade, forKey: "editorMode")
-        }
+        if window != nil { body.crossFadeNextChange(key: "editorMode") }
         applyMode()
         if hadFocus, let target = focusTarget { window?.makeFirstResponder(target) }
     }

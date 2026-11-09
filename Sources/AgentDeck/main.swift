@@ -554,6 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
     ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | fonts
     ///   데이터 위치: location(위치·모드·데몬). 옮기기는 action relocate-data
+    ///   상태 모양: fake-session-states [off](디버그 빌드 전용, 화면들의 종류·상태를 메모리에서만 덧씌움)
     private func startDebugHooks() {
         let env = ProcessInfo.processInfo.environment
         let snapshotDir = AgentDeckEnv.nonEmpty("SNAPSHOT", in: env)
@@ -656,6 +657,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "editor-pin":
             // 지금 화면(편집기 미리보기)을 고정 — 분할 제목 두 번 누르기와 같음
             if let id = model.selectedId { model.pin(editor: id) }
+        case "fake-session-states":
+            // fake-session-states [off]: 지금 화면들의 종류(claude·codex·셸)와 상태(일하는 중·기다림·오류·완료·쉼·오케스트레이션)를 돌아가며 덧씌워
+            // 사이드바·탭·전환기에서 모양을 본다. 메모리에만 있다(저장·진짜 실행·네트워크 없음). 디버그 빌드 전용, 알림은 AGENTDECK_NO_NOTIFY=1 로 끈다.
+            #if DEBUG
+            if argument == "off" {
+                model.debugFakeStates = [:]
+            } else {
+                let plan: [(SessionKind, WorkStatus)] = [
+                    (.claude, .working), (.codex, .waiting("권한 요청")), (.shell, .none), (.claude, .error("실패")),
+                    (.codex, .done), (.claude, .idle), (.claude, .orchestrating(agents: 2, shells: 0)), (.codex, .working),
+                ]
+                var fake: [String: (kind: SessionKind, status: WorkStatus)] = [:]
+                for (index, row) in model.rows.filter({ !$0.dormant && !EditorPane.isEditor($0.id) }).enumerated() {
+                    let item = plan[index % plan.count]
+                    fake[row.id] = (item.0, item.1)
+                }
+                model.debugFakeStates = fake
+            }
+            model.client.list()
+            print("fake-session-states \(model.debugFakeStates.count)")
+            fflush(stdout)
+            #endif
         case "quit":
             // 앱 메뉴 "종료"(⌘Q)와 같은 길 — 데몬이 앱과 따로 남는지 시험할 때
             NSApp.terminate(nil)

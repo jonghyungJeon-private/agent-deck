@@ -629,6 +629,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   `cmd-click <줄>:<열>`·`cmd-hover <줄>:<열>`(밑줄 확인)·`nav-back`·`nav-forward`·`nav-state`·`index-state`·`index-build <루트>`(색인 시간·메모리).
   미리보기 시험 명령: `editor-preview [on|off|toggle]`·`editor-preview-state`·`editor-preview-html <파일>`·`editor-preview-snap <png>`·
   `editor-preview-js <식>`(앱 쪽 세계에서 실행)·`editor-preview-raw`(거르지 않은 HTML — CSP·스크립트 끄기만으로 막히는지 확인).
+  상태 모양 시험 명령: `fake-session-states [off]`(디버그 빌드에서만 컴파일 — 지금 화면들의 종류 claude·codex·셸과 상태 일하는 중·기다림·오류·완료·쉼·오케스트레이션을 돌아가며 메모리에서만 덧씌운다. 저장·진짜 실행·네트워크 없음, 되살리기 정보는 건드리지 않는다. 사이드바·탭·전환기의 아이콘·점 모양 확인용, 알림은 `AGENTDECK_NO_NOTIFY=1` 로 끈다).
   종료 시험 명령: `quit`(⌘Q 와 같은 길 — 데몬·화면이 앱과 따로 남는지 볼 때).
   배포 시험 명령: `alert-answer <번호…>`(다음 확인 창들에서 누를 버튼, 0 = 첫 버튼 — 디버그 중엔 확인 창을 띄우지 않고 내용을 찍는다)·
   `update-state`·`update-open`·`hooks-state`·`settings`(설정 창, 창 번호·탭)·`settings-tab <connections|browser|sessions|screen>`(설정 창 탭 고르기)·`float-corner <top|bottom>`·`settings-snap <png>`·`chrome-import snap <png>`(가져오기 창 그림)·`launch-options [<JSON>]`(기본 옵션 보기·바꾸기)·

@@ -168,20 +168,6 @@ enum BrowserHeader {
     static var controlHeight: CGFloat { TermAppearance.scaled(24) }
 }
 
-extension NSView {
-    /// 곧 바뀔 내용을 이전 모습에서 서서히 바꾼다(Motion.standard, ease-out). 창에 없거나 동작 줄이기면 바로.
-    /// 바꾸기 직전에 부른다.
-    func crossFadeNextChange() {
-        guard window != nil, !Motion.reduced else { return }
-        wantsLayer = true
-        let fade = CATransition()
-        fade.type = .fade
-        fade.duration = Motion.standard
-        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        layer?.add(fade, forKey: "crossFadeNextChange")
-    }
-}
-
 /// 브라우저 상태 알약(🌐 + 상태). 브라우저 창 머리 줄에서는 누를 곳 없이 상태만 보인다(onClick nil).
 /// 글자는 늘 `textPrimary`(시스템 글꼴), 상태 색은 아이콘·테두리·옅은 바탕에만(한 색 = 한 뜻).
 final class BrowserChipView: NSView {

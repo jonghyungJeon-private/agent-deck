@@ -98,3 +98,18 @@ enum Motion {
         reduceMotion ? nil : .easeOut(duration: duration)
     }
 }
+
+extension NSView {
+    /// 곧 바뀔 내용을 이전 모습에서 서서히 바꾼다(Motion.standard, ease-out). 창에 없거나 동작 줄이기면 바로.
+    /// 바꾸기 직전에 부른다. `key` 가 같은 이전 전환은 걷어낸다.
+    func crossFadeNextChange(key: String = "crossFadeNextChange") {
+        guard window != nil, !Motion.reduced else { return }
+        wantsLayer = true
+        layer?.removeAnimation(forKey: key)
+        let fade = CATransition()
+        fade.type = .fade
+        fade.duration = Motion.standard
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer?.add(fade, forKey: key)
+    }
+}

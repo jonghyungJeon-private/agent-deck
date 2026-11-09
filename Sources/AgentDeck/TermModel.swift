@@ -656,6 +656,9 @@ final class TermModel: ObservableObject {
         daemonFootprint = state.footprint
         appFootprint = Memory.footprint()
         let seen = seenDone
+        #if DEBUG
+        let fakeStates = debugFakeStates
+        #endif
         let dormant = workspace.allPanes.filter { workspace.dormant.contains($0) }.compactMap { id in
             workspace.recipes[id].map { (id, $0) }
         }
@@ -666,6 +669,9 @@ final class TermModel: ObservableObject {
             var newRows = self.makeRows(regularPanes, seen: seen) + dormant.map { self.dormantRow(id: $0.0, recipe: $0.1) }
             let agents = self.scanAgents(newRows)
             newRows = Self.applyCodexOrchestration(newRows, agents: agents)
+            #if DEBUG
+            newRows = Self.applyDebugFakeStates(newRows, fake: fakeStates)
+            #endif
             let newGroups = Self.makeGroups(newRows, agents: agents)
             DispatchQueue.main.async {
                 self.show(newRows, newGroups, daemonPid: state.pid, instance: state.instance)
@@ -776,6 +782,25 @@ final class TermModel: ObservableObject {
         }
         return lastAgents
     }
+
+    #if DEBUG
+    /// 시험 전용(`fake-session-states`): 화면 ID → 보여 줄 종류·상태. 메모리에만 있고 아무것도 저장하지 않으며(되살리기 정보는 session·codex 에서만 만든다),
+    /// 진짜 claude·codex 를 띄우지 않는다. 디버그 빌드에서만 컴파일된다.
+    var debugFakeStates: [String: (kind: SessionKind, status: WorkStatus)] = [:]
+
+    static func applyDebugFakeStates(_ rows: [PaneRow], fake: [String: (kind: SessionKind, status: WorkStatus)]) -> [PaneRow] {
+        guard !fake.isEmpty else { return rows }
+        return rows.map { row in
+            guard !row.dormant, let entry = fake[row.id] else { return row }
+            var row = row
+            row.dormantClaude = entry.kind == .claude
+            row.dormantCodex = entry.kind == .codex
+            row.status = entry.status
+            row.statusAt = Date()
+            return row
+        }
+    }
+    #endif
 
     /// 폴더(저장소)별로 묶는다. 처음 나온 순서를 지키고, 저장소는 작업 트리 목록을 함께 보여 준다.
     /// 하위 에이전트는 일하는 작업 트리 아래에, 작업 트리를 모르면 띄운 claude 줄 아래에 붙인다.
