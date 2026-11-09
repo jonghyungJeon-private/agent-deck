@@ -59,8 +59,8 @@ final class SessionSwitcher {
     init(host: TerminalHostController) { self.host = host }
     deinit { if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) } }
 
-    func show() {
-        close(restoreFocus: true)
+    func show(animated: Bool = true) {
+        close(restoreFocus: true, animated: animated)
         host.navigator.closePopup(restoreFocus: false)
         previousResponder = host.view.window?.firstResponder
         if let bar = host.focusedTerminal?.findBar, bar.fieldHasFocus { previousField = bar.field }
@@ -80,6 +80,7 @@ final class SessionSwitcher {
         }
         host.view.addSubview(popup)
         filter("")
+        popup.fadeIn(animated: animated)
         host.view.window?.makeFirstResponder(popup.field)
         mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
             guard let self, let popup = self.popup, event.window === popup.window else { return event }
@@ -94,21 +95,31 @@ final class SessionSwitcher {
         popup.setRows(targets.map { target in
             let row = host.model.row(target.id)
             let editor = host.model.workspace.editors[target.id] != nil
-            let status = row?.status ?? .none
-            let label = row?.dormant == true ? "꺼짐" : status.label ?? (editor ? "편집기" : "셸")
-            return NavigatorRow(badge: "●", badgeColor: status.color,
+            let browser = host.model.workspace.browsers[target.id] != nil
+            let status = row?.dormant == true ? WorkStatus.none : (row?.status ?? .none)
+            let label = row?.dormant == true ? "꺼짐" : (row?.status ?? .none).label ?? (editor ? "편집기" : browser ? "브라우저" : "셸")
+            // 종류: 에이전트는 종류 색, 그 밖(셸·편집기·브라우저)은 중립
+            let type: (symbol: String, color: NSColor)
+            if row?.isCodex == true { type = ("chevron.left.forwardslash.chevron.right", TermAppearance.typeCodex) }
+            else if row?.isClaude == true { type = ("asterisk", TermAppearance.typeClaude) }
+            else if editor { type = ("doc.text", TermAppearance.typeShell) }
+            else if browser { type = ("globe", TermAppearance.typeShell) }
+            else { type = ("terminal", TermAppearance.typeShell) }
+            return NavigatorRow(
                 title: NSAttributedString(string: target.name, attributes: [.font: EditorStyle.font, .foregroundColor: TermAppearance.textPrimary]),
-                detail: "\(label) · \((target.folder as NSString).abbreviatingWithTildeInPath)",
-                tag: target.tab <= 8 ? "⌘\(target.tab)" : target.tab == host.model.workspace.tabs.count ? "⌘9 · 탭 \(target.tab)" : "탭 \(target.tab)")
+                detail: (target.folder as NSString).abbreviatingWithTildeInPath,
+                tag: target.tab <= 8 ? "⌘\(target.tab)" : target.tab == host.model.workspace.tabs.count ? "⌘9 · 탭 \(target.tab)" : "탭 \(target.tab)",
+                status: status, typeSymbol: type.symbol, typeColor: type.color, detailLead: label)
         }, empty: "일치하는 세션이 없습니다")
-        popup.setStatus("\(targets.count)개 / 전체 \(candidates.count)개")
+        // 거르는 중일 때만 "3 / 6"(걸러지지 않았으면 같은 말을 두 번 하지 않는다)
+        popup.setStatus(query.isEmpty ? nil : "\(targets.count) / \(candidates.count)")
         layout()
     }
 
     func scaleChanged() {
         guard let query = popup?.field.stringValue else { return }
         let responder = previousResponder, field = previousField
-        show()
+        show(animated: false) // 글꼴 크기를 바꾸는 중에는 움직이지 않는다
         previousResponder = responder; previousField = field
         popup?.field.stringValue = query
         filter(query)
@@ -122,9 +133,9 @@ final class SessionSwitcher {
         popup.frame = NSRect(x: (bounds.width - width) / 2, y: max(8, bounds.height - 70 - height), width: width, height: height).integral
     }
 
-    func close(restoreFocus: Bool) {
+    func close(restoreFocus: Bool, animated: Bool = true) {
         guard let popup else { return }
-        popup.removeFromSuperview(); self.popup = nil
+        popup.dismiss(animated: animated); self.popup = nil
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         mouseMonitor = nil
         if restoreFocus {
@@ -140,7 +151,7 @@ final class SessionSwitcher {
     func hint(_ text: String) {
         hintLabel?.removeFromSuperview()
         let label = NSTextField(labelWithString: text)
-        label.font = TermAppearance.scaledUIFont(12)
+        label.font = TermAppearance.uiTextFont(TermAppearance.scaled(12))
         label.textColor = TermAppearance.textPrimary
         label.backgroundColor = TermAppearance.chrome
         label.drawsBackground = true
