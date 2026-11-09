@@ -533,17 +533,36 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   실측(6K 전체 화면 창, release): 창 그림 버퍼(IOSurface 약 100~107MB)는 상태와 무관. 그 밖에 malloc 은 spaces 만 28~30MB,
   같은 도크에서 files 로 바꾸면 23~25MB(SwiftUI 목록이 화면에서 빠짐), spaces+files 둘 다 보이면 32MB, 이 저장소 폴더 9개를 펼친 뒤(95줄) 37~38MB.
   files 를 보이는 채 쉬는 동안 CPU 는 files 없는 때와 차이가 보이지 않았다(git 은 처음 한 번, 이 저장소에서 약 0.1~0.5초).
-- 화면 모양은 herdr 를 참고했다: 어두운 사이드바·탭 줄에 고정폭 글꼴, 나눈 화면마다 테두리와 제목, 포커스 화면은 보라색 테두리.
+- 화면 모양은 herdr 를 참고했다: 어두운 사이드바·탭 줄에 고정폭 글꼴, 나눈 화면마다 테두리와 제목, 포커스 화면은 잉크 블루 테두리.
 - **화면 모드(설정 → 화면 → "화면 모드": 자동 / 라이트 / 다크, 기본 자동):** `AppearanceMode`(`TermLayout/Appearance.swift`)를 `ui.json` 의 `appearance` 에 저장한다
   (없거나 모르는 값이면 자동, 자동은 적지 않음). `AppearanceSetting`(싱글턴, 글꼴 크기처럼 처음 읽을 때 파일에서)이 바뀔 때마다 `NSApp.appearance`(자동 = nil, 라이트 = .aqua,
   다크 = .darkAqua)로 바로 적용하고 도구 창 관리자가 저장한다. **창·뷰마다 `.darkAqua` 를 고정하지 않는다**(전부 앱 모양을 상속) — SwiftUI 쪽 `.colorScheme(.dark)` 도 뺐다.
-  색은 이름표 `PaletteColor`(어두운·밝은 값 한 쌍 — 다크는 예전 값 그대로, 순수 데이터라 시험한다)에서 나오고, `TermAppearance` 의 앱 색은 모두
-  `NSColor(name:dynamicProvider:)`(`NSColor.palette`)라 그릴 때 그 뷰의 effectiveAppearance 로 정해진다(`NSAppearance.isDark`). 라이트는 다크와 같은 성격(차분한 바탕,
-  사이드바·탭 줄은 터미널보다 한 단계 진하게, 보라 포커스, 상태만 색)으로 맞춘 짝이고 글자·상태 색은 사이드바 바탕에서 대비 4:1 이상.
+  색은 이름표 `PaletteColor`(어두운·밝은 값 한 쌍, 순수 데이터라 시험한다)에서 나오고, `TermAppearance` 의 앱 색은 모두
+  `NSColor(name:dynamicProvider:)`(`NSColor.palette`)라 그릴 때 그 뷰의 effectiveAppearance 로 정해진다(`NSAppearance.isDark`).
+  **팔레트는 B2 · Ink refined**(따뜻한 숯 / 종이 중립색, 채도 아주 낮게). **색 하나 = 뜻 하나:**
+  - `accent`·`accentText`·`accentFill`·`onAccent` 잉크 블루 = "내 포커스"만(포커스 링, 포커스 분할 테두리·제목, 고른 탭 2pt 줄, 하나뿐인 주 버튼). 앱 강조색이기도 하다(아래).
+  - `typeClaude`(주황 ✻)·`typeCodex`(청록 ‹›)·`typeShell`(중립 ›_) = 어느 에이전트인가(아이콘·프로그램 단어·푸터 사용량 이름표). 상태에는 쓰지 않는다.
+  - 상태: `statusAttention`(빨강, 내 조작 필요 = 입력 대기 ◉·오류 !)과 `statusDone`(세이지 초록, 결과가 나옴 ●)만 색으로 주의를 끈다.
+    `statusWorking`(주 글자색, 숨 쉬는 점)·`statusIdle`(○)·`statusOrchestrating`(점선 ◌)·`statusNone`(흐린 점)은 중립이고 모양으로 구분한다.
+  - `warning`·`warnText` 호박색 = 경고와 사용량 80% 이상만(작업 중에는 쓰지 않는다).
+  - `agent`·`onAgent` 초록 = 브라우저에서 AI 가 조작 중(테두리·알약·커서·AI 칩, 그 위 글자). `human` = 내가 조작 중(중립).
+  - 그 밖: `markdownQuote`·`markdownTableStripe`·`markdownHighlight`(미리보기, 불투명), 편집기·git·구문 색은 색조를 그대로 두고 값만 새 바탕에 맞췄다.
+  - **대비 하한:** 글자(12pt 이하) 4.5:1, 점·아이콘·포커스 표시 3:1 — 사이드바(`chrome`)·고른 줄(`chromeRaised`)·터미널 바탕 위에서 두 모드 모두(`AppearanceTests` 가 확인).
+    `statusDone`·`agent` 는 서로 색 차이가 작아(ΔE 6~7) 모양·자리(8pt 점 vs 브라우저 테두리·알약)로 구분한다.
+  - 예전 이름(`TermAppearance.green·yellow·red·cyan·purple·codexColor·claudeColor·agentColor·userColor`)은 `// legacy alias` 로 새 값을 가리킨다 — 화면을 새 이름으로 옮기면 지운다.
+  - **앱 강조색(네이티브 컨트롤):** `Resources/Assets.xcassets/AccentColor`(다크 #73a1dc / 라이트 #346aac)를 빌드 스크립트가 `actool` 로 `Assets.car` 에 넣고 Info.plist 의
+    `NSAccentColorName` 이 가리킨다(macOS 13 에서도 동작). Mac 강조색이 기본 "다중 색"일 때만 잉크 블루고, 다른 색을 고른 사람은 네이티브 컨트롤에 그 색이 보인다
+    (직접 그리는 포커스 표시는 늘 잉크). actool(Xcode)이 없으면 건너뛰고 시스템 강조색 그대로.
+  - **작업 중 숨 쉬기(`WorkingPulse.swift`, 곡선은 `TermLayout/WorkingPulseSpec`):** 불투명도 1.0 → 0.55 → 1.0, 한 주기 1.6초(ease-in-out), 크기·색 변화 없음.
+    모든 점이 한 시계(절대 시각)를 써서 같은 위상 — SwiftUI 는 `.workingPulse(active)`(`TimelineView` 의 시각), AppKit 은 `CALayer.setWorkingPulse(_:)`(애니메이션 `beginTime` 을 주기 배수에 맞춤).
+    **동작 줄이기**(`NSWorkspace.accessibilityDisplayShouldReduceMotion`)가 켜져 있으면 움직이지 않고 불투명도 1.0 으로 가만히 둔다(알림으로 바로 반영).
+    앱이 숨겨졌거나 보이는 창이 없으면(가려짐·최소화, `occlusionState`) 멈춘다. 상태가 바뀌면 `WorkingPulse.didChange` 알림을 보내니 AppKit 뷰는 그때 `setWorkingPulse` 를 다시 부른다.
+    가장 옅을 때(55%)도 점 대비 3:1 이상(다크 4.6, 라이트 3.6 이상).
+  라이트는 다크와 같은 성격(차분한 바탕, 사이드바·탭 줄은 터미널보다 한 단계 진하게, 포커스·상태만 색)으로 맞춘 짝이다.
   **CGColor 로 굳는 곳**(layer.backgroundColor·borderColor, CAGradientLayer·CATextLayer 의 색, NSShadow)은 `NSColor.cg(in:)` 로 받고
   `viewDidChangeEffectiveAppearance` 에서 다시 받는다(작은 창·브라우저 칸·AI 표시 레이어·찾기 막대·이동 목록·편집기 안내/배너·마크다운 미리보기).
-  **터미널**은 색을 직접 넣으므로 `TermAppearance.apply(to:)` 가 뷰의 모양으로 `TerminalTheme`(다크 = Ghostty 기본, 라이트 = Atom One Light 계열 — 바탕 #fafafa,
-  글자 #383a42, 16색, 밝은 바탕에서 읽히게 7·15번은 어두운 회색)를 넣고, `PaneTerminal` 이 만드는 `ThemedTerminalView`(세션 화면·작은 터미널 모두)가
+  **터미널**은 색을 직접 넣으므로 `TermAppearance.apply(to:)` 가 뷰의 모양으로 `TerminalTheme`(다크 = 바탕 #1c1b1a·글자 #e4e1dc·16색 Ghostty 기본, 라이트 = 종이 바탕 #fdfcfa·글자 #2b2925·Atom One Light 계열 16색(파랑 4번은 #2f68b8),
+  밝은 바탕에서 읽히게 7·15번은 어두운 회색)를 넣고, `PaneTerminal` 이 만드는 `ThemedTerminalView`(세션 화면·작은 터미널 모두)가
   `viewDidChangeEffectiveAppearance` 에서 다시 부른다. 스크롤 막대는 뷰의 모양을 따른다. 256색(16~255)은 표준 xterm 값 그대로라 밝은 바탕에서 옅은 색(예: 117·221)은 흐릴 수 있다.
   **편집기** 글자색은 `EditorStyle`(다크 Darcula 계열 / 라이트 IntelliJ Light 계열). **마크다운 미리보기** CSS 는 라이트 + `@media (prefers-color-scheme: dark)` 두 벌을
   한 번 만들어 해시(CSP)를 정하고, 웹 화면이 뷰의 모양을 따라 문서를 다시 읽지 않고 바뀐다. 시험: `appearance <auto|light|dark>`, `settings`(출력에 `appearance=… effective=…`).
