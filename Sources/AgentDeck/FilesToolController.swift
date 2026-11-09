@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import Combine
 import TermLayout
 import TermWire
@@ -189,13 +190,13 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         scroll.borderType = .noBorder
         scroll.scrollerStyle = .overlay
 
-        empty.font = TermAppearance.scaledUIFont(11)
-        empty.textColor = TermAppearance.textDim
+        empty.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
+        empty.textColor = TermAppearance.textSecondary
         empty.alignment = .center
         empty.maximumNumberOfLines = 3
         empty.lineBreakMode = .byWordWrapping
 
-        toast.font = TermAppearance.scaledUIFont(10)
+        toast.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.caption))
         toast.textColor = TermAppearance.textPrimary
         toast.drawsBackground = true
         toast.backgroundColor = TermAppearance.chromeRaised
@@ -443,8 +444,8 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
         let top = rel(ofRow: topRow)
         headerHeight.constant = TerminalHostController.tabBarHeight
         header.applyScale()
-        empty.font = TermAppearance.scaledUIFont(11)
-        toast.font = TermAppearance.scaledUIFont(10)
+        empty.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.secondary))
+        toast.font = TermAppearance.uiTextFont(TermAppearance.scaled(TypeSize.caption))
         toastHeight?.constant = TermAppearance.scaled(24)
         outline.rowHeight = TermAppearance.scaled(22)
         outline.indentationPerLevel = TermAppearance.scaled(14)
@@ -491,7 +492,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
                 node.loading = false
                 node.children = entries.map { node.child(rel: node.rel, entry: $0) }
                 self.outline.reloadItem(node, reloadChildren: true)
-                if expand { self.outline.expandItem(node) }
+                if expand { self.outline.animateExpansion { $0.expandItem(node) } }
                 self.watcher.loadedDirectories = self.loadedDirectories()
                 done?()
             }
@@ -639,7 +640,10 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
 
     func open(_ node: FileNode) {
         if node.isDirectory {
-            outline.isItemExpanded(node) ? outline.collapseItem(node) : outline.expandItem(node)
+            let expanded = outline.isItemExpanded(node)
+            outline.animateExpansion { view in
+                expanded ? view.collapseItem(node) : view.expandItem(node)
+            }
             return
         }
         if let onOpenFile {
@@ -672,7 +676,7 @@ final class FilesToolController: NSViewController, ToolContent, NSOutlineViewDat
     func collapseAll() {
         if let root { memory.collapseAll(root: root) }
         restoring = true
-        outline.collapseItem(nil, collapseChildren: true)
+        outline.animateExpansion { $0.collapseItem(nil, collapseChildren: true) }
         restoring = false
     }
 
@@ -816,11 +820,42 @@ final class FilesOutlineView: NSOutlineView {
     var onEnter: (() -> Void)?
     var onEscape: (() -> Void)?
 
+    /// Explicit actions use AppKit's outline animation; restoration and reload
+    /// paths keep using expandItem directly, so launch and font scaling stay still.
+    func animateExpansion(_ change: (NSOutlineView) -> Void) {
+        guard window != nil, !Motion.reduced else { return change(self) }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.standard
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            change(animator())
+        }
+    }
+
+    // Disclosure clicks and keyboard navigation remain native. Give their
+    // implicit animations the same timing and a zero-duration reduced path.
+    private func withNativeMotion(_ change: () -> Void) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.reduced ? 0 : Motion.standard
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            change()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        if row >= 0, frameOfOutlineCell(atRow: row).contains(point) {
+            withNativeMotion { super.mouseDown(with: event) }
+        } else {
+            super.mouseDown(with: event)
+        }
+    }
+
     override func keyDown(with event: NSEvent) {
         switch event.keyCode {
         case 36, 76: onEnter?()
         case 53: onEscape?()
-        default: super.keyDown(with: event)
+        default: withNativeMotion { super.keyDown(with: event) }
         }
     }
 
@@ -934,66 +969,59 @@ final class FileCellView: NSTableCellView {
         let ui = TermAppearance.uiScale
         guard ui != scale else { return }
         scale = ui
-        label.font = TermAppearance.uiFont(ui(12))
-        badge.font = TermAppearance.uiFont(ui(10))
+        label.font = TermAppearance.uiFont(ui(TypeSize.row))
+        badge.font = TermAppearance.uiFont(ui(TypeSize.caption))
         iconWidth.constant = ui(16)
         iconHeight.constant = ui(14)
     }
 
     func configure(name: String, isDirectory: Bool, color: NSColor, dim: Bool, status: GitFileStatus?) {
         applyScale()
-        let alpha: CGFloat = dim ? 0.55 : 1
         label.stringValue = name
-        label.textColor = color.withAlphaComponent(alpha)
+        label.textColor = dim ? TermAppearance.textSecondary : color
         let icons = Self.icons(TermAppearance.scaled(11))
         icon.image = isDirectory ? icons.folder : icons.file
-        icon.contentTintColor = (isDirectory ? FileStatusColors.folderIcon : TermAppearance.textDim).withAlphaComponent(alpha)
+        icon.contentTintColor = dim ? TermAppearance.textSecondary : (isDirectory ? FileStatusColors.folderIcon : TermAppearance.textSecondary)
         let letter = isDirectory ? "" : Self.letter(status)
         badge.stringValue = letter
-        badge.textColor = color.withAlphaComponent(0.85)
+        badge.textColor = color
         badge.isHidden = letter.isEmpty
-        toolTip = nil
+        toolTip = name
     }
 }
 
-/// files 머리 줄: 루트 폴더 이름 · 브랜치 · 바뀐 수, 오른쪽에 모두 접기. 오른쪽 클릭 = 옮기기·숨기기.
+/// files 머리 줄: 루트 폴더 이름 · 바뀐 수(브랜치는 툴팁), 오른쪽에 모두 접기. 오른쪽 클릭 = 옮기기·숨기기.
 final class FilesHeaderView: NSView {
     var onCollapseAll: (() -> Void)?
     var menuProvider: (() -> NSMenu?)?
 
     private let title = NSTextField(labelWithString: "files")
-    private let branch = NSTextField(labelWithString: "")
     private let changes = NSTextField(labelWithString: "")
     private let collapse = NSButton()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         title.textColor = TermAppearance.textPrimary
-        title.lineBreakMode = .byTruncatingTail
-        branch.textColor = TermAppearance.cyan
-        branch.lineBreakMode = .byTruncatingMiddle
+        title.lineBreakMode = .byTruncatingMiddle
+        title.maximumNumberOfLines = 1
         changes.textColor = FileStatusColors.modified
         applyScale()
         collapse.isBordered = false
-        collapse.contentTintColor = TermAppearance.textDim
+        collapse.contentTintColor = TermAppearance.textSecondary
         collapse.toolTip = "모두 접기"
         collapse.target = self
         collapse.action = #selector(collapseAll)
-        for view in [title, branch, changes, collapse] as [NSView] {
+        for view in [title, changes, collapse] as [NSView] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
-        // 폴더 이름이 길어도 브랜치가 보이게: 이름은 머리 줄의 60% 까지만, 나머지는 브랜치(가운데 줄임)
-        title.setContentCompressionResistancePriority(.defaultLow + 1, for: .horizontal)
-        branch.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        title.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.6).isActive = true
+        // 브랜치는 툴팁에 두어 좁은 도크에서도 이름과 변경 수가 읽히게 한다.
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         changes.setContentCompressionResistancePriority(.required, for: .horizontal)
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: TermAppearance.scaled(Space.md)),
             title.centerYAnchor.constraint(equalTo: centerYAnchor),
-            branch.leadingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
-            branch.centerYAnchor.constraint(equalTo: centerYAnchor),
-            changes.leadingAnchor.constraint(greaterThanOrEqualTo: branch.trailingAnchor, constant: 8),
+            changes.leadingAnchor.constraint(greaterThanOrEqualTo: title.trailingAnchor, constant: TermAppearance.scaled(Space.sm)),
             changes.centerYAnchor.constraint(equalTo: centerYAnchor),
             collapse.leadingAnchor.constraint(equalTo: changes.trailingAnchor, constant: 8),
             collapse.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
@@ -1011,9 +1039,8 @@ final class FilesHeaderView: NSView {
 
     /// 글꼴 크기 배율
     func applyScale() {
-        title.font = TermAppearance.scaledUIFont(12, bold: true)
-        branch.font = TermAppearance.scaledUIFont(11)
-        changes.font = TermAppearance.scaledUIFont(10)
+        title.font = TermAppearance.scaledUIFont(TypeSize.row, bold: true)
+        changes.font = TermAppearance.scaledUIFont(TypeSize.caption)
         collapse.image = NSImage(systemSymbolName: "chevron.up.chevron.down", accessibilityDescription: "모두 접기")?
             .withSymbolConfiguration(.init(pointSize: TermAppearance.scaled(10), weight: .medium))
     }
@@ -1021,9 +1048,7 @@ final class FilesHeaderView: NSView {
     func update(name: String?, branch value: String?, changes count: Int, isGit: Bool) {
         title.stringValue = name ?? "files"
         toolTip = [name, value.map { "브랜치 \($0)" }].compactMap { $0 }.joined(separator: " · ")
-        branch.stringValue = value.map { "⎇ \($0)" } ?? ""
-        branch.isHidden = value == nil
-        changes.stringValue = count > 0 ? "● \(count)" : ""
+        changes.stringValue = count > 0 ? "\(count)" : ""
         changes.toolTip = count > 0 ? "바뀐 파일 \(count)개" : nil
         changes.isHidden = count == 0
         collapse.isHidden = name == nil

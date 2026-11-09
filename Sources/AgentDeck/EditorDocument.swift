@@ -639,7 +639,7 @@ enum EditorStyle {
     private static var paragraphCache: [CGFloat: NSParagraphStyle] = [:]
 
     /// 줄 번호 글자 크기(내용보다 2pt 작게)
-    static var gutterFontSize: CGFloat { max(TermAppearance.fontSize - 2, 6) }
+    static var gutterFontSize: CGFloat { max(TermAppearance.fontSize - 2, TypeSize.caption) }
 
     private static func makeFont(size: CGFloat) -> NSFont {
         let base = TermAppearance.font(size: size)
