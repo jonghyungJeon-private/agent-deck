@@ -1568,7 +1568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             let v = argument.split(separator: " ").compactMap { Double($0) }
             guard v.count == 2, let frame = window?.contentView?.superview else { return }
             let hit = frame.hitTest(frame.convert(NSPoint(x: v[0], y: v[1]), from: nil))
-            print("hit \(v[0]),\(v[1]) -> \(hit.map { String(describing: type(of: $0)) } ?? "nil") canMoveWindow=\(hit?.mouseDownCanMoveWindow ?? false)")
+            print("hit \(v[0]),\(v[1]) -> \(hit.map { String(describing: type(of: $0)) } ?? "nil") canMoveWindow=\(hit?.mouseDownCanMoveWindow ?? false) titlebarOpaque=\(hit.flatMap { WindowDragging.titlebarOpaqueRect(of: $0) }.map { NSStringFromRect($0) } ?? "nil")")
             fflush(stdout)
         case "overflow":
             // overflow [pick <n> | open <초>]: 탭 줄 ⌄ 메뉴 항목 읽기 / n 번째 고르기 / 열어 두기(그림용, 정해진 초 뒤 닫힘)

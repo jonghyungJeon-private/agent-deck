@@ -53,12 +53,14 @@ final class OrchestrationTests: XCTestCase {
         XCTAssertNil(store.load(sid)?.background)
         try send(store, #"{"hook_event_name":"Stop","background_tasks":[7,{"type":"shell"},{"id":"c1","type":"monitor","command":"tail -f log"}]}"#)
         XCTAssertEqual(store.load(sid)?.background, [BackgroundTask(id: "c1", type: "monitor")])
-        // 새로 시작하면 지운다
+        // 새로 시작하면 지운다(/resume 으로 떠났다 돌아옴 — SessionEnd 가 먼저 온다)
+        try send(store, #"{"hook_event_name":"SessionEnd","reason":"resume"}"#)
         try send(store, #"{"hook_event_name":"SessionStart","source":"resume"}"#)
         XCTAssertNil(store.load(sid)?.background)
     }
 
-    /// 대화 압축(SessionStart source=compact)은 이어서 일하는 것 — 작업 중·오케스트레이션을 쉬는 중으로 되돌리지 않는다
+    /// 같은 프로세스가 다시 보낸 SessionStart(대화 압축 source=compact, 설정 다시 읽기로 다시 온 resume 등)는 이어서 일하는 것 —
+    /// 작업 중·오케스트레이션을 쉬는 중으로 되돌리지 않는다
     func testCompactionKeepsWorkState() throws {
         let store = SessionStore(dir: dir.appendingPathComponent("sessions"))
         try send(store, #"{"hook_event_name":"UserPromptSubmit"}"#)
@@ -70,8 +72,12 @@ final class OrchestrationTests: XCTestCase {
         try send(store, #"{"hook_event_name":"SessionStart","source":"compact"}"#)
         XCTAssertEqual(store.load(sid)?.state, "done")
         XCTAssertEqual(store.load(sid)?.background, [BackgroundTask(id: "a1", type: "subagent")])
-        // 다른 시작(resume·clear·startup)은 그대로 쉬는 중으로
-        try send(store, #"{"hook_event_name":"SessionStart","source":"clear"}"#)
+        try send(store, #"{"hook_event_name":"UserPromptSubmit"}"#)
+        try send(store, #"{"hook_event_name":"SessionStart","source":"resume"}"#)
+        XCTAssertEqual(store.load(sid)?.state, "working")
+        // 끝난 뒤 다시 열면(/resume 으로 돌아옴) 쉬는 중부터
+        try send(store, #"{"hook_event_name":"SessionEnd","reason":"resume"}"#)
+        try send(store, #"{"hook_event_name":"SessionStart","source":"resume"}"#)
         XCTAssertEqual(store.load(sid)?.state, "idle")
         XCTAssertNil(store.load(sid)?.background)
     }

@@ -1202,6 +1202,9 @@ final class DockStripView: NSView {
     }
 
     override var mouseDownCanMoveWindow: Bool { false }
+    /// 제목 줄 영역에서는 창 서버가 앱보다 먼저 창 끌기를 시작한다(`mouseDownCanMoveWindow` 를 보지 않는다).
+    /// 이 뷰 자리는 끌기 영역에서 빼고, 빈 곳 끌기는 `WindowDragging` 이 직접 한다 — `WindowDragging.titlebarOpaqueSelector`.
+    @objc func _opaqueRectForWindowMoveWhenInTitlebar() -> NSRect { bounds }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let tool = tool(at: event) ?? selected else { return nil }

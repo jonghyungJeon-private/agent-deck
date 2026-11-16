@@ -11,6 +11,18 @@ enum WindowDragging {
                                               legacyMinimize: defaults.object(forKey: "AppleMiniaturizeOnDoubleClick") as? Bool)
     }
 
+    /// AppKit 이 제목 줄 안의 뷰마다 묻는 "창을 끌지 않을 자리"(비공개 선택자, 10.11+). 기본 NSView 는 빈 사각형이라
+    /// 투명 제목 줄 밑에 직접 그린 뷰(탭 줄·도크 줄·알약)를 끌면 창도 같이 움직였다(NSButton 같은 컨트롤만 자기 자리를 돌려준다).
+    /// 그런 뷰는 `@objc func _opaqueRectForWindowMoveWhenInTitlebar() -> NSRect { bounds }` 를 둔다. 없는 macOS 에서는 불리지 않을 뿐이다.
+    static let titlebarOpaqueSelector = Selector(("_opaqueRectForWindowMoveWhenInTitlebar"))
+
+    /// 시험용: 그 뷰가 제목 줄에서 창 끌기를 막는 자리(AppKit 이 묻는 값 그대로)
+    static func titlebarOpaqueRect(of view: NSView) -> NSRect? {
+        guard let method = class_getInstanceMethod(type(of: view), titlebarOpaqueSelector) else { return nil }
+        typealias Getter = @convention(c) (AnyObject, Selector) -> NSRect
+        return unsafeBitCast(method_getImplementation(method), to: Getter.self)(view, titlebarOpaqueSelector)
+    }
+
     static func mouseDown(_ event: NSEvent, in window: NSWindow?) {
         guard let window else { return }
         if event.clickCount == 2 {
@@ -38,6 +50,9 @@ final class WindowDragView: NSView {
 
     override func mouseDown(with event: NSEvent) { WindowDragging.mouseDown(event, in: window) }
     override var mouseDownCanMoveWindow: Bool { false }
+    /// 제목 줄 영역에서는 창 서버가 앱보다 먼저 창 끌기를 시작한다(`mouseDownCanMoveWindow` 를 보지 않는다).
+    /// 이 뷰 자리는 끌기 영역에서 빼고, 빈 곳 끌기는 `WindowDragging` 이 직접 한다 — `WindowDragging.titlebarOpaqueSelector`.
+    @objc func _opaqueRectForWindowMoveWhenInTitlebar() -> NSRect { bounds }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override var isOpaque: Bool { true }
 }

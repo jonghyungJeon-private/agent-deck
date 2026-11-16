@@ -80,7 +80,14 @@ public enum HookHandler {
     static func sessionStart(_ event: Input, context: Context, store: SessionStore,
                              reservations: LaunchReservations) throws {
         guard isInteractive(context), let proc = context.claudeProcess else { return }
-        var record = store.load(event.session_id) ?? SessionRecord(
+        let existing = store.load(event.session_id)
+        // 같은 claude 프로세스가 열린 채로 SessionStart 를 다시 보낸 것(대화 압축·설정 다시 읽기 등 — 응답 도중에도 온다)은
+        // 새 시작이 아니라 이어서 일하는 것이다. 작업 상태를 쉬는 중으로 되돌리지 않는다.
+        // 새 프로세스(claude --resume)·떠났다 돌아온 세션(/resume — SessionEnd 가 먼저 끝냄)은 쉬는 중부터.
+        let continuing = existing.map {
+            $0.state != nil && $0.endedAt == nil && $0.pid == proc.pid && abs($0.pidStartedAt - proc.startTime) < 0.001
+        } ?? false
+        var record = existing ?? SessionRecord(
             sessionId: event.session_id, cwd: event.cwd ?? "", transcriptPath: nil,
             pid: proc.pid, pidStartedAt: proc.startTime, startedAt: context.now
         )
@@ -94,8 +101,7 @@ public enum HookHandler {
         record.tty = proc.tty ?? record.tty
         record.termProgram = context.environment["TERM_PROGRAM"] ?? record.termProgram
         record.pane = AgentDeckEnv.value("PANE", in: context.environment) ?? record.pane
-        // 대화 압축(자동 압축은 응답 도중에 온다)은 같은 세션이 이어서 일하는 것이다 — 작업 상태를 쉬는 중으로 되돌리지 않는다.
-        if event.source != "compact" || record.state == nil {
+        if !continuing {
             record.state = "idle"
             record.stateAt = context.now
             record.stateMessage = nil

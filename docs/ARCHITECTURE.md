@@ -477,7 +477,10 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
     단추와 그 부모(제목 줄 뷰)의 틀 바뀜(`NSView.frameDidChangeNotification`)을 직접 들어 레이아웃 도중에 다시 앉힌다(한 프레임도 어긋나 보이지 않게; `didUpdate` 는 안전망, 전체 화면을 오가면 부모가 바뀌므로 그때마다 다시 건다).
     시스템이 창을 처음 보일 때·크기를 바꿀 때 되돌리므로 `didUpdate`·`didResize`·전체 화면 알림마다 자리만 확인한다(같으면 아무것도 안 한다). 전체 화면에서는 건드리지 않는다.
   - **창 끌기·두 번 누르기:** 탭 줄의 빈 곳(신호등 자리·"+" 오른쪽·알약 사이), 왼쪽 도크 맨 위 줄, 도구 버튼 줄의 빈 곳은 `WindowDragging.mouseDown` 이 끌면 `performDrag`, 두 번 누르면 시스템 설정
-    (`AppleActionOnDoubleClick` Maximize/Minimize/None, 없으면 `AppleMiniaturizeOnDoubleClick`)대로 확대·최소화·아무것도 안 함(`WindowChrome.doubleClickAction`). macOS 15 의 "Fill"(창 맞춤)은 흉내 내지 않고 확대/축소로 처리한다. 탭·"+"·⌄ 위는 그대로 탭 동작(`mouseDownCanMoveWindow` 는 false 라 탭을 끌 때 창이 같이 움직이지 않는다).
+    (`AppleActionOnDoubleClick` Maximize/Minimize/None, 없으면 `AppleMiniaturizeOnDoubleClick`)대로 확대·최소화·아무것도 안 함(`WindowChrome.doubleClickAction`). macOS 15 의 "Fill"(창 맞춤)은 흉내 내지 않고 확대/축소로 처리한다. 탭·"+"·⌄ 위는 그대로 탭 동작. 제목 줄 영역에서는 창 서버가 앱보다 먼저 창 끌기를 시작하고 `mouseDownCanMoveWindow` 를 보지 않는다 —
+    AppKit 이 뷰마다 묻는 비공개 `_opaqueRectForWindowMoveWhenInTitlebar` 가 기본 NSView 에서 빈 사각형이라 탭을 끌면 창도 같이 움직였다(0.10.0–0.10.1).
+    그래서 제목 줄에 앉는 직접 그린 뷰(탭 줄·도크 줄·알약·신호등 자리·작은 창 제목 줄)는 이것이 자기 `bounds` 를 돌려주고, 빈 곳 끌기는 위처럼 직접 한다.
+    확인: 시험 명령 `hit <x> <y>` 의 `titlebarOpaque=`(NSButton 처럼 자기 크기여야 한다).
   - **빈 화면:** 탭 줄은 탭이 없어도 높이를 가진 채 줄(바탕·아래 경계)만 그린다("+" 는 안 그린다). 알약은 그 줄 안, 안내 글은 줄 아래 영역의 가운데.
 - **탭 줄 넘침(`TabBarView`·`TabBarFit.visibleRange`):** 제목은 먼저 최소 24pt 까지 줄어든다. 탭을 ⌄ 로 보낼지는 알아볼 수 있는 폭(제목 48pt + 탭 여백)을 기준으로 가른다: 그 폭으로도 신호등 자리·"+"·알약 자리를 뺀 폭에 안 들어가면
   보일 탭의 이어진 구간만 남기고 나머지는 "+" 오른쪽의 `chevron.down` 단추 메뉴에 둔다. 구간은 가만히 있는다(`previousStart`): 고른 탭이 지난 구간 안이면 그대로, 밖이면
@@ -708,7 +711,7 @@ claude 화면마다 지금 무엇을 하는지를 왼쪽 목록(점 + "입력 �
 | 오류 | 빨강 찬 점에 "!" 를 뚫은 모양 | `StopFailure`(API 오류 등, 오류 종류를 함께 보임) |
 | 쉬는 중 | 회색 속 빈 고리 | 완료를 확인했거나 `Notification` 의 `idle_prompt`(입력 없이 약 60초) |
 
-- 대화 압축(`SessionStart` 의 `source: compact`, 자동 압축은 응답 도중에 온다)은 같은 세션이 이어서 일하는 것이라 작업 상태를 그대로 둔다. 다른 시작(startup·resume·clear)은 "쉬는 중"부터.
+- 같은 claude 프로세스가 열린 채로 다시 보낸 `SessionStart`(대화 압축 `source: compact` — 자동 압축은 응답 도중에 온다, 설정을 다시 읽으며 다시 온 `resume` 등)는 이어서 일하는 것이라 작업 상태를 그대로 둔다. 새 프로세스(`claude --resume`)나 `SessionEnd` 뒤에 돌아온 세션(`/resume`)은 "쉬는 중"부터.
 
 - hook 은 세션 기록 파일(`sessions/<세션>.json`)에 `state`·`stateAt`·`stateMessage`·`pane`·`stateSeq`(상태를 적을 때마다 오르는 번호 — 같은 초 안의 변화도 구분해 알림이 빠지지 않게. 날짜 형식은 예전 빌드와 같다)를 적고, 앱은 2초마다 목록을 다시 만들며 읽는다.
   화면 짝짓기는 hook 이 적은 화면 ID(`pane`)가 먼저다.

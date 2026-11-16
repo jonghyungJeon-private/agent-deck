@@ -791,6 +791,9 @@ final class TabBarView: NSView, NSViewToolTipOwner {
 
     /// 빈 곳 끌기는 `mouseDown` 이 `performDrag` 로 직접 한다(탭을 끌 때 창이 같이 움직이지 않게)
     override var mouseDownCanMoveWindow: Bool { false }
+    /// 제목 줄 영역에서는 창 서버가 앱보다 먼저 창 끌기를 시작한다(`mouseDownCanMoveWindow` 를 보지 않는다).
+    /// 이 뷰 자리는 끌기 영역에서 빼고, 빈 곳 끌기는 `WindowDragging` 이 직접 한다 — `WindowDragging.titlebarOpaqueSelector`.
+    @objc func _opaqueRectForWindowMoveWhenInTitlebar() -> NSRect { bounds }
 
     /// 창이 뒤에 있어도 첫 클릭으로 바로 고르거나 끌 수 있게(분할 틈과 같게)
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
