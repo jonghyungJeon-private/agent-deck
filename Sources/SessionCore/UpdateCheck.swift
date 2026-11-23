@@ -13,6 +13,30 @@ public enum UpdateCheck {
         "gh api repos/\(repository)/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw' | bash"
     }
 
+    /// 앱 안의 "지금 업데이트"(업데이트 창·알림 단추): 새 탭에 입력할 명령. 그 탭의 셸은 데몬이 붙잡으므로 설치 스크립트가
+    /// 앱을 끄고 바꿔 끼우는 동안에도 이어지고, 다 되면 스크립트가 새 앱을 연다. 성공하면 탭을 닫고(`&& exit`),
+    /// 실패하면(gh 로그인·네트워크·교체 실패) 그 탭에 이유가 남는다. pipefail 이라 gh 가 실패해도 실패로 본다.
+    /// 사용자 셸(zsh·bash·fish)이 무엇이든 같게 돌도록 안쪽은 /bin/bash 로 돌린다.
+    public static func selfUpdateCommand(gh: String?) -> String {
+        let inner = "\(shellQuote(gh ?? "gh")) api repos/\(repository)/contents/scripts/install.sh -H 'Accept: application/vnd.github.raw' | /bin/bash"
+        return "/bin/bash -o pipefail -c \(shellQuote(inner)) && exit"
+    }
+
+    /// 설치 스크립트가 끄고 바꿔 끼우는 곳(/Applications·~/Applications, 시험용 AGENTDECK_APPS_DIR)에 있는 앱인지.
+    /// 아니면(dist·작업 트리 빌드) 스크립트가 이 앱을 끄지 않고 다른 곳에 새 앱을 열게 되므로 "지금 업데이트"를 내지 않는다.
+    public static func isInstalledLocation(bundlePath: String, home: String = NSHomeDirectory(), appsDir: String? = nil) -> Bool {
+        let parent = ((bundlePath as NSString).standardizingPath as NSString).deletingLastPathComponent
+        if let appsDir, !appsDir.isEmpty { return parent == (appsDir as NSString).standardizingPath }
+        return parent == "/Applications" || parent == ((home as NSString).appendingPathComponent("Applications") as NSString).standardizingPath
+    }
+
+    /// 셸 인자 하나로 감싼다(안전한 글자만이면 그대로)
+    static func shellQuote(_ arg: String) -> String {
+        let safe = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./=:@%+,")
+        if !arg.isEmpty, arg.unicodeScalars.allSatisfy({ safe.contains($0) }) { return arg }
+        return "'" + arg.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     public struct Release: Codable, Equatable {
         public var tag: String
         public var url: String

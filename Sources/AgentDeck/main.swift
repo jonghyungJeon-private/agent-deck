@@ -810,6 +810,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             fflush(stdout)
         case "update-open":
             model.updates.presentUpdate()
+        case "update-install":
+            // "지금 업데이트"와 같은 길(앱 폴더에 있는 앱만 — 시험 앱은 AGENTDECK_APPS_DIR 에 두고, 설치 스크립트도 그 폴더만 바꾼다)
+            print("update-install can=\(model.updates.canSelfUpdate)")
+            fflush(stdout)
+            model.installUpdate()
         case "fonts":
             print("fonts " + TermAppearance.debugFontSources())
             fflush(stdout)

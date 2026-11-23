@@ -8,6 +8,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     var onOpen: ((String) -> Void)?
     /// 새 버전 알림을 눌렀을 때
     var onUpdate: (() -> Void)?
+    /// 새 버전 알림의 "지금 업데이트" 단추를 눌렀을 때
+    var onInstallUpdate: (() -> Void)?
+    static let updateCategory = "update"
+    static let installAction = "install-update"
     private let enabled = !AgentDeckEnv.isOn("NO_NOTIFY")
     private var authorized = false
 
@@ -15,6 +19,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         guard enabled else { return }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
+        // 새 버전 알림의 단추(배너에 마우스를 올리면 보인다 — 알림 스타일이 "알림"이면 늘 보인다)
+        let install = UNNotificationAction(identifier: Self.installAction, title: "지금 업데이트", options: [.foreground])
+        center.setNotificationCategories([UNNotificationCategory(identifier: Self.updateCategory, actions: [install],
+                                                                 intentIdentifiers: [], options: [])])
         center.requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
             DispatchQueue.main.async { self?.authorized = granted }
         }
@@ -35,11 +43,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     /// 새 버전 알림(버전마다 한 번, UpdateNotifier 가 정한다). 앱을 켜자마자 올 수 있어 권한 답을 기다리지 않고
     /// 알림 설정을 직접 본다. 같은 ID 라 새 버전 알림은 하나만 남는다.
-    func postUpdate(tag: String, current: String?) {
+    /// canInstall: 앱 안에서 바로 업데이트할 수 있으면 "지금 업데이트" 단추를 단다.
+    func postUpdate(tag: String, current: String?, canInstall: Bool) {
         guard enabled else { return }
         let content = UNMutableNotificationContent()
         content.title = "AgentDeck 새 버전 \(tag)"
-        content.body = "지금 쓰는 버전은 v\(current ?? "?")입니다. 누르면 업데이트 방법을 봅니다."
+        content.body = canInstall
+            ? "지금 쓰는 버전은 v\(current ?? "?")입니다. 지금 업데이트를 누르면 바로 바꿉니다(열린 세션은 그대로)."
+            : "지금 쓰는 버전은 v\(current ?? "?")입니다. 누르면 업데이트 방법을 봅니다."
+        if canInstall { content.categoryIdentifier = Self.updateCategory }
         content.sound = .default
         content.userInfo = ["update": tag]
         let request = UNNotificationRequest(identifier: "update", content: content, trigger: nil)
@@ -59,9 +71,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         if response.notification.request.content.userInfo["update"] != nil {
+            let install = response.actionIdentifier == Self.installAction
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
-                self.onUpdate?()
+                if install { self.onInstallUpdate?() } else { self.onUpdate?() }
             }
         } else if let pane = response.notification.request.content.userInfo["pane"] as? String {
             DispatchQueue.main.async {

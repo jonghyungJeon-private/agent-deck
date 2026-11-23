@@ -26,6 +26,12 @@ AgentDeck.app/Contents/MacOS/
   `gh release view --repo <저장소> --json tagName,url`(저장소는 `UpdateCheck.repository`). gh 가 없거나 로그인·권한이 없거나 오프라인이면 조용히 넘어간다.
   새 버전은 상태 줄에 뜨고, 그 버전을 처음 봤을 때 한 번 macOS 알림(ID `update`, 누르면 업데이트 창)도 보낸다. 보낸 태그는 같은 파일의 `announced`
   (예전 파일엔 없음 = 아직 안 보냄). 시험: `AGENTDECK_FAKE_LATEST=vx.y.z` 면 디버그 출력에 `update-notify <태그>`, `AGENTDECK_NO_NOTIFY=1` 이면 보내지 않는다.
+- 지금 업데이트(0.11.1): 업데이트 창의 첫 단추와 새 버전 알림의 단추(알림 범주 `update`, 동작 `install-update` — 배너에 마우스를 올리면 보인다)가
+  `TermModel.installUpdate` 를 부른다. 새 탭(데몬 화면)에 `UpdateCheck.selfUpdateCommand` — `/bin/bash -o pipefail -c '<gh> api …/install.sh … | /bin/bash' && exit` — 를 넣는다.
+  그 셸은 데몬이 붙잡으므로 설치 스크립트가 앱을 끄고(osascript quit) 바꿔 끼운 뒤 새 앱을 여는 동안에도 이어지고, 성공하면 탭이 닫히고, 실패하면 탭에 이유가 남는다.
+  따로 launchd 작업을 만들지 않는다(앱이 띄운 자식은 앱의 coalition 에 남아 앱과 함께 끝날 수 있다 — 아래 "데몬 띄우기"). 저장 안 한 편집기는 먼저 묻는다.
+  설치 스크립트가 바꾸는 곳(`/Applications`·`~/Applications`, 시험은 `AGENTDECK_APPS_DIR`)에 있는 앱만 단추를 보인다(`UpdateCheck.isInstalledLocation` — dist·작업 트리 빌드는 예전처럼 명령 복사).
+  시험 명령 `update-install`(같은 길, 디버그 출력 `update-install <명령>`).
 
 ## 이름과 예전 판 이어받기
 

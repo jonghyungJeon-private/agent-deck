@@ -10,12 +10,21 @@ final class UpdateNotifier: ObservableObject {
     @Published private(set) var available: UpdateCheck.Release?
     /// 새 버전을 처음 봤을 때(버전마다 한 번): macOS 알림을 보낸다
     var onNewVersion: ((UpdateCheck.Release) -> Void)?
+    /// "지금 업데이트"를 눌렀을 때(앱이 새 탭에서 설치 명령을 돌린다 — TermModel.installUpdate)
+    var onInstall: (() -> Void)?
     private var timer: Timer?
 
     /// 앱 버전(Info.plist). 묶음 없이 띄운 개발 빌드는 nil — 자동 확인을 하지 않는다.
     let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
     private var stampURL: URL { TermPaths.home.appendingPathComponent("update-check.json") }
     private let fakeLatest = AgentDeckEnv.nonEmpty("FAKE_LATEST")
+
+    /// 앱 안에서 바로 업데이트할 수 있는지: 버전이 있는(묶음으로 만든) 앱이 설치 스크립트가 바꾸는 앱 폴더에 있을 때.
+    /// 시험 앱은 AGENTDECK_APPS_DIR(설치 스크립트와 같은 변수)에 두면 된다.
+    var canSelfUpdate: Bool {
+        current != nil && UpdateCheck.isInstalledLocation(bundlePath: Bundle.main.bundlePath,
+                                                          appsDir: ProcessInfo.processInfo.environment["AGENTDECK_APPS_DIR"])
+    }
     private let queue = DispatchQueue(label: "AgentDeck.updates", qos: .utility)
     private var checking = false
 
@@ -106,13 +115,20 @@ final class UpdateNotifier: ObservableObject {
         }
     }
 
-    /// 상태 줄 "새 버전 … — 업데이트" 를 누르면: 업데이트 명령(복사)과 릴리스 페이지
+    /// 상태 줄 "새 버전 … — 업데이트"·알림을 누르면: 지금 업데이트(앱 폴더에 설치된 앱만)·업데이트 명령(복사)·릴리스 페이지
     func presentUpdate() {
         guard let release = available else { return }
         let command = UpdateCheck.installCommand
+        let selfUpdate = canSelfUpdate
         let alert = NSAlert()
         alert.messageText = "새 버전 \(Self.display(release.tag))"
-        alert.informativeText = """
+        alert.informativeText = selfUpdate
+            ? """
+            지금 쓰는 버전은 v\(current ?? "?")입니다. 지금 업데이트를 누르면 새 탭에서 설치가 진행되고,
+            앱이 잠깐 꺼졌다가 새 버전으로 다시 켜집니다. 열려 있는 셸·claude 세션은 끊기지 않습니다.
+            직접 하려면 터미널에서 아래 명령을 실행하세요.
+            """
+            : """
             지금 쓰는 버전은 v\(current ?? "?")입니다. 터미널에서 아래 명령을 실행하면 새 버전으로 바꿉니다.
             열려 있는 셸·claude 세션은 끊기지 않습니다.
             """
@@ -123,14 +139,19 @@ final class UpdateNotifier: ObservableObject {
         field.preferredMaxLayoutWidth = 440
         field.frame = NSRect(origin: .zero, size: field.sizeThatFits(NSSize(width: 440, height: CGFloat.greatestFiniteMagnitude)))
         alert.accessoryView = field
+        if selfUpdate { alert.addButton(withTitle: "지금 업데이트") }
         alert.addButton(withTitle: "명령 복사")
         alert.addButton(withTitle: "릴리스 보기")
         alert.addButton(withTitle: "닫기")
-        switch AppAlert.run(alert) {
-        case .alertFirstButtonReturn:
+        // 단추 순서: [지금 업데이트] · 명령 복사 · 릴리스 보기 · 닫기
+        let index = AppAlert.run(alert).rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue - (selfUpdate ? 1 : 0)
+        switch index {
+        case -1:
+            onInstall?()
+        case 0:
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
-        case .alertSecondButtonReturn:
+        case 1:
             if let url = URL(string: release.url) { NSWorkspace.shared.open(url) }
         default:
             break

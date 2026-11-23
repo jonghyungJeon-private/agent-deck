@@ -490,8 +490,12 @@ final class TermModel: ObservableObject {
         notifier.start()
         // 새 버전: 알림 권한을 묻고 난 뒤에 확인을 시작한다(켜자마자 보낼 알림이 권한 전에 버려지지 않게)
         notifier.onUpdate = { [weak self] in self?.updates.presentUpdate() }
+        notifier.onInstallUpdate = { [weak self] in self?.installUpdate() }
+        updates.onInstall = { [weak self] in self?.installUpdate() }
         updates.onNewVersion = { [weak self] release in
-            self?.notifier.postUpdate(tag: UpdateNotifier.display(release.tag), current: self?.updates.current)
+            guard let self else { return }
+            self.notifier.postUpdate(tag: UpdateNotifier.display(release.tag), current: self.updates.current,
+                                     canInstall: self.updates.canSelfUpdate)
         }
         updates.start()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
@@ -1235,6 +1239,20 @@ final class TermModel: ObservableObject {
         }
         setWorkspace(next, render: true)
         client.list()
+    }
+
+    /// "지금 업데이트"(업데이트 창·알림 단추): 새 탭에서 설치 명령(`UpdateCheck.selfUpdateCommand`)을 돌린다.
+    /// 그 셸은 데몬이 붙잡으므로 설치 스크립트가 이 앱을 꺼도 이어지고, 다 되면 새 앱이 열리고 탭이 닫힌다(실패하면 탭에 이유가 남는다).
+    /// 앱이 꺼질 때 저장 안 한 편집기를 물으면 설치가 막히므로 먼저 묻는다(취소하면 하지 않는다).
+    func installUpdate() {
+        guard updates.canSelfUpdate else {
+            updates.presentUpdate()
+            return
+        }
+        guard editors.confirmClose(editors.dirtyDocuments) else { return }
+        let command = UpdateCheck.selfUpdateCommand(gh: UpdateCheck.ghPath())
+        if AgentDeckEnv.isOn("DEBUG") { print("update-install \(command)"); fflush(stdout) }
+        newPane(cwd: NSHomeDirectory(), command: command)
     }
 
     /// claude·codex 를 새 탭에서 설정 창의 기본 옵션으로 띄운다.
