@@ -228,9 +228,23 @@ final class UpdateCheckTests: XCTestCase {
         UpdateCheck.Stamp(checkedAt: now, latest: .init(tag: "v0.3.0", url: "u")).save(to: url)
         let loaded = try XCTUnwrap(UpdateCheck.Stamp.load(from: url))
         XCTAssertEqual(loaded.latest?.tag, "v0.3.0")
-        XCTAssertFalse(loaded.isDue(now: now.addingTimeInterval(23 * 3600)))
-        XCTAssertTrue(loaded.isDue(now: now.addingTimeInterval(24 * 3600)))
+        XCTAssertNil(loaded.announced)
+        XCTAssertFalse(loaded.isDue(now: now.addingTimeInterval(5 * 3600)))
+        XCTAssertTrue(loaded.isDue(now: now.addingTimeInterval(6 * 3600)))
         XCTAssertTrue(loaded.isDue(now: now.addingTimeInterval(-60)), "시계가 뒤로 가면 다시 확인")
+    }
+
+    func testStampKeepsAnnouncedTagAndReadsOldRecords() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("uc-\(UUID().uuidString)/update-check.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        UpdateCheck.Stamp(checkedAt: now, latest: .init(tag: "v0.3.0", url: "u"), announced: "v0.3.0").save(to: url)
+        XCTAssertEqual(UpdateCheck.Stamp.load(from: url)?.announced, "v0.3.0")
+        // 알림 기록이 없던 예전 판의 파일도 읽는다(아직 알리지 않은 것으로)
+        try Data(#"{"checkedAt":"2027-01-15T08:00:00Z","latest":{"tag":"v0.3.0","url":"u"}}"#.utf8).write(to: url)
+        let old = try XCTUnwrap(UpdateCheck.Stamp.load(from: url))
+        XCTAssertEqual(old.latest?.tag, "v0.3.0")
+        XCTAssertNil(old.announced)
     }
 
     func testMissingGhIsReportedNotThrown() {

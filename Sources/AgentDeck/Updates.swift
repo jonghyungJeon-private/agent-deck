@@ -2,11 +2,15 @@ import AppKit
 import SessionCore
 import TermWire
 
-/// 새 버전 알림. 앱을 켤 때와 앞으로 나올 때, 마지막 확인에서 24시간이 지났을 때만 gh 로 최신 릴리스를 본다(그 밖의 주기 확인 없음).
-/// 새 버전이 있으면 상태 줄에 한 줄로 알리고, 누르면 업데이트 명령을 보여 준다.
+/// 새 버전 알림. 앱을 켤 때·앞으로 나올 때·떠 있는 동안 한 시간마다, 마지막 확인에서 6시간(`UpdateCheck.interval`)이
+/// 지났으면 gh 로 최신 릴리스를 본다. 새 버전이 있으면 상태 줄에 한 줄로 알리고(누르면 업데이트 명령), 그 버전을 처음 봤을 때
+/// 한 번 macOS 알림도 보낸다(`onNewVersion`, 보낸 태그는 확인 기록의 `announced`).
 /// 시험용: AGENTDECK_FAKE_LATEST=v0.3.0 이면 gh 대신 그 태그를 최신으로 본다.
 final class UpdateNotifier: ObservableObject {
     @Published private(set) var available: UpdateCheck.Release?
+    /// 새 버전을 처음 봤을 때(버전마다 한 번): macOS 알림을 보낸다
+    var onNewVersion: ((UpdateCheck.Release) -> Void)?
+    private var timer: Timer?
 
     /// 앱 버전(Info.plist). 묶음 없이 띄운 개발 빌드는 nil — 자동 확인을 하지 않는다.
     let current = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
@@ -20,10 +24,25 @@ final class UpdateNotifier: ObservableObject {
         if let current, let latest = UpdateCheck.Stamp.load(from: stampURL)?.latest,
            UpdateCheck.isNewer(latest.tag, than: current) {
             available = latest
+            announceIfNew(latest)
         }
         checkIfDue()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
                                                queue: .main) { [weak self] _ in self?.checkIfDue() }
+        // 앱이 계속 앞에 있거나 뒤에만 있어도 확인이 밀리지 않게(확인할 때가 됐는지만 보고, gh 는 간격마다 한 번)
+        timer = Timer.scheduledTimer(withTimeInterval: 60 * 60, repeats: true) { [weak self] _ in self?.checkIfDue() }
+    }
+
+    /// 새 버전을 처음 봤으면 한 번 알린다. 보낸 태그는 확인 기록에 남겨 다시 켜도 같은 버전으로 또 보내지 않는다.
+    /// post=false: 사용자가 메뉴로 확인해 업데이트 창을 이미 보는 중 — 알림은 건너뛰고 본 것으로만 남긴다.
+    private func announceIfNew(_ release: UpdateCheck.Release, post: Bool = true) {
+        var stamp = UpdateCheck.Stamp.load(from: stampURL) ?? UpdateCheck.Stamp(checkedAt: .distantPast, latest: release)
+        guard stamp.announced != release.tag else { return }
+        stamp.announced = release.tag
+        stamp.save(to: stampURL)
+        guard post else { return }
+        if AgentDeckEnv.isOn("DEBUG") { print("update-notify \(release.tag)"); fflush(stdout) }
+        onNewVersion?(release)
     }
 
     func checkIfDue() {
@@ -52,7 +71,7 @@ final class UpdateNotifier: ObservableObject {
             let previous = UpdateCheck.Stamp.load(from: stampURL)
             // 실패해도 시각은 남긴다(gh 가 없거나 오프라인이어도 하루 한 번만 시도)
             let latest = (try? result.get()) ?? previous?.latest
-            UpdateCheck.Stamp(checkedAt: Date(), latest: latest).save(to: stampURL)
+            UpdateCheck.Stamp(checkedAt: Date(), latest: latest, announced: previous?.announced).save(to: stampURL)
             DispatchQueue.main.async { self?.finish(result, report: report) }
         }
     }
@@ -63,6 +82,7 @@ final class UpdateNotifier: ObservableObject {
         switch result {
         case .success(let release):
             available = UpdateCheck.isNewer(release.tag, than: current) ? release : nil
+            if let available { announceIfNew(available, post: !report) }
             if AgentDeckEnv.isOn("DEBUG") {
                 print("update latest=\(release.tag) current=\(current) available=\(available?.tag ?? "-")")
                 fflush(stdout)

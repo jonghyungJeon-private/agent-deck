@@ -6,6 +6,8 @@ import UserNotifications
 final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// 알림을 눌렀을 때(화면 ID)
     var onOpen: ((String) -> Void)?
+    /// 새 버전 알림을 눌렀을 때
+    var onUpdate: (() -> Void)?
     private let enabled = !AgentDeckEnv.isOn("NO_NOTIFY")
     private var authorized = false
 
@@ -31,6 +33,23 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         _ = key
     }
 
+    /// 새 버전 알림(버전마다 한 번, UpdateNotifier 가 정한다). 앱을 켜자마자 올 수 있어 권한 답을 기다리지 않고
+    /// 알림 설정을 직접 본다. 같은 ID 라 새 버전 알림은 하나만 남는다.
+    func postUpdate(tag: String, current: String?) {
+        guard enabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "AgentDeck 새 버전 \(tag)"
+        content.body = "지금 쓰는 버전은 v\(current ?? "?")입니다. 누르면 업데이트 방법을 봅니다."
+        content.sound = .default
+        content.userInfo = ["update": tag]
+        let request = UNNotificationRequest(identifier: "update", content: content, trigger: nil)
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+            center.add(request)
+        }
+    }
+
     /// 다시 볼 필요가 없어진 화면의 알림은 알림 센터에서 뺀다
     func clear(paneId: String) {
         guard enabled else { return }
@@ -39,7 +58,12 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        if let pane = response.notification.request.content.userInfo["pane"] as? String {
+        if response.notification.request.content.userInfo["update"] != nil {
+            DispatchQueue.main.async {
+                NSApp.activate(ignoringOtherApps: true)
+                self.onUpdate?()
+            }
+        } else if let pane = response.notification.request.content.userInfo["pane"] as? String {
             DispatchQueue.main.async {
                 NSApp.activate(ignoringOtherApps: true)
                 self.onOpen?(pane)

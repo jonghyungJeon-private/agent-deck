@@ -5,8 +5,8 @@ import Foundation
 public enum UpdateCheck {
     /// 릴리스를 올리는 저장소(owner/repo). 바꾸면 scripts/install.sh 의 REPO 와 README 도 같이 바꾼다.
     public static let repository = "jonghyungJeon-private/agent-deck"
-    /// 자동 확인 간격(앱을 켤 때·앞으로 나올 때, 이만큼 지났을 때만)
-    public static let interval: TimeInterval = 24 * 60 * 60
+    /// 자동 확인 간격: 켤 때·앞으로 나올 때·떠 있는 동안 한 시간마다, 마지막 확인에서 이만큼 지났으면 확인한다
+    public static let interval: TimeInterval = 6 * 60 * 60
 
     /// 동료가 터미널에 붙여 넣는 설치·업데이트 명령(gh 로그인 필요)
     public static var installCommand: String {
@@ -114,10 +114,14 @@ public enum UpdateCheck {
     // MARK: - 마지막 확인 기록
 
     /// 마지막으로 확인한 시각과 그때 본 최신 릴리스. 다시 켰을 때 gh 를 부르지 않고도 알림을 이어 보인다.
+    /// announced: macOS 알림을 보낸 새 버전 태그 — 버전마다 한 번만 보낸다(이 키가 없는 예전 기록은 아직 안 보낸 것).
     public struct Stamp: Codable, Equatable {
         public var checkedAt: Date
         public var latest: Release?
-        public init(checkedAt: Date, latest: Release?) { self.checkedAt = checkedAt; self.latest = latest }
+        public var announced: String?
+        public init(checkedAt: Date, latest: Release?, announced: String? = nil) {
+            self.checkedAt = checkedAt; self.latest = latest; self.announced = announced
+        }
 
         public static func load(from url: URL) -> Stamp? {
             guard let data = try? Data(contentsOf: url) else { return nil }

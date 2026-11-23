@@ -22,8 +22,10 @@ AgentDeck.app/Contents/MacOS/
   `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
 - 데이터(`~/Library/Application Support/AgentDeck/`, `AGENTDECK_HOME` 으로 바꿈): `sessions/`(Claude 세션 기록), `codex-sessions/`,
   `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`launch.json`·`codex-bindings.json`·`update-check.json`, `AGENTDECK_TERM_HOME` 으로 바꿈).
-- 새 버전 확인: 켤 때·앞으로 나올 때, 마지막 확인(`term/update-check.json`)에서 24시간이 지났을 때만 백그라운드에서
+- 새 버전 확인: 켤 때·앞으로 나올 때·떠 있는 동안 한 시간마다, 마지막 확인(`term/update-check.json`)에서 6시간이 지났을 때만 백그라운드에서
   `gh release view --repo <저장소> --json tagName,url`(저장소는 `UpdateCheck.repository`). gh 가 없거나 로그인·권한이 없거나 오프라인이면 조용히 넘어간다.
+  새 버전은 상태 줄에 뜨고, 그 버전을 처음 봤을 때 한 번 macOS 알림(ID `update`, 누르면 업데이트 창)도 보낸다. 보낸 태그는 같은 파일의 `announced`
+  (예전 파일엔 없음 = 아직 안 보냄). 시험: `AGENTDECK_FAKE_LATEST=vx.y.z` 면 디버그 출력에 `update-notify <태그>`, `AGENTDECK_NO_NOTIFY=1` 이면 보내지 않는다.
 
 ## 이름과 예전 판 이어받기
 

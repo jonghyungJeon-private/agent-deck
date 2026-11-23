@@ -456,7 +456,7 @@ final class TermModel: ObservableObject {
     }
 
     let notifier = Notifier()
-    /// 새 버전 알림(하루 한 번까지, 켤 때·앞으로 나올 때만)
+    /// 새 버전 알림(6시간마다 확인, 상태 줄 + 버전마다 한 번 macOS 알림)
     let updates = UpdateNotifier()
     /// 상태 줄의 Claude·Codex 요금제 사용량(2초 갱신에 얹음)
     let usage = UsageStore()
@@ -467,7 +467,6 @@ final class TermModel: ObservableObject {
     func start() {
         checkHooks()
         checkBrowserSkill()
-        updates.start()
         editors.onTitleChange = { [weak self] in
             self?.pinDirtyPreviews() // 고치면(●) 미리보기가 아니다
             self?.host?.refreshTitles()
@@ -487,6 +486,12 @@ final class TermModel: ObservableObject {
         // 쓰지 않는 브라우저 쉬게 하기(설정 → 브라우저): 1분마다 본다(시험: AGENTDECK_IDLE_REST_SECONDS 면 그 시간·5초마다)
         Timer.scheduledTimer(withTimeInterval: Self.idleRestOverride == nil ? 60 : 5, repeats: true) { [weak self] _ in self?.restIdleBrowsers() }
         notifier.start()
+        // 새 버전: 알림 권한을 묻고 난 뒤에 확인을 시작한다(켜자마자 보낼 알림이 권한 전에 버려지지 않게)
+        notifier.onUpdate = { [weak self] in self?.updates.presentUpdate() }
+        updates.onNewVersion = { [weak self] release in
+            self?.notifier.postUpdate(tag: UpdateNotifier.display(release.tag), current: self?.updates.current)
+        }
+        updates.start()
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil,
                                                queue: .main) { [weak self] _ in self?.markSeen() }
         if let data = try? Data(contentsOf: Self.layoutURL),
