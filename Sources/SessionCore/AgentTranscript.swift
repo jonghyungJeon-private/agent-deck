@@ -68,7 +68,10 @@ public enum AgentTranscript {
                 out.append(AgentTranscriptEntry(kind: .tool, text: summary, toolName: name))
             case "tool_result" where type == "user":
                 let text = capped(collapsed(resultText(block["content"])), resultLimit)
-                out.append(AgentTranscriptEntry(kind: .result, text: text, isError: (block["is_error"] as? Bool) == true))
+                let isError = (block["is_error"] as? Bool) == true
+                // 빈 결과(REPL·백그라운드로 띄운 도구 등)는 줄만 늘리므로 뺀다. 실패는 비어 있어도 남긴다.
+                if text.isEmpty && !isError { break }
+                out.append(AgentTranscriptEntry(kind: .result, text: text, isError: isError))
             default:
                 break // thinking·image 등은 건너뛴다
             }

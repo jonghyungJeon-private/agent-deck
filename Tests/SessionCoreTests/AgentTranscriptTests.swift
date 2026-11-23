@@ -148,4 +148,11 @@ final class AgentTranscriptTests: XCTestCase {
         let entries = AgentTranscript.entries(fromLine: Data(userLine("do the thing").utf8))
         XCTAssertEqual(entries, [AgentTranscriptEntry(kind: .prompt, text: "do the thing")])
     }
+
+    func testEmptyResultsAreSkippedButEmptyErrorsKept() {
+        let line = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":""},{"type":"tool_result","tool_use_id":"b","content":[],"is_error":true},{"type":"tool_result","tool_use_id":"c","content":"ok"}]}}"#
+        let entries = AgentTranscript.entries(fromLine: Data(line.utf8))
+        XCTAssertEqual(entries.map(\.text), ["", "ok"])
+        XCTAssertEqual(entries.map(\.isError), [true, false])
+    }
 }
