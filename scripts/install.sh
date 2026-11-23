@@ -149,6 +149,10 @@ install_app() {
   mkdir -p "$apps"
   local dest="$apps/$APP_NAME"
 
+  # 처음 설치인지(이 앱이나 예전 이름 앱이 하나도 없음) — 끝의 안내 글이 달라진다
+  local fresh=1
+  [[ -n "$(installed_apps)" ]] && fresh=0
+
   # 새 앱을 먼저 옆에 완전히 복사·확인한 뒤 바꿔 끼운다(복사가 실패해도 기존 앱과 hook 경로는 그대로)
   local stage="$apps/.$APP_NAME.new"
   rm -rf "$stage"
@@ -187,8 +191,10 @@ install_app() {
   elif [[ -n "$(pids_of ClaudeTermDaemon)" ]]; then
     say "  예전 판의 세션 데몬이 돌고 있어 열린 세션은 그대로 이어집니다(상태 줄에 '이전 데몬에서 실행 중')."
     say "  사이드바 아래 '갱신하기' 를 눌러 Claude Code hook 을 새 이름(AgentDeckDaemon)으로 바꾸세요."
+  elif ((fresh)); then
+    say "  사이드바 아래 '연결하기' 를 눌러 Claude Code hook 을 넣으세요(세션 이름·되살리기·상태 표시·알림에 필요)."
   else
-    say "  처음이면 사이드바 아래 '연결하기' 를 눌러 Claude Code hook 을 넣으세요(세션 이름·되살리기·상태 표시·알림에 필요)."
+    say "  열려 있던 셸·claude 세션은 그대로 이어집니다."
   fi
 }
 
