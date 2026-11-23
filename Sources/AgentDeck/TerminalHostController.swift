@@ -14,8 +14,6 @@ final class TerminalHostController: NSViewController {
     private(set) var terminals: [String: PaneTerminal] = [:]
     /// 보이는 편집기 화면(터미널처럼 보일 때만 만든다)
     private(set) var editorViews: [String: EditorPaneView] = [:]
-    /// 보이는 하위 에이전트 보기 화면(보일 때만 만들고 읽는다)
-    private(set) var agentViews: [String: AgentTranscriptPaneView] = [:]
     private let container = SplitContainerView()
     /// 화면이 하나도 없을 때(또는 연결 중·끊김): 아이콘 + 한 줄 안내(안내 글만 — 버튼은 두지 않는다)
     private let placeholder = NSStackView()
@@ -98,9 +96,6 @@ final class TerminalHostController: NSViewController {
             self.model.focus(pane: id, fromClick: true)
             if let pane = self.terminals[id], hit === pane.view || hit.isDescendant(of: pane.view) {
                 event.window?.makeFirstResponder(pane.view)
-            }
-            if let agentView = self.agentViews[id], hit === agentView || hit.isDescendant(of: agentView) {
-                event.window?.makeFirstResponder(agentView.focusTarget)
             }
             return event
         } as Any)
@@ -185,10 +180,6 @@ final class TerminalHostController: NSViewController {
         model.workspace.selectedTab.flatMap { editorViews[$0.focused] }
     }
 
-    var focusedAgentView: AgentTranscriptPaneView? {
-        model.workspace.selectedTab.flatMap { agentViews[$0.focused] }
-    }
-
     /// 앞에 있는 브라우저 창의 화면(시험 명령·편집 메뉴)
     var focusedBrowser: BrowserPaneView? { model.browserWindows.keyPane }
 
@@ -214,20 +205,10 @@ final class TerminalHostController: NSViewController {
             editor.detach()
             editorViews[id] = nil
         }
-        for (id, agentView) in agentViews where !ids.contains(id) {
-            agentView.detach() // 타이머·읽기 상태·글을 놓는다
-            agentViews[id] = nil
-        }
         var created: [PaneTerminal] = []
         for id in visible?.panes ?? [] {
             if BrowserPane.isBrowser(id) {
                 continue // 주인 정보가 없는 잎(읽을 때 빼므로 생기지 않는다)
-            } else if AgentViewPane.isAgentView(id) {
-                guard agentViews[id] == nil, let recipe = model.workspace.agentViews[id] else { continue }
-                let agentView = AgentTranscriptPaneView(transcript: recipe.transcript, description: recipe.description,
-                                                        agentType: recipe.agentType, frame: container.bounds)
-                agentView.running = { [weak self] in self?.model.agentViewRunning(id) }
-                agentViews[id] = agentView
             } else if EditorPane.isEditor(id) {
                 guard editorViews[id] == nil, let recipe = model.workspace.editors[id] else { continue }
                 let editor = EditorPaneView(document: model.editors.document(id: id, recipe: recipe), frame: container.bounds)
@@ -242,7 +223,6 @@ final class TerminalHostController: NSViewController {
         }
         var views: [String: NSView] = terminals.mapValues { $0.surface }
         for (id, editor) in editorViews { views[id] = editor }
-        for (id, agentView) in agentViews { views[id] = agentView }
         container.update(tree: visible, views: views, focused: tab?.focused, titles: paneTitles)
         // 크기가 정해진 뒤 붙어야 지난 출력이 맞는 크기로 그려진다
         created.forEach { $0.attach() }
@@ -284,7 +264,7 @@ final class TerminalHostController: NSViewController {
             TabBarView.Tab(title: model.tabTitle(tab), paneCount: tab.root.panes.count, zoomed: tab.zoomed,
                            status: WorkStatus.top(tab.root.panes.compactMap { statuses[$0] }),
                            warning: tab.root.panes.lazy.compactMap { warnings[$0] }.first,
-                           kind: EditorPane.isEditor(tab.focused) ? .document : AgentViewPane.isAgentView(tab.focused) ? .claude : kinds[tab.focused] ?? .shell,
+                           kind: EditorPane.isEditor(tab.focused) ? .document : kinds[tab.focused] ?? .shell,
                            id: tab.id, folder: displayFolder(of: tab.focused))
         }, selected: workspace.selectedIndex)
     }
@@ -301,9 +281,6 @@ final class TerminalHostController: NSViewController {
         if EditorPane.isEditor(pane) {
             return model.workspace.editors[pane].map { ($0.path as NSString).deletingLastPathComponent }
         }
-        if let recipe = model.workspace.agentViews[pane] { // 하위 에이전트 보기는 띄운 화면의 폴더
-            return recipe.owner.flatMap { model.row($0)?.cwd }
-        }
         return model.row(pane)?.cwd
     }
 
@@ -314,9 +291,8 @@ final class TerminalHostController: NSViewController {
 
     /// 분할 테두리에 쓰는 화면 제목과 상태
     private var paneTitles: [String: PaneTitle] {
-        Dictionary(uniqueKeysWithValues: (Array(terminals.keys) + Array(editorViews.keys) + Array(agentViews.keys)).map { id in
-            // 하위 에이전트 보기의 상태는 보이기만 한다(알림·소리는 세션 줄 상태로만 정해진다)
-            let status = model.agentViewRunning(id).map { $0 ? WorkStatus.working : .done } ?? model.row(id)?.status ?? .none
+        Dictionary(uniqueKeysWithValues: (Array(terminals.keys) + Array(editorViews.keys)).map { id in
+            let status = model.row(id)?.status ?? .none
             return (id, PaneTitle(name: model.paneLabel(id), status: status,
                            preview: model.workspace.editors[id]?.isPreview == true))
         })
@@ -331,11 +307,6 @@ final class TerminalHostController: NSViewController {
             // 편집기 안(찾기 막대 등)에 이미 포커스가 있으면 그대로
             if let responder = editor.window?.firstResponder as? NSView, responder.isDescendant(of: editor) { return }
             if let target = editor.focusTarget { editor.window?.makeFirstResponder(target) }
-            return
-        }
-        if let agentView = focusedAgentView {
-            if let responder = agentView.window?.firstResponder as? NSView, responder.isDescendant(of: agentView) { return }
-            agentView.window?.makeFirstResponder(agentView.focusTarget)
             return
         }
         guard let pane = focusedTerminal, let window = pane.view.window, window.firstResponder !== pane.view else { return }
@@ -353,7 +324,7 @@ final class TerminalHostController: NSViewController {
     }
 
     /// 지금 화면의 뷰(도구 창에서 Esc 로 돌아갈 곳)
-    var focusedPaneView: NSView? { focusedEditor?.focusTarget ?? focusedAgentView?.focusTarget ?? focusedTerminal?.view }
+    var focusedPaneView: NSView? { focusedEditor?.focusTarget ?? focusedTerminal?.view }
 
     /// 앱을 끌 때: 보이는 편집기 커서를 기억
     func rememberEditorCursors() {

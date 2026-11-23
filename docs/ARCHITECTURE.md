@@ -505,10 +505,10 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   ④ 는 세션마다 한 번 `claude -p --model sonnet`(설정·hook·MCP·도구·대화 저장 없이, 약 3초)으로 짓고 `term/names.json` 에 둔다.
   짓는 동안은 첫 질문 앞부분을 보여 준다. `AGENTDECK_AUTO_TITLE=0` 이면 부르지 않는다. 실패 이유는 `term/title-errors.log`.
   claude 세션 자체의 이름(`claude --resume` 목록)은 바꾸지 않는다.
-- 도구 창(IntelliJ 식): 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구는 **spaces**(세션 목록)와 **files**(파일 트리) 둘이고,
-  각각 왼쪽·오른쪽·숨김 중 한 곳에 붙는다. 한 도크에 둘이 붙으면 위에 도구 버튼 줄(고른 것은 강조색)이 생기고, 보이는 도구가 없는 도크는 접힌다.
+- 도구 창(IntelliJ 식): 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구는 **spaces**(세션 목록)·**files**(파일 트리)·**agents**(고른 세션의 하위 에이전트와 그 기록 — 아래 "하위 에이전트 보기")이고,
+  각각 왼쪽·오른쪽·숨김 중 한 곳에 붙는다(agents 는 처음엔 숨김, 꺼내면 오른쪽). 한 도크에 둘이 붙으면 위에 도구 버튼 줄(고른 것은 강조색)이 생기고, 보이는 도구가 없는 도크는 접힌다.
   도구 버튼·머리 줄 오른쪽 클릭 = "왼쪽에 두기"·"오른쪽에 두기"(지금 자리에 진짜 ✓)·가리기 — 단축키 글자는 메뉴 막대(보기)에만 둔다. 보기 메뉴에도 있다.
-  ⌘⇧E files, ⌘⇧S spaces: 숨김이면 마지막 쪽에 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김(한글 입력 중에도 키 위치로).
+  ⌘⇧E files, ⌘⇧S spaces, ⌘⇧A 하위 에이전트: 숨김이면 마지막 쪽에 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김(한글 입력 중에도 키 위치로).
   ⌘⇧E 로 열면 트리에 포커스가 가고, Esc 는 터미널로 돌아간다.
   기본값은 spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 의 Project 창 자리, 터미널 폭은 그대로). 배치·고른 도구·도크 폭은 `term/ui.json`
   (없거나 예전·망가진 파일이면 기본값).
@@ -650,7 +650,7 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   틈 끌기(`drag`)·마우스 단계별(`mouse <down|drag|up|right> <x> <y>`)·오른쪽 클릭 메뉴 항목 실행(`menu-pick <x> <y> <항목>`)·
   탭·분할 나무(`tabs`)·끌기 좌표(`dragpoints`)·스크롤 속도(`scroll <픽셀> <횟수>`)·줄 캐시 검사(`verify-cache`)·보이는 화면 글 출력(`screen`, 대체 화면 여부 포함)·
   한글 조합 시험을 받는다(그림 저장은 메모리를 더 쓰니 측정 땐 끈다).
-  도구 창·files 시험 명령: `tool files`(⌘⇧E 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
+  도구 창·files 시험 명령: `tool files|spaces|agents`(⌘⇧E·⌘⇧S·⌘⇧A 와 같음)·`dock files right|left|hidden`·`tool-select spaces`·`uilayout`·`toolmenu files`·
   `filesroot`(루트·브랜치·감시·git 실행 횟수·읽은 줄 수·고른 줄·맨 위 줄·줄 높이)·`expand <상대 경로>`·`collapse-all`·`open-file <상대 경로>`(두 번 클릭과 같음)·
   `filesmenu <상대 경로>[|<항목>]`·`files-select a|b|c`(여러 줄 고르기)·`files-enter`·`files-scroll <상대 경로>`(맨 위로)·`editor-pin`(미리보기 고정)·
   `font-size <pt>`(⌘+ ⌘− 와 같은 길, 배율 출력)·`footprint`. `tabs` 는 편집기를 파일 이름으로, 미리보기는 뒤에 `~` 를 붙여 보인다.
@@ -678,24 +678,40 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   이때와 `AGENTDECK_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
-## 하위 에이전트 보기(AgentTranscriptPaneView)
+## 하위 에이전트 보기(agents 도구 창)
 
-사이드바의 claude 하위 에이전트 줄(Agent 도구·워크플로)을 누르면 그 에이전트의 대화를 읽기 전용 화면으로, 띄운 에이전트 화면 **오른쪽**에 나눠 연다.
+claude·Codex 가 띄운 하위 에이전트는 **agents 도구 창**(제목 "하위 에이전트")에서 본다. 탭·분할에는 아무것도 더하지 않는다 — 터미널 영역 바깥, 옆 도크의 패널이다.
 하위 에이전트는 PTY 가 없고 기록이 `~/.claude/projects/<폴더>/<세션>/subagents/agent-<id>.jsonl` 에 실시간으로 쓰인다(`agent-<id>.meta.json` 에 설명·종류·finished).
 
-- **무엇을 읽나**: `SubagentScanner` 가 이미 훑는 파일이다(`SubagentActivity.transcriptPath`, Codex 자식은 nil 이라 예전처럼 "마지막 메시지 펼치기").
+- **무엇을 읽나**: 목록은 사이드바가 이미 훑은 `TermModel.agentActivities`(`SubagentScanner` 가 10초에 한 번, 최근 15분 안에 바뀐 기록만)를 그대로 쓴다 — 도구 창이 따로 훑지 않는다.
+  `TermModel.agentsChanged` 로 바뀐 것을 알린다. 기록은 `SubagentActivity.transcriptPath`(Codex 자식은 nil)이고,
   `SessionCore.AgentTranscriptTail` 이 파일 끝을 따라 읽는다 — 처음엔 끝 512KiB 만(줄 중간에서 시작했으면 첫 줄을 버림), 그다음은 늘어난 바이트만.
   줄바꿈이 오지 않은 끝 줄은 다음 읽기까지 쥐고 있고, 파일이 줄면 처음부터 다시 읽는다. 최근 400 항목만 둔다 — 이어 읽는 동안은 500 개까지 두었다가 한꺼번에 400 으로 줄여, 넘칠 때마다 전체를 다시 그리지 않는다(`poll()` 은 `.none`/`.appended`/`.reset`).
   `type` 이 user·assistant 인 줄만 JSON 으로 푼다 — `api-request*`·`attachment` 줄(아주 큰 것도 있다)은 바이트 앞부분만 보고 버린다.
-  항목은 질문(prompt)·글(text)·도구(tool, 이름 + 한 줄 요약)·결과(result)이고 thinking 은 건너뛴다.
-- **배치**: 분할 잎 `agentview:<UUID>`(`AgentViewPane`), 정보는 `Workspace.agentViews[id]`(`AgentViewRecipe`: 기록 경로·띄운 화면·설명·종류, layout.json 에 저장).
-  `Workspace.openAgentView`: 같은 기록을 보는 화면이 어디든 있으면 거기로 포커스, 없으면 띄운 화면 오른쪽을 나눠 연다, 띄운 화면이 어느 탭에도 없으면 지금 탭 뒤 새 탭.
-  `LocalPane` 이라 데몬이 되살리거나 끄지 않는다(reconcile 이 그대로 둔다). ⌘W·탭 닫기는 묻지 않고 화면만 뺀다. 이름은 "↳ 설명".
-- **수명·메모리**: `TerminalHostController.render()` 가 보이는 잎에만 뷰를 만들고, 안 보이면 `detach()` 로 타이머·읽기 상태(`AgentTranscriptTail`)·글을 모두 놓는다(편집기와 같다).
-  1초 타이머는 창에 붙어 있고 창이 보일 때만 읽는다. 새 항목은 이어 붙이고(맨 아래를 보고 있을 때만 따라 내려간다), 처음·밀려남·줄어듦은 다시 그린다.
-  기록 파일이 없으면 짧은 안내 글만 보인다. ⌘F 는 그 글 안 찾기 막대(터미널 찾기로 가지 않는다).
-- **상태 표시**: 머리 줄과 분할 테두리의 "작업 중/완료"는 `TermModel.agentActivities`(`transcriptPath` 로 찾음)에서 만든다. 보이기만 하며 `PaneRow.status`·알림·Dock 배지·"봤음"과 이어지지 않는다.
-- **시험 명령**: `open-agent-view <기록 경로>[|<설명>[|<종류>]]`(지금 화면을 띄운 화면으로 삼아 연다)·`agent-views`(보이는 화면의 읽은 항목 수·타이머·머리 줄)·`tabs`(잎은 `agentview(<파일>)`).
+  항목은 질문(prompt)·글(text)·도구(tool, 이름 + 한 줄 요약)·결과(result)이고 thinking 은 건너뛴다. 결과가 비어 있으면(REPL·백그라운드로 띄운 도구) 줄만 늘리므로 뺀다(실패는 남긴다).
+- **보는 세션**(`AgentsToolController`): 고른 **세션**(`TermModel.selectedId`)을 따라간다. 고른 화면이 편집기이거나 세션 줄이 아니면 마지막 세션을 그대로 둔다(files 와 같은 방식).
+  위에서 아래로 [머리 줄 "하위 에이전트 · <세션 이름>" — files 머리 줄처럼 오른쪽 클릭 = 옮기기·가리기] / [그 세션의 하위 에이전트 목록: 작업 중 먼저, 그다음 최근 순.
+  줄마다 설명·상태(작업 중 / N분 전)·종류, 패널 높이의 40% 까지만 차지하고 넘치면 목록 안에서 스크롤] / 구분선 / [고른 에이전트의 기록(`AgentTranscriptView`)].
+  기록 쪽은 기록만 보인다(설명·종류·상태는 바로 위 목록의 고른 줄에 있으므로 따로 머리 줄을 두지 않는다). 꼬리 읽기·이어 붙이기·맨 아래를 볼 때만 따라 내려가기·글꼴 크기 변경 반영·⌘F 글 안 찾기(NSTextView 찾기 막대 — 기록 글에 키보드가 있을 때만, 아니면 터미널·편집기 찾기)를 갖춘다.
+  세션에 고른 에이전트가 없거나 목록에서 사라졌으면 작업 중인 것(가장 최근), 없으면 가장 최근 것을 자동으로 고른다. 세션마다 고른 에이전트는 메모리에만 기억한다.
+  이 세션에 에이전트가 없으면 "이 세션에서 최근 15분 안에 띄운 하위 에이전트가 없습니다." 만 보인다.
+  Codex 자식(`transcriptPath == nil`)은 기록 파일이 없어 마지막 메시지(`lastText`)와 "Codex 하위 에이전트는 대화 기록을 볼 수 없습니다" 안내만 보인다(읽기·타이머 없음).
+- **자리·단축키**: 처음엔 숨김, 처음 꺼내면 오른쪽 도크(폭 420 — 사람이 정한 도크 폭은 그대로). 도구 버튼·머리 줄 오른쪽 클릭 메뉴로 왼쪽·오른쪽·가리기.
+  보기 메뉴 "하위 에이전트 보기"(켜 있으면 "가리기")와 **⌘⇧A**(키 위치로, 한글 입력 중에도): 숨김이면 마지막 쪽에 보이고 고름 → 보이지만 안 골랐으면 고름 → 고른 상태면 숨김.
+  ⌘⇧A 는 쓰고 있던 키가 아니라 골랐다(메뉴·키 위치 감시에서 비어 있었다). `ui.json` 에 `agents` 가 없는 예전 파일은 기본값(숨김, 마지막 쪽 오른쪽)으로 읽는다.
+- **사이드바**: 하위 에이전트 줄을 누르면(`TermModel.showAgent`) 띄운 세션으로 포커스하고 도구 창을 꺼내(숨김이면 오른쪽 도크에) 그 에이전트를 고른다. Codex 줄도 같다(패널에 `lastText`).
+  오른쪽 클릭: "패널에서 보기" · "마지막 메시지 펼치기"(줄 아래로 펼치는 예전 동작).
+- **수명·메모리**: 기록 읽기 상태(`AgentTranscriptTail`)·1초 타이머·글은 **이 도구가 도크에 보이고(고른 도구) 에이전트를 골랐을 때만** 있다.
+  숨기거나 같은 도크의 다른 도구가 보이게 되면 `setToolVisible(false)` 가 읽기 상태·타이머·글·목록을 모두 놓는다(`ToolContent`, files 와 같다). 다른 에이전트로 바꾸면 읽기 상태를 바꿔 쥔다(하나뿐).
+  창이 가려지거나 최소화되면 타이머가 돌아도 읽지 않는다. 세션을 따라가는 일은 보이지 않을 때도 하지만 세션 ID 하나만 갈아 끼우는 값싼 일이다.
+- **상태 표시**: 목록 줄의 "작업 중/완료"는 `agentActivities` 의 `isRunning` 이다. 보이기만 하며 `PaneRow.status`·알림·Dock 배지·"봤음"과 이어지지 않는다.
+- **예전 분할 보기와의 호환**: 0.11.0~0.11.1 은 하위 에이전트를 분할 잎 `agentview:<UUID>`(+ layout.json 의 `agentViews`)로 열었다. 이제 그런 잎은 만들지 않는다 —
+  `Workspace.init(from:)` 이 예전 layout.json 의 `agentview:` 잎을 읽을 때 빼고(옆 화면이 그 자리를 채우고, 잎만 있던 탭은 사라진다) `agentViews` 키는 읽지 않는다.
+  `LegacyAgentViewPane`/`LocalPane` 이 그 id 를 데몬 화면으로 보지 않아 reconcile 이 되살리거나 꺼진 화면으로 두지 않는다.
+- **시험 명령**(`AGENTDECK_DEBUG=1`): `tool agents`(⌘⇧A 와 같음)·`dock agents right|left|hidden`·`tool-select agents`·`toolmenu agents` 는 도구 창 공통 명령으로 된다.
+  `open-agent-view <기록 경로|->[|<설명>[|<종류>[|<마지막 글>]]]`: 지금 따라가는 세션 몫으로 가짜 `SubagentActivity` 를 메모리에만 끼워 넣고(목록 갱신과 상관없이 남는다) 도구 창에 보여 고른다
+  (사이드바 줄을 누른 것과 같다. 경로가 `-` 면 기록 파일 없는 Codex 같은 에이전트).
+  `agent-views`: 자리·보임·그 도크에서 고른 도구, 따라가는 세션, 목록·끼워 넣은 수, 고른 에이전트, 읽은 항목 수(`reader-entries`, 읽지 않으면 `-`), 타이머 `on|off`, 기록 줄(항목·글자 수·상태 요약 `header=`).
 
 ## 메뉴 막대
 

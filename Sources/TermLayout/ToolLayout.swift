@@ -3,7 +3,18 @@ import Foundation
 /// 창 양옆에 붙이는 도구 창(IntelliJ 의 tool window)
 public enum ToolID: String, CaseIterable, Codable, Sendable {
     /// browser: 지금 고른 세션의 에이전트 브라우저(세션 창 안에서 보기). 처음엔 숨김, 꺼내면 오른쪽.
-    case spaces, files, browser
+    /// agents: 지금 고른 세션이 띄운 하위 에이전트 목록과 고른 에이전트의 기록(읽기 전용). 처음엔 숨김, 꺼내면 오른쪽.
+    case spaces, files, browser, agents
+}
+
+extension ToolID {
+    /// 도구 버튼·메뉴에 적는 이름
+    public var title: String {
+        switch self {
+        case .agents: return "하위 에이전트"
+        default: return rawValue
+        }
+    }
 }
 
 public enum DockSide: String, CaseIterable, Codable, Sendable {
@@ -210,14 +221,16 @@ public struct ToolLayout: Equatable, Sendable {
     public static let defaultWidths: [DockSide: Double] = [.left: 260, .right: 280]
     /// 브라우저가 보이는 도크의 처음 폭(페이지가 읽힐 만큼) — 사람이 넓히거나 줄이면 그 폭을 기억한다
     public static let browserWidth: Double = 640
+    /// 하위 에이전트 도구가 보이는 도크의 처음 폭(기록이 읽힐 만큼) — 사람이 정한 폭은 그대로
+    public static let agentsWidth: Double = 420
     /// 저장된 도크 폭의 상한 — 브라우저 도크는 2400pt 까지 넓힐 수 있다(ToolWindows 도크 상한과 같게)
     public static let maxWidth: Double = 2400
 
     /// 기본: spaces·files 둘 다 왼쪽, spaces 를 고른 채로(IntelliJ 처럼 프로젝트 도구는 왼쪽, 터미널 폭은 그대로).
-    /// browser 는 숨김(브라우저를 세션 창 안에서 보기로 하면 오른쪽에 나온다).
+    /// browser 는 숨김(브라우저를 세션 창 안에서 보기로 하면 오른쪽에 나온다). agents 도 숨김(처음 꺼내면 오른쪽).
     public init() {
-        sides = [.spaces: .left, .files: .left, .browser: .hidden]
-        lastSides = [.spaces: .left, .files: .left, .browser: .right]
+        sides = [.spaces: .left, .files: .left, .browser: .hidden, .agents: .hidden]
+        lastSides = [.spaces: .left, .files: .left, .browser: .right, .agents: .right]
         selected = [.left: .spaces]
         widths = Self.defaultWidths
     }
@@ -279,6 +292,9 @@ public struct ToolLayout: Equatable, Sendable {
             if side == .hidden { browserFloat.setShown(false) } else { browserFloat.hide() }
         }
         let old = self.side(of: tool)
+        if tool == .agents, side != .hidden, widths[side] == nil || widths[side] == Self.defaultWidths[side] {
+            widths[side] = Self.agentsWidth
+        }
         if tool == .browser, side != .hidden, widths[side] == nil || widths[side] == Self.defaultWidths[side] {
             widths[side] = Self.browserWidth
         }
@@ -292,7 +308,7 @@ public struct ToolLayout: Equatable, Sendable {
         normalize()
     }
 
-    /// ⌘⇧E·⌘⇧S: 숨김이면 마지막 쪽에 보이고 고른다 → 보이지만 고르지 않았으면 고른다 → 고른 상태면 숨긴다.
+    /// ⌘⇧E·⌘⇧S·⌘⇧A: 숨김이면 마지막 쪽에 보이고 고른다 → 보이지만 고르지 않았으면 고른다 → 고른 상태면 숨긴다.
     public mutating func toggle(_ tool: ToolID) {
         let side = side(of: tool)
         if tool == .browser, browserFloat.shown {

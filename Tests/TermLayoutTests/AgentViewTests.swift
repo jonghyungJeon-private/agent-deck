@@ -2,83 +2,63 @@ import Foundation
 import TermLayout
 import XCTest
 
+/// 예전(0.11) 하위 에이전트 보기 분할 잎("agentview:")은 이제 만들지 않는다 — 예전 layout.json 을 읽을 때 뺀다.
 final class AgentViewTests: XCTestCase {
-    let recipe = AgentViewRecipe(transcript: "/p/subagents/agent-1.jsonl", owner: "A", description: "조사", agentType: "Explore")
-
-    func base() -> Workspace {
-        Workspace(tabs: [TabState(id: "t1", root: .pane("A"), focused: "A"),
-                         TabState(id: "t2", root: .pane("B"), focused: "B")], selected: "t2")
+    /// 예전 배치 파일: t1 = A | agentview:1, t2 = agentview:2 만, t3 = B, "agentViews" 키 포함
+    func legacyJSON(selected: String = "t1") throws -> Data {
+        let ws = Workspace(tabs: [
+            TabState(id: "t1", root: .split(axis: .horizontal, ratio: 0.5, first: .pane("A"), second: .pane("agentview:1")), focused: "agentview:1"),
+            TabState(id: "t2", root: .pane("agentview:2"), focused: "agentview:2"),
+            TabState(id: "t3", root: .pane("B"), focused: "B"),
+        ], selected: selected)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ws)) as? [String: Any])
+        let recipe: [String: Any] = ["transcript": "/p/subagents/agent-1.jsonl", "owner": "A", "description": "조사", "agentType": "Explore"]
+        object["agentViews"] = ["agentview:1": recipe, "agentview:2": recipe]
+        return try JSONSerialization.data(withJSONObject: object)
     }
 
-    func testIdPrefix() {
-        let id = AgentViewPane.newId()
-        XCTAssertTrue(AgentViewPane.isAgentView(id))
-        XCTAssertTrue(LocalPane.isLocal(id))
-        XCTAssertFalse(AgentViewPane.isAgentView("editor:1"))
-    }
-
-    func testOpensToTheRightOfOwnerInOwnersTab() {
-        var ws = base()
-        let id = ws.openAgentView(recipe, newId: { "agentview:1" })
-        XCTAssertEqual(id, "agentview:1")
+    func testLegacyLeavesAreDroppedOnLoadAndEmptyTabsCollapse() throws {
+        let ws = try JSONDecoder().decode(Workspace.self, from: legacyJSON())
+        XCTAssertEqual(ws.tabs.map(\.id), ["t1", "t3"]) // 잎만 있던 t2 는 사라진다
+        XCTAssertEqual(ws.tabs[0].root, .pane("A")) // 나눈 탭은 옆 화면이 채운다
+        XCTAssertEqual(ws.tabs[0].focused, "A")
+        XCTAssertFalse(ws.allPanes.contains { LegacyAgentViewPane.isLegacy($0) })
         XCTAssertEqual(ws.selected, "t1")
-        XCTAssertEqual(ws.tabs[0].root, .split(axis: .horizontal, ratio: 0.5, first: .pane("A"), second: .pane("agentview:1")))
-        XCTAssertEqual(ws.tabs[0].focused, "agentview:1")
-        XCTAssertEqual(ws.agentViewPane(transcript: recipe.transcript), "agentview:1")
     }
 
-    func testFocusesExistingViewAnywhere() {
-        var ws = base()
-        ws.openAgentView(recipe, newId: { "agentview:1" })
-        ws.selected = "t2"
-        ws.tabs[0].focused = "A"
-        let again = ws.openAgentView(recipe, newId: { "agentview:2" })
-        XCTAssertEqual(again, "agentview:1")
-        XCTAssertEqual(ws.selected, "t1")
-        XCTAssertEqual(ws.tabs[0].focused, "agentview:1")
-        XCTAssertEqual(ws.agentViews.count, 1)
+    func testSelectedLegacyOnlyTabFallsBackToNeighbour() throws {
+        let ws = try JSONDecoder().decode(Workspace.self, from: legacyJSON(selected: "t2"))
+        XCTAssertEqual(ws.tabs.map(\.id), ["t1", "t3"])
+        XCTAssertNotNil(ws.selectedTab)
+        XCTAssertEqual(ws.allPanes, ["A", "B"])
     }
 
-    func testOwnerNotInAnyTabOpensNewTabAfterCurrent() {
-        var ws = base()
-        ws.selected = "t1"
-        var lost = recipe
-        lost.owner = "gone"
-        ws.openAgentView(lost, newId: { "agentview:1" })
-        XCTAssertEqual(ws.tabs.map { $0.root.panes }, [["A"], ["agentview:1"], ["B"]])
-        XCTAssertEqual(ws.selectedTab?.focused, "agentview:1")
+    func testReencodedLayoutNoLongerHasAgentViewsKey() throws {
+        let ws = try JSONDecoder().decode(Workspace.self, from: legacyJSON())
+        let text = String(decoding: try JSONEncoder().encode(ws), as: UTF8.self)
+        XCTAssertFalse(text.contains("agentview"))
+        XCTAssertEqual(try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(ws)), ws)
     }
 
-    func testForgetRemovesRecipe() {
-        var ws = base()
-        let id = ws.openAgentView(recipe)
-        ws.forget(pane: id)
-        XCTAssertNil(ws.agentViews[id])
-        XCTAssertNil(ws.agentViewPane(transcript: recipe.transcript))
-        XCTAssertEqual(ws.tabs[0].root, .pane("A"))
-    }
-
-    func testRoundTripAndOldLayout() throws {
-        var ws = base()
-        let id = ws.openAgentView(recipe)
-        let decoded = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(ws))
-        XCTAssertEqual(decoded, ws)
-        XCTAssertEqual(decoded.agentViews[id], recipe)
+    func testOldLayoutWithoutAnyAgentViewsStillLoads() throws {
         let old = #"{"tabs":[{"id":"t","root":{"pane":{"_0":"A"}},"focused":"A","zoomed":false}],"selected":"t"}"#
-        XCTAssertEqual(try JSONDecoder().decode(Workspace.self, from: Data(old.utf8)).agentViews, [:])
-        // 정보 없는 잎은 읽을 때 뺀다
-        ws.agentViews[id] = nil
-        let repaired = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(ws))
-        XCTAssertFalse(repaired.allPanes.contains(id))
+        let ws = try JSONDecoder().decode(Workspace.self, from: Data(old.utf8))
+        XCTAssertEqual(ws.allPanes, ["A"])
     }
 
-    func testReconcileKeepsAgentViewsAndDoesNotReviveThem() {
-        var ws = base()
-        let id = ws.openAgentView(recipe)
-        ws.reconcile(live: ["A", "B"], daemonPid: 1)
-        ws.reconcile(live: ["A", "B"], daemonPid: 2)
-        XCTAssertTrue(ws.allPanes.contains(id))
-        XCTAssertNotNil(ws.agentViews[id])
-        XCTAssertFalse(ws.dormant.contains(id))
+    /// 읽기를 거치지 않은 예전 ids 도 데몬 화면으로 보지 않는다(꺼진 화면으로 두거나 지우거나 되살리지 않는다)
+    func testReconcileNeverTreatsLegacyIdsAsDaemonPanes() {
+        XCTAssertTrue(LocalPane.isLocal("agentview:1"))
+        var ws = Workspace(tabs: [TabState(id: "t1", root: .split(axis: .horizontal, ratio: 0.5, first: .pane("A"), second: .pane("agentview:1")), focused: "A")],
+                           selected: "t1")
+        ws.reconcile(live: ["A"], daemonPid: 1)
+        ws.reconcile(live: ["A"], daemonPid: 2)
+        XCTAssertFalse(ws.dormant.contains("agentview:1"))
+        XCTAssertTrue(ws.recipes["agentview:1"] == nil)
+        // 로드 뒤 reconcile 은 아무것도 되살리지 않는다
+        var loaded = (try? JSONDecoder().decode(Workspace.self, from: legacyJSON())) ?? Workspace()
+        loaded.reconcile(live: ["A", "B"], daemonPid: 1)
+        XCTAssertEqual(loaded.allPanes, ["A", "B"])
+        XCTAssertTrue(loaded.dormant.isEmpty)
     }
 }

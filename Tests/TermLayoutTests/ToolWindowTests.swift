@@ -256,6 +256,69 @@ extension ToolLayoutTests {
     }
 }
 
+extension ToolLayoutTests {
+    /// 하위 에이전트 도구: 처음엔 숨김, 꺼내면 오른쪽(읽힐 만한 폭), 같은 도크의 다른 도구가 보이면 고르기만, 고른 상태면 숨김
+    func testAgentsToolHiddenByDefaultShowsOnTheRight() {
+        var layout = ToolLayout()
+        XCTAssertEqual(layout.side(of: .agents), .hidden)
+        XCTAssertFalse(layout.isVisible(.agents))
+        XCTAssertEqual(layout.visibleTool(in: .right), nil) // 오른쪽 도크는 접힌 채
+        XCTAssertEqual(ToolID.agents.title, "하위 에이전트")
+        layout.toggle(.agents)
+        XCTAssertEqual(layout.side(of: .agents), .right)
+        XCTAssertTrue(layout.isVisible(.agents))
+        XCTAssertEqual(layout.width(.right), ToolLayout.agentsWidth)
+        layout.toggle(.agents)
+        XCTAssertEqual(layout.side(of: .agents), .hidden)
+        XCTAssertEqual(layout.lastSides[.agents], .right)
+        // 사람이 정한 폭은 지킨다
+        var custom = ToolLayout()
+        custom.widths[.right] = 333
+        custom.toggle(.agents)
+        XCTAssertEqual(custom.width(.right), 333)
+        // 왼쪽으로 옮기면 그쪽에서 고르고, 다시 숨겼다 꺼내면 마지막 쪽(왼쪽)
+        var left = ToolLayout()
+        left.move(.agents, to: .left)
+        XCTAssertEqual(left.visibleTool(in: .left), .agents)
+        left.move(.agents, to: .hidden)
+        left.toggle(.agents)
+        XCTAssertEqual(left.side(of: .agents), .left)
+    }
+
+    func testAgentsToolSharesDockWithOtherToolAndSelectToggles() {
+        var layout = ToolLayout()
+        layout.move(.files, to: .right)
+        XCTAssertEqual(layout.visibleTool(in: .right), .files)
+        layout.toggle(.agents) // 숨김 → 오른쪽에 보이고 고름
+        XCTAssertEqual(layout.visibleTool(in: .right), .agents)
+        XCTAssertFalse(layout.isVisible(.files))
+        layout.toggle(.files) // 보이지만 안 골랐으면 고르기만
+        XCTAssertEqual(layout.visibleTool(in: .right), .files)
+        XCTAssertEqual(layout.side(of: .agents), .right)
+        layout.toggle(.agents)
+        XCTAssertEqual(layout.visibleTool(in: .right), .agents)
+        layout.toggle(.agents) // 고른 상태면 숨김
+        XCTAssertEqual(layout.side(of: .agents), .hidden)
+        XCTAssertEqual(layout.visibleTool(in: .right), .files)
+    }
+
+    /// 예전 ui.json(agents 없음)은 숨김 기본값으로 읽고, 저장했다 읽어도 그대로
+    func testAgentsToolOldFileAndRoundTrip() throws {
+        let old = try JSONDecoder().decode(ToolLayout.self, from: Data(#"{"version":1,"tools":{"spaces":"left","files":"left","browser":"hidden"},"selected":{"left":"files"}}"#.utf8))
+        XCTAssertEqual(old.side(of: .agents), .hidden)
+        XCTAssertEqual(old.visibleTool(in: .left), .files)
+        XCTAssertNil(old.visibleTool(in: .right))
+        var layout = ToolLayout()
+        layout.toggle(.agents)
+        let decoded = try JSONDecoder().decode(ToolLayout.self, from: XCTUnwrap(layout.data()))
+        XCTAssertEqual(decoded.side(of: .agents), .right)
+        XCTAssertTrue(decoded.isVisible(.agents))
+        // 모르는 도구 이름·자리는 무시
+        let odd = try JSONDecoder().decode(ToolLayout.self, from: Data(#"{"tools":{"agents":"sideways","nope":"left"}}"#.utf8))
+        XCTAssertEqual(odd.side(of: .agents), .hidden)
+    }
+}
+
 final class DirectoryListingTests: XCTestCase {
     func testFoldersFirstCaseInsensitive() {
         let entries = [
