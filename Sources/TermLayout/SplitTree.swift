@@ -396,6 +396,17 @@ public enum AgentPane {
 
 /// ⇧⌘A 가 열 하위 에이전트 고르기: 작업 중인 것 먼저, 없으면 가장 최근 것(같으면 앞의 것). 후보가 없으면 nil.
 public enum AgentPaneChoice {
+    /// 한 번에 여는 칸 수 상한(오른쪽 한 줄에 쌓이므로 너무 많으면 칸이 읽을 수 없게 얇아진다)
+    public static let maxOpen = 4
+
+    /// ⇧⌘A 로 열 것들: 작업 중인 것 모두(최근 순, 최대 maxOpen 개), 작업 중인 게 없으면 가장 최근 것 하나. 후보가 없으면 빈 배열.
+    public static func pickAll(_ agents: [(running: Bool, lastActive: Date)]) -> [Int] {
+        let running = agents.indices.filter { agents[$0].running }
+            .sorted { agents[$0].lastActive > agents[$1].lastActive }
+        if !running.isEmpty { return Array(running.prefix(maxOpen)) }
+        return pick(agents).map { [$0] } ?? []
+    }
+
     public static func pick(_ agents: [(running: Bool, lastActive: Date)]) -> Int? {
         let running = agents.indices.filter { agents[$0].running }
         let pool = running.isEmpty ? Array(agents.indices) : running

@@ -1538,8 +1538,8 @@ final class TermModel: ObservableObject {
         return ("↳ " + recipe.description, status)
     }
 
-    /// ⇧⌘A·보기 > 하위 에이전트 칸: 지금 탭에 하위 칸이 있으면 모두 닫고, 없으면 포커스된 세션의 하위 에이전트 하나를 연다
-    /// (작업 중인 것 먼저, 없으면 가장 최근 것). 열 것이 없으면 소리만 낸다.
+    /// ⇧⌘A·보기 > 하위 에이전트 칸: 지금 탭에 하위 칸이 있으면 모두 닫고, 없으면 포커스된 세션의 하위 에이전트를 연다
+    /// (작업 중인 것 모두 — 최대 AgentPaneChoice.maxOpen 개, 없으면 가장 최근 것 하나). 열 것이 없으면 소리만 낸다.
     func toggleAgentPanes() {
         guard let tab = workspace.selectedTab else {
             NSSound.beep()
@@ -1558,11 +1558,19 @@ final class TermModel: ObservableObject {
             return
         }
         let mine = agentActivities.filter { $0.paneId == session && $0.transcriptPath != nil }
-        guard let index = AgentPaneChoice.pick(mine.map { (running: $0.isRunning, lastActive: $0.lastActive) }) else {
+        let picks = AgentPaneChoice.pickAll(mine.map { (running: $0.isRunning, lastActive: $0.lastActive) })
+        guard !picks.isEmpty else {
             NSSound.beep()
             return
         }
-        openAgentPane(mine[index])
+        var next = workspace
+        for index in picks {
+            guard let path = mine[index].transcriptPath else { continue }
+            next.openAgentPane(AgentPaneRecipe(transcriptPath: path, description: mine[index].description,
+                                               agentType: mine[index].agentType, ownerPaneID: mine[index].paneId))
+        }
+        setWorkspace(next, render: true)
+        host?.focusPane()
     }
 
     /// 화면 닫기(셸·claude 종료). 셸이 아닌 프로그램이 돌고 있으면 묻는다(Ghostty 처럼).

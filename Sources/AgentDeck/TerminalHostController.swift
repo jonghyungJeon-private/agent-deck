@@ -192,6 +192,9 @@ final class TerminalHostController: NSViewController {
     /// 앞에 있는 브라우저 창의 화면(시험 명령·편집 메뉴)
     var focusedBrowser: BrowserPaneView? { model.browserWindows.keyPane }
 
+    /// 마지막으로 그린 탭(같은 탭 안에서 칸이 바뀌었는지 알려고)
+    private var renderedTabId: String?
+
     /// 탭·분할 배치가 바뀌면 부른다. 보일 화면의 뷰만 남기고 나머지는 버린다.
     func render() {
         guard isViewLoaded else { return }
@@ -242,6 +245,10 @@ final class TerminalHostController: NSViewController {
         var views: [String: NSView] = terminals.mapValues { $0.surface }
         for (id, editor) in editorViews { views[id] = editor }
         for (id, agentView) in agentViews { views[id] = agentView }
+        // 같은 탭에서 칸이 생기거나 없어질 때(하위 에이전트 칸·분할·닫기)는 바뀐 배치로 짧게 겹쳐 바꾼다(Motion.standard).
+        // 탭을 옮길 때는 지금처럼 바로. 칸 크기를 끌어 바꾸는 것은 render 를 거치지 않는다.
+        if let tab, tab.id == renderedTabId, Set(container.tree?.panes ?? []) != ids { container.crossFadeNextChange(key: "paneLayout") }
+        renderedTabId = tab?.id
         container.update(tree: visible, views: views, focused: tab?.focused, titles: paneTitles)
         // 크기가 정해진 뒤 붙어야 지난 출력이 맞는 크기로 그려진다
         created.forEach { $0.attach() }

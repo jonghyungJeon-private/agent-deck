@@ -209,4 +209,24 @@ final class AgentPaneTests: XCTestCase {
         XCTAssertEqual(AgentPaneChoice.pick([(false, now.addingTimeInterval(600)), (true, now), (true, now.addingTimeInterval(-10))]), 1)
         XCTAssertEqual(AgentPaneChoice.pick([(true, now), (true, now)]), 0)
     }
+
+    func testToggleOpensAllRunningAgentsUpToTheCapElseTheMostRecentOne() {
+        let t = Date(timeIntervalSince1970: 1000)
+        // 작업 중 둘 → 둘 다(최근 순)
+        XCTAssertEqual(AgentPaneChoice.pickAll([(running: true, lastActive: t), (running: false, lastActive: t + 50), (running: true, lastActive: t + 10)]), [2, 0])
+        // 작업 중이 없으면 가장 최근 것 하나
+        XCTAssertEqual(AgentPaneChoice.pickAll([(running: false, lastActive: t), (running: false, lastActive: t + 5)]), [1])
+        XCTAssertEqual(AgentPaneChoice.pickAll([]), [])
+        // 상한
+        let many = (0..<7).map { (running: true, lastActive: t + Double($0)) }
+        XCTAssertEqual(AgentPaneChoice.pickAll(many), [6, 5, 4, 3])
+        // 둘을 연이어 열면 같은 줄에 같은 높이로
+        var ws = Workspace(tabs: [TabState(id: "t", root: .pane("A"), focused: "A")], selected: "t")
+        var n = 0
+        let next: () -> String = { n += 1; return "agentpane:\(n)" }
+        for i in [1, 2] {
+            ws.openAgentPane(AgentPaneRecipe(transcriptPath: "/p/agent-\(i).jsonl", description: "\(i)", ownerPaneID: "A"), newId: next)
+        }
+        XCTAssertEqual(ws.tabs[0].root.panes, ["A", "agentpane:1", "agentpane:2"])
+    }
 }

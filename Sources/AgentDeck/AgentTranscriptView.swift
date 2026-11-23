@@ -15,6 +15,10 @@ final class AgentTranscriptView: NSView {
     private var timer: Timer?
     /// 지금 글이 안내 문구(항목이 없을 때)인지
     private var showingPlaceholder = false
+    /// 처음 읽기(끝 512KiB 를 JSON 으로 풀기)는 메인 스레드 밖에서 한다 — 칸이 붙는 순간 화면이 멈칫하지 않게.
+    /// 그 사이 unload·다른 load 가 오면 늦게 끝난 결과는 버린다(세대 번호).
+    private var loadGeneration = 0
+    private static let loadQueue = DispatchQueue(label: "agentdeck.agent-transcript-load", qos: .userInitiated)
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -92,13 +96,22 @@ final class AgentTranscriptView: NSView {
     func load(transcript path: String) {
         unload()
         transcript = path
-        reader = AgentTranscriptTail(path: path)
-        poll(force: true)
-        startTimer()
+        let fresh = AgentTranscriptTail(path: path)
+        let generation = loadGeneration
+        Self.loadQueue.async { [weak self] in
+            _ = fresh.poll() // 처음 읽기: 끝 512KiB 를 읽어 항목으로 푼다(무거운 일)
+            DispatchQueue.main.async {
+                guard let self, self.loadGeneration == generation, self.transcript == path else { return }
+                self.reader = fresh
+                self.rebuild(stickToBottom: true)
+                self.startTimer()
+            }
+        }
     }
 
     /// 타이머·읽기 상태·글을 모두 놓는다(칸이 화면에서 빠질 때)
     func unload() {
+        loadGeneration += 1 // 아직 끝나지 않은 처음 읽기는 버린다
         stopTimer()
         reader = nil
         transcript = nil

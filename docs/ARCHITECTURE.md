@@ -703,12 +703,14 @@ claude 가 띄운 하위 에이전트(Agent 도구) **하나가 칸(split pane) 
   닫힌 칸의 레시피는 남기지 않는다. 부모가 꺼진 화면(dormant)으로 남을 때는 칸도 남는다.
 - **메모리**: 보이는 탭의 하위 칸만 뷰·읽기 상태를 만든다(`TerminalHostController.agentViews`). 탭이 가려지면 `render()` 가 `unload()` 로 `AgentTranscriptTail`·1초 타이머·글을 모두 놓는다.
   읽기는 `SessionCore.AgentTranscriptTail` 이 파일 끝을 따라 읽는다 — 처음엔 끝 512KiB 만(줄 중간에서 시작했으면 첫 줄을 버림), 그다음은 늘어난 바이트만.
+  처음 읽기(JSON 풀기)는 메인 스레드 밖(`AgentTranscriptView.loadQueue`)에서 하고 끝나면 채운다 — 칸이 붙는 순간 화면이 멈칫하지 않게. 그 사이 칸이 빠지거나 다시 읽으면 늦은 결과는 버린다(세대 번호).
+  같은 탭에서 칸 구성이 바뀌면(하위 칸·분할·닫기) `TerminalHostController.render` 가 분할 영역을 짧게 겹쳐 바꾼다(`crossFadeNextChange`, Motion.standard — 동작 줄이기면 바로). 탭 이동·경계 끌기는 바로.
   줄바꿈이 오지 않은 끝 줄은 다음 읽기까지 쥐고 있고, 파일이 줄면 처음부터 다시 읽는다. 최근 400 항목만 둔다 — 이어 읽는 동안은 500 개까지 두었다가 한꺼번에 400 으로 줄여, 넘칠 때마다 전체를 다시 그리지 않는다(`poll()` 은 `.none`/`.appended`/`.reset`).
   `type` 이 user·assistant 인 줄만 JSON 으로 푼다 — `api-request*`·`attachment` 줄은 바이트 앞부분만 보고 버린다. 항목은 질문·글·도구(이름 + 한 줄 요약)·결과이고 thinking 은 건너뛴다.
   결과가 비어 있으면(REPL·백그라운드로 띄운 도구) 줄만 늘리므로 뺀다(실패는 남긴다). 창이 가려지거나 최소화되면 타이머가 돌아도 읽지 않는다.
   목록은 사이드바가 이미 훑은 `TermModel.agentActivities`(`SubagentScanner` 가 10초에 한 번, 최근 15분 안에 바뀐 기록만)를 그대로 쓴다 — 칸이 따로 훑지 않는다.
 - **⇧⌘A / 보기 > 하위 에이전트 칸**(`TermModel.toggleAgentPanes`, 동작 이름 `agent-panes-toggle`): 지금 탭에 하위 칸이 있으면 모두 닫는다. 없으면 포커스된 세션의 하위 에이전트 중
-  작업 중인 것 먼저(`AgentPaneChoice.pick`), 없으면 가장 최근 것 하나를 위 배치 규칙으로 연다. 열 것이 없으면 `NSSound.beep`.
+  작업 중인 것을 모두(최근 순, 최대 `AgentPaneChoice.maxOpen` = 4개 — `AgentPaneChoice.pickAll`), 작업 중인 게 없으면 가장 최근 것 하나를 위 배치 규칙으로 한 번에 연다(배치를 한 번만 바꾼다). 열 것이 없으면 `NSSound.beep`.
 - **Codex**: 기록 파일이 없다(`transcriptPath == nil`) — 칸을 만들지 않고 사이드바의 "마지막 메시지 펼치기"(줄 아래로 펼침)를 그대로 쓴다. 줄을 눌러도 같다.
   사이드바 오른쪽 클릭 메뉴: "칸으로 보기"(claude 만) · "마지막 메시지 펼치기".
 - **예전 판과의 호환**: 0.11.0~0.11.1 의 분할 잎 `agentview:<UUID>`(+ `agentViews` 키)는 계속 읽을 때 뺀다(`LegacyAgentViewPane` — 옆 화면이 그 자리를 채우고 잎만 있던 탭은 사라진다).
