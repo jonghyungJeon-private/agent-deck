@@ -5,7 +5,7 @@ import SwiftUI
 import TermLayout
 import TermWire
 
-/// IntelliJ 식 도구 창: 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구(spaces·files·agents)는 왼쪽·오른쪽·숨김 중 한 곳에 붙고,
+/// IntelliJ 식 도구 창: 창 = [왼쪽 도크 | 터미널 | 오른쪽 도크]. 도구(spaces·files·browser)는 왼쪽·오른쪽·숨김 중 한 곳에 붙고,
 /// 도구가 둘 붙은 도크는 위에 도구 버튼 줄이 생긴다. 보이는 도구가 없는 도크는 접힌다.
 /// 배치·도크 폭은 `term/ui.json` 에 저장한다.
 /// 설정 창 "화면" 탭의 작은 창 구석 — 설정 창(SwiftUI)과 도구 창 관리자가 함께 보는 값. 바뀌면 도구 창 관리자가 버튼·작은 창을 다시 놓는다.
@@ -27,8 +27,6 @@ final class ToolWindowsController: NSObject {
     let split = NSSplitViewController()
     private(set) var layout: ToolLayout
     let files: FilesToolController
-    /// agents 도구: 고른 세션의 하위 에이전트 목록과 기록(보일 때만 읽는다)
-    let agents: AgentsToolController
     private let model: TermModel
     private let sidebar: NSHostingController<SidebarView>
     private let docks: [DockSide: DockViewController]
@@ -64,18 +62,11 @@ final class ToolWindowsController: NSObject {
         self.host = host
         layout = ToolLayout.load(from: Self.url)
         files = FilesToolController(model: model)
-        agents = AgentsToolController(model: model)
         sidebar = NSHostingController(rootView: SidebarView(model: model))
         docks = [.left: DockViewController(side: .left, model: model), .right: DockViewController(side: .right, model: model)]
         super.init()
 
         files.dockMenu = { [weak self] in self?.menu(for: .files) ?? NSMenu() }
-        agents.dockMenu = { [weak self] in self?.menu(for: .agents) ?? NSMenu() }
-        // 사이드바의 하위 에이전트 줄: agents 도구를 꺼내(숨김이면 오른쪽 도크에) 그 에이전트를 고른다
-        model.onShowAgent = { [weak self] agent in
-            self?.reveal(.agents)
-            self?.agents.select(agent)
-        }
         // 파일 열기: 두 번 클릭·Enter = 지금 화면 옆 미리보기(여러 개면 고정 화면으로 쌓기), ⌘두 번 클릭·메뉴 = 새 탭, 메뉴 = 나눠 열기
         files.onOpenFile = { [weak model] path in model?.openFromTree(path) }
         files.onOpenFiles = { [weak model] paths in model?.openFromTree(paths: paths) }
@@ -212,7 +203,6 @@ final class ToolWindowsController: NSObject {
         case .spaces: return sidebar
         case .files: return files
         case .browser: return model.browserWindows.dock
-        case .agents: return agents
         }
     }
 
@@ -246,7 +236,6 @@ final class ToolWindowsController: NSObject {
             for side in opened { setWidth(side) }
         }
         files.setToolVisible(layout.isVisible(.files))
-        agents.setToolVisible(layout.isVisible(.agents))
         // 작은 창은 도크 쪽 정리(위 반복문이 browser 를 도크에서 뗀 뒤)에 내용을 달고, 도크로 돌아갈 때는 도크가 먼저 가져간다
         applyFloat()
         applyScratch()
@@ -952,7 +941,6 @@ final class ToolWindowsController: NSObject {
         case .files: return "⌘⇧E"
         case .spaces: return "⌘⇧S"
         case .browser: return "⌘⇧B"
-        case .agents: return "⌘⇧A"
         }
     }
 }

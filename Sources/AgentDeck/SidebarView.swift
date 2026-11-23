@@ -105,7 +105,7 @@ struct SidebarView: View {
         switch item {
         case .group(let group, let collapsed, let summary):
             GroupRowView(group: group, collapsed: collapsed, summary: summary,
-                         holdsSelection: collapsed && group.sections.contains { $0.rows.contains { $0.id == model.selectedId } },
+                         holdsSelection: collapsed && group.sections.contains { $0.rows.contains { $0.id == model.focusedSessionId } },
                          hiddenTabs: hintOwners.collapsed[item.id] ?? [],
                          onToggle: { spaces.toggle(SpacesState.groupKey(group.path)) },
                          menu: { openMenu(group.path) },
@@ -121,7 +121,7 @@ struct SidebarView: View {
                 }
         case .worktree(let section, _, let collapsed, let summary):
             WorktreeRowView(section: section, collapsed: collapsed, summary: summary,
-                            holdsSelection: collapsed && section.rows.contains { $0.id == model.selectedId },
+                            holdsSelection: collapsed && section.rows.contains { $0.id == model.focusedSessionId },
                             hiddenTabs: hintOwners.collapsed[item.id] ?? [],
                             onToggle: { spaces.toggle(SpacesState.worktreeKey(section.path)) })
                 .contextMenu {
@@ -131,7 +131,7 @@ struct SidebarView: View {
                 }
         case .session(let row, let depth, _, let section):
             SessionRowView(row: row, depth: depth,
-                           selected: row.id == model.selectedId,
+                           selected: row.id == model.focusedSessionId,
                            tabNumber: model.workspace.tabIndex(containing: row.id).map { $0 + 1 },
                            showsTabHint: hintOwners.sessions.contains(row.id),
                            browser: model.browserIndicator(row.id),
@@ -149,11 +149,17 @@ struct SidebarView: View {
                 }
         case .agent(let agent, let depth, let owner, _):
             AgentRowView(agent: agent, depth: depth, owner: owner, expanded: expandedAgent == agent.id)
-                // 누르면 띄운 세션으로 포커스하고 옆 도구 창(하위 에이전트)에 그 에이전트를 보인다(숨겨져 있으면 오른쪽에 꺼낸다).
-                // Codex 하위 에이전트는 기록 파일이 없어 그 패널에 마지막 메시지만 보인다.
-                .onTapGesture { model.showAgent(agent) }
+                .onTapGesture {
+                    if agent.transcriptPath != nil {
+                        // claude 하위 에이전트: 그 기록을 칸으로 연다(부모 세션 칸이 있는 탭에 붙이고, 이미 열려 있으면 그 칸으로)
+                        model.openAgentPane(agent)
+                    } else {
+                        // Codex 하위 에이전트(기록 파일 없음): 칸을 만들지 않고 띄운 세션으로 넘어가 마지막 메시지를 펼친다
+                        toggleAgentSummary(agent)
+                    }
+                }
                 .contextMenu {
-                    Button("패널에서 보기") { model.showAgent(agent) }
+                    if agent.transcriptPath != nil { Button("칸으로 보기") { model.openAgentPane(agent) } }
                     Button("마지막 메시지 펼치기") { toggleAgentSummary(agent) }
                 }
         case .gap:
@@ -1327,8 +1333,8 @@ private struct SpacesDropDelegate: DropDelegate {
     }
 }
 
-/// 하위 에이전트 한 줄. 누르면 띄운 세션으로 넘어가 옆 도구 창(하위 에이전트)에 그 에이전트를 보인다
-/// (오른쪽 클릭: 패널에서 보기 · 마지막 메시지 펼치기). Codex 하위 에이전트는 패널에 마지막 메시지만 보인다.
+/// 하위 에이전트 한 줄. claude 하위 에이전트는 누르면 그 기록을 읽기 전용 칸으로 연다(오른쪽 클릭: 칸으로 보기 · 마지막 메시지 펼치기).
+/// 기록 파일이 없는 것(Codex)은 칸을 만들지 않고 띄운 세션으로 넘어가 마지막 메시지를 펼친다.
 struct AgentRowView: View {
     let agent: SubagentActivity
     let depth: Int
@@ -1388,8 +1394,8 @@ struct AgentRowView: View {
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .help((agent.transcriptPath != nil
-            ? "누르면 이 에이전트를 띄운 세션으로 이동하고 옆 하위 에이전트 패널에 기록을 읽기 전용으로 보여 줍니다(오른쪽 클릭: 마지막 메시지 펼치기)"
-            : "누르면 이 에이전트를 띄운 세션으로 이동하고 옆 하위 에이전트 패널에 마지막 메시지를 보여 줍니다(Codex 는 기록을 볼 수 없습니다)")
+            ? "누르면 이 에이전트의 기록을 띄운 세션 칸 옆에 읽기 전용 칸으로 엽니다(오른쪽 클릭: 마지막 메시지 펼치기)"
+            : "누르면 이 에이전트를 띄운 세션으로 이동하고 마지막 메시지를 펼칩니다(Codex 는 기록을 볼 수 없어 칸으로 열 수 없습니다)")
             + "\n\(agent.worktreePath ?? "")")
     }
 }

@@ -193,6 +193,13 @@ public indirect enum SplitNode: Codable, Equatable {
         return stack(rows, axis: .vertical)
     }
 
+    /// 잎이 정확히 panes 인 갈래를 찾아 그 갈래만 같은 크기로 맞춘다(하위 에이전트 칸 줄). 그런 갈래가 없으면 그대로.
+    public func equalizing(exactly panes: Set<String>) -> SplitNode {
+        guard case .split(let a, let r, let first, let second) = self else { return self }
+        if Set(self.panes) == panes { return equalized() }
+        return .split(axis: a, ratio: r, first: first.equalizing(exactly: panes), second: second.equalizing(exactly: panes))
+    }
+
     /// 같은 방향으로 이어진 화면이 같은 크기가 되게(Ghostty equalize_splits)
     public func equalized() -> SplitNode {
         func weight(_ node: SplitNode, _ axis: SplitAxis) -> Double {
@@ -369,7 +376,7 @@ public struct BrowserRecipe: Codable, Equatable {
     }
 }
 
-/// 예전(0.11) 분할 잎 "agentview:<UUID>"(하위 에이전트 보기 화면). 지금 하위 에이전트는 옆 도구 창(agents)에서 보므로
+/// 예전(0.11.0) 분할 잎 "agentview:<UUID>"(하위 에이전트 보기 화면). 지금은 "agentpane:" 칸으로 바뀌었으므로
 /// 새로 만들지 않고, 예전 배치 파일을 읽을 때 잎을 뺀다(Workspace.init(from:)). 데몬 화면이 아니므로 reconcile 도 건드리지 않는다.
 public enum LegacyAgentViewPane {
     public static let prefix = "agentview:"
@@ -377,10 +384,49 @@ public enum LegacyAgentViewPane {
     public static func isLegacy(_ id: String) -> Bool { id.hasPrefix(prefix) }
 }
 
-/// 데몬이 붙잡지 않는 화면(편집기·브라우저·예전 하위 에이전트 보기 잎): 데몬 목록에 없어도 지우거나 되살리지 않는다
+/// 하위 에이전트 칸(읽기 전용, 데몬 화면이 아님). 분할 나무의 잎에 "agentpane:<UUID>" 로 들어간다.
+/// 하위 에이전트 하나가 칸 하나이고, 세션처럼 다루지 않는다(탭 제목·전환기·⌘숫자는 부모 세션 칸을 따른다).
+public enum AgentPane {
+    public static let prefix = "agentpane:"
+
+    public static func isAgentPane(_ id: String) -> Bool { id.hasPrefix(prefix) }
+
+    public static func newId() -> String { prefix + UUID().uuidString }
+}
+
+/// ⇧⌘A 가 열 하위 에이전트 고르기: 작업 중인 것 먼저, 없으면 가장 최근 것(같으면 앞의 것). 후보가 없으면 nil.
+public enum AgentPaneChoice {
+    public static func pick(_ agents: [(running: Bool, lastActive: Date)]) -> Int? {
+        let running = agents.indices.filter { agents[$0].running }
+        let pool = running.isEmpty ? Array(agents.indices) : running
+        var best: Int?
+        for index in pool where best == nil || agents[index].lastActive > agents[best!].lastActive { best = index }
+        return best
+    }
+}
+
+/// 하위 에이전트 칸을 다시 열 때 필요한 것(layout.json 의 "agentPanes")
+public struct AgentPaneRecipe: Codable, Equatable {
+    /// 보는 하위 에이전트 기록 파일(절대 경로: .../subagents/agent-<id>.jsonl)
+    public var transcriptPath: String
+    /// 에이전트 설명(칸 머리 글)
+    public var description: String
+    public var agentType: String?
+    /// 그 에이전트를 띄운 세션 칸의 잎 ID. 이 잎이 사라지면 이 칸도 함께 닫는다.
+    public var ownerPaneID: String
+
+    public init(transcriptPath: String, description: String, agentType: String? = nil, ownerPaneID: String) {
+        self.transcriptPath = transcriptPath
+        self.description = description
+        self.agentType = agentType
+        self.ownerPaneID = ownerPaneID
+    }
+}
+
+/// 데몬이 붙잡지 않는 화면(편집기·브라우저·하위 에이전트 칸·예전 하위 에이전트 보기 잎): 데몬 목록에 없어도 지우거나 되살리지 않는다
 public enum LocalPane {
     public static func isLocal(_ id: String) -> Bool {
-        EditorPane.isEditor(id) || BrowserPane.isBrowser(id) || LegacyAgentViewPane.isLegacy(id)
+        EditorPane.isEditor(id) || BrowserPane.isBrowser(id) || AgentPane.isAgentPane(id) || LegacyAgentViewPane.isLegacy(id)
     }
 }
 
@@ -408,13 +454,15 @@ public struct Workspace: Codable, Equatable {
     public var editors: [String: EditorRecipe] = [:]
     /// 브라우저 화면별 주인
     public var browsers: [String: BrowserRecipe] = [:]
+    /// 하위 에이전트 칸별 기록 파일·부모 세션 칸
+    public var agentPanes: [String: AgentPaneRecipe] = [:]
 
     public init(tabs: [TabState] = [], selected: String? = nil) {
         self.tabs = tabs
         self.selected = selected
     }
 
-    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors, browsers }
+    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors, browsers, agentPanes }
 
     // 예전 배치 파일(되살리기 정보 없음)도 읽는다
     public init(from decoder: Decoder) throws {
@@ -427,9 +475,16 @@ public struct Workspace: Codable, Equatable {
         dormant = try c.decodeIfPresent(Set<String>.self, forKey: .dormant) ?? []
         editors = try c.decodeIfPresent([String: EditorRecipe].self, forKey: .editors) ?? [:]
         browsers = try c.decodeIfPresent([String: BrowserRecipe].self, forKey: .browsers) ?? [:]
-        // 예전(0.11)의 하위 에이전트 보기 잎("agentview:")과 "agentViews" 키: 이제 도구 창(agents)으로 보므로 잎을 빼고 키는 읽지 않는다
+        agentPanes = try c.decodeIfPresent([String: AgentPaneRecipe].self, forKey: .agentPanes) ?? [:] // 예전 파일엔 없다
+        // 예전(0.11.0)의 하위 에이전트 보기 잎("agentview:")과 "agentViews" 키: 이제 "agentpane:" 칸으로 바뀌었으니 잎을 빼고 키는 읽지 않는다
         // (그 탭은 옆 화면이 채우고, 잎만 있던 탭은 사라진다)
         for pane in allPanes where LegacyAgentViewPane.isLegacy(pane) { remove(pane: pane) }
+        // 정보가 없는 하위 에이전트 칸·부모 칸이 배치에 없는 칸도 열 수 없으니 뺀다(망가진 파일)
+        for pane in allPanes where AgentPane.isAgentPane(pane) {
+            if let owner = agentPanes[pane]?.ownerPaneID, allPanes.contains(owner) { continue }
+            forget(pane: pane)
+        }
+        agentPanes = agentPanes.filter { allPanes.contains($0.key) }
         // 파일 정보가 없는 편집기 잎·주인이 없는 브라우저 잎은 열 수 없으니 뺀다(망가진 파일)
         for pane in allPanes where EditorPane.isEditor(pane) && editors[pane] == nil { remove(pane: pane) }
         // 브라우저는 이제 화면 잎이 아니라 세션별 창이다(0.6). 예전 배치의 브라우저 잎은 읽을 때 빼고
@@ -458,9 +513,11 @@ public struct Workspace: Codable, Equatable {
         let index = number == 9 ? tabs.count - 1 : number - 1
         guard tabs.indices.contains(index) else { return false }
         let tab = tabs[index]
-        let panes = tab.root.panes
+        // 하위 에이전트 칸은 세션이 아니라 건너뛴다(칸만 있는 탭이면 어쩔 수 없이 그 칸들)
+        let sessions = tab.root.panes.filter { !AgentPane.isAgentPane($0) }
+        let panes = sessions.isEmpty ? tab.root.panes : sessions
         var position = 0
-        if selected == tab.id, let focused = panes.firstIndex(of: tab.focused) {
+        if selected == tab.id, let focused = panes.firstIndex(of: sessionPane(of: tab.focused)) {
             position = (focused + 1) % panes.count
         }
         let pane = panes[position]
@@ -554,13 +611,15 @@ public struct Workspace: Codable, Equatable {
         return true
     }
 
-    /// 화면을 완전히 없앤다(되살리기 정보까지)
+    /// 화면을 완전히 없앤다(되살리기 정보까지). 그 화면이 부모인 하위 에이전트 칸도 함께 없앤다(칸을 먼저 빼서 포커스가 부모의 옆 화면으로 간다).
     public mutating func forget(pane: String) {
+        for child in agentPanes.filter({ $0.value.ownerPaneID == pane }).keys.sorted() { forget(pane: child) }
         remove(pane: pane)
         recipes[pane] = nil
         dormant.remove(pane)
         editors[pane] = nil
         browsers[pane] = nil
+        agentPanes[pane] = nil
     }
 
     /// 브라우저 화면(나무 순서)
@@ -579,11 +638,78 @@ public struct Workspace: Codable, Equatable {
         editorPanes.first { editors[$0]?.path == path }
     }
 
+    /// 하위 에이전트 칸(나무 순서)
+    public var agentPanePanes: [String] { allPanes.filter(AgentPane.isAgentPane) }
+
+    /// 그 기록 파일을 보는 하위 에이전트 칸
+    public func agentPane(transcriptPath: String) -> String? {
+        agentPanePanes.first { agentPanes[$0]?.transcriptPath == transcriptPath }
+    }
+
+    /// 칸이 속한 세션 칸: 하위 에이전트 칸이면 부모 세션 칸, 아니면 그 칸 자신.
+    /// 탭 제목·아이콘·상태·창 제목·세션 전환기가 하위 에이전트 칸을 세션처럼 보이지 않게 이 값을 쓴다.
+    public func sessionPane(of pane: String) -> String { agentPanes[pane]?.ownerPaneID ?? pane }
+
+    /// 그 탭에 있는 하위 에이전트 칸(나무 순서). 부모를 주면 그 부모의 칸만.
+    public func agentPanes(in tab: TabState, owner: String? = nil) -> [String] {
+        tab.root.panes.filter { id in
+            guard let recipe = agentPanes[id] else { return false }
+            return owner == nil || recipe.ownerPaneID == owner
+        }
+    }
+
+    /// 하위 에이전트 칸 열기(배치만 정한다 — 뷰는 앱이 만든다). 칸의 잎 ID(이미 있으면 그 칸)를 돌려준다.
+    /// 1. 같은 기록 파일의 칸이 이미 어느 탭에 있으면 새로 만들지 않고 그 탭으로 가서 그 칸에 포커스한다.
+    /// 2. 부모 세션 칸이 있는 탭에 붙인다: 그 탭에 같은 부모의 하위 칸이 없으면 부모 칸을 오른쪽으로 나누고,
+    ///    있으면 그 칸들 중 마지막 칸을 아래로 나눈다(오른쪽 한 줄에 위아래로 쌓인다). 새 칸에 포커스.
+    /// 3. 부모 칸이 어느 탭에도 없으면 지금 탭의 포커스 칸 오른쪽에 붙인다(ownerPaneID 는 그대로 부모 칸). 탭이 없으면 새 탭.
+    @discardableResult
+    public mutating func openAgentPane(_ recipe: AgentPaneRecipe, newId: () -> String = AgentPane.newId) -> String {
+        if let existing = agentPane(transcriptPath: recipe.transcriptPath), let index = tabIndex(containing: existing) {
+            selected = tabs[index].id
+            if tabs[index].focused != existing {
+                tabs[index].focused = existing
+                tabs[index].zoomed = false
+            }
+            return existing
+        }
+        let id = newId()
+        agentPanes[id] = recipe
+        let owner = recipe.ownerPaneID
+        var anchor: (tab: Int, pane: String, axis: SplitAxis)?
+        if let index = tabIndex(containing: owner) {
+            if let last = agentPanes(in: tabs[index], owner: owner).last {
+                anchor = (index, last, .vertical)
+            } else {
+                anchor = (index, owner, .horizontal)
+            }
+        } else if let index = selectedIndex {
+            anchor = (index, tabs[index].focused, .horizontal)
+        }
+        guard let anchor else {
+            let tab = TabState(root: .pane(id), focused: id)
+            tabs.append(tab)
+            selected = tab.id
+            return id
+        }
+        var tab = tabs[anchor.tab]
+        tab.root = tab.root.splitting(anchor.pane, with: id, axis: anchor.axis)
+        if anchor.axis == .vertical {
+            // 아래로 쌓을 때마다 그 부모의 하위 칸 줄을 같은 높이로(1/2·1/4·1/4 가 아니라 1/3씩). 칸을 옮겨 줄이 흩어졌으면 그대로 둔다.
+            tab.root = tab.root.equalizing(exactly: Set(agentPanes(in: tab, owner: owner)))
+        }
+        tab.focused = id
+        tab.zoomed = false
+        tabs[anchor.tab] = tab
+        selected = tab.id
+        return id
+    }
+
     /// 데몬 화면 목록에 맞춘다. 바뀐 게 있으면 true.
     /// - 같은 데몬에서 사라진 화면(셸·claude 가 끝남)은 뺀다. keep 은 아직 만드는 중이라 둔다.
     /// - 데몬이 바뀌었으면(daemonPid 가 다름) 사라진 화면 중 되살리기 정보가 있는 것은 꺼진 화면으로 남긴다.
     /// - 어느 탭에도 없는 화면은 새 탭으로 붙인다.
-    /// - 편집기·브라우저 화면(LocalPane)은 데몬과 상관없으니 그대로 둔다. 단 브라우저 화면은 주인 화면이 없어지면 함께 뺀다.
+    /// - 편집기·브라우저·하위 에이전트 칸(LocalPane)은 데몬과 상관없으니 그대로 둔다. 단 브라우저 화면·하위 에이전트 칸은 주인(부모) 화면이 없어지면 함께 뺀다.
     @discardableResult
     public mutating func reconcile(live: [String], keep: Set<String> = [], ignore: Set<String> = [],
                                    daemonPid: Int32? = nil, daemonInstance: String? = nil) -> Bool {
@@ -614,9 +740,12 @@ public struct Workspace: Codable, Equatable {
         for pane in live where !placed.contains(pane) && !ignore.contains(pane) && !LocalPane.isLocal(pane) {
             tabs.append(TabState(root: .pane(pane), focused: pane))
         }
+        // 부모 세션 칸이 배치에도 목록에도 없으면(위에서 새 탭으로 붙은 것까지 본 뒤) 그 하위 에이전트 칸도 뺀다
+        for pane in agentPanePanes where !allPanes.contains(agentPanes[pane]?.ownerPaneID ?? "") { forget(pane: pane) }
         recipes = recipes.filter { placed.contains($0.key) || liveSet.contains($0.key) }
         editors = editors.filter { placed.contains($0.key) }
         browsers = browsers.filter { placed.contains($0.key) }
+        agentPanes = agentPanes.filter { allPanes.contains($0.key) }
         if selectedIndex == nil || !tabs.contains(where: { $0.id == selected }) {
             selected = tabs.first?.id
         }

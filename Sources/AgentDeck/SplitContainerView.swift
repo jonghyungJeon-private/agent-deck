@@ -7,6 +7,9 @@ struct PaneTitle: Equatable {
     var status: WorkStatus = .none
     /// 미리보기 편집기(파일 트리에서 다음 파일을 열면 바뀐다) — 기울인 제목 + "임시"
     var preview = false
+    /// 이름 뒤에 붙일 글과 그 색(하위 에이전트 칸의 "작업 중"·"완료" — 세션 상태가 아니라 이름 뒤에 둔다)
+    var trail: String?
+    var trailColor: NSColor?
 
     /// 테두리에 이름 앞에 붙일 상태(쉬는 중·모름은 붙이지 않는다)
     var statusLabel: String? {
@@ -161,7 +164,15 @@ final class SplitContainerView: NSView {
                     .font: TermAppearance.uiTextFont(TermAppearance.scaled(10)), .foregroundColor: TermAppearance.textSecondary,
                 ]))
             } else {
-                title.append(NSAttributedString(string: "\(paneTitle?.name ?? "") ", attributes: attributes))
+                title.append(NSAttributedString(string: paneTitle?.name ?? "", attributes: attributes))
+                if let trail = paneTitle?.trail {
+                    title.append(NSAttributedString(string: " · ", attributes: attributes))
+                    title.append(NSAttributedString(string: trail, attributes: [
+                        .font: TermAppearance.uiTextFont(TermAppearance.scaled(11), weight: .semibold),
+                        .foregroundColor: paneTitle?.trailColor ?? TermAppearance.textSecondary,
+                    ]))
+                }
+                title.append(NSAttributedString(string: " ", attributes: attributes))
             }
             let size = title.size()
             let maxWidth = max(0, frame.width - 24)

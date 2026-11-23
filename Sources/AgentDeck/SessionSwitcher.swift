@@ -4,7 +4,8 @@ import TermLayout
 extension TermModel {
     var sessionTargets: [SessionTarget] {
         workspace.tabs.enumerated().flatMap { index, tab in
-            tab.root.panes.map { id in
+            // 하위 에이전트 칸은 세션이 아니므로 전환기·번호 단축키·다음 확인 순환 대상에서 뺀다
+            tab.root.panes.filter { !AgentPane.isAgentPane($0) }.map { id in
                 let row = row(id)
                 let path = workspace.editors[id]?.path
                 let owner = workspace.browsers[id].flatMap { self.row($0.owner) } // 브라우저 화면은 주인의 폴더

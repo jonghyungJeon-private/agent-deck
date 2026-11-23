@@ -149,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         switch menuItem.representedObject as? String {
         case "pane-find", "pane-find-next", "pane-find-previous":
             guard NSApp.keyWindow === window else { return false }
-            if toolWindows?.agents.transcriptHasFocus == true { return true } // 하위 에이전트 기록: 그 글 안에서 찾는다
+            if model.host?.focusedAgentView != nil { return true } // 하위 에이전트 칸: 그 글 안에서 찾는다
             if let editor = model.host?.focusedEditor { return editor.preview == nil && editor.textView != nil }
             guard let pane = model.host?.focusedTerminal else { return false }
             return menuItem.representedObject as? String == "pane-find" || pane.findBar.superview != nil
@@ -170,7 +170,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             return model.host?.navigator.canGoForward ?? false
         case "browser":
             // 에이전트(셸) 화면에서만 — 편집기·브라우저 화면에는 브라우저가 없다
-            return model.selectedId.map { !LocalPane.isLocal($0) } ?? false
+            return model.focusedSessionId.map { !LocalPane.isLocal($0) } ?? false
         case "extract-pane":
             return (model.workspace.selectedTab?.root.panes.count ?? 0) > 1
         case "move-tab:left":
@@ -325,11 +325,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         view.addItem(.separator())
         addAction(view, "files 보기", "tool-toggle:files", "e", [.command, .shift])
         addAction(view, "spaces 보기", "tool-toggle:spaces", "s", [.command, .shift])
-        addAction(view, "하위 에이전트 보기", "tool-toggle:agents", "a", [.command, .shift])
+        addAction(view, "하위 에이전트 칸", "agent-panes-toggle", "a", [.command, .shift]) // 지금 탭의 하위 칸 닫기 ↔ 포커스된 세션의 하위 에이전트 열기
         addAction(view, "브라우저 보기", "tool-toggle:browser", "")
         addAction(view, "작은 터미널 보기", "scratch-toggle", "`", [.control])
         // 도구가 놓일 자리: 지금 자리에 ✓. 브라우저는 옆 도크가 없어 따로 두지 않는다(위 항목이 작은 창 켜기·끄기)
-        for tool in ["files", "spaces", "agents"] {
+        for tool in ["files", "spaces"] {
             let name = ToolID(rawValue: tool)?.title ?? tool
             let place = NSMenu(title: "\(name) 위치")
             addAction(place, "왼쪽", "tool-move:\(tool):left", "")
@@ -391,9 +391,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             ShortcutKey(24, [.command, .control]): "equalize",
             ShortcutKey(48, .control): "next-tab",
             ShortcutKey(48, [.control, .shift]): "previous-tab",
-            // 도구 창(⌘⇧E files, ⌘⇧S spaces, ⌘⇧A 하위 에이전트)
+            // 도구 창(⌘⇧E files, ⌘⇧S spaces)과 하위 에이전트 칸(⌘⇧A)
             ShortcutKey(14, [.command, .shift]): "tool-toggle:files",
-            ShortcutKey(0, [.command, .shift]): "tool-toggle:agents",
+            ShortcutKey(0, [.command, .shift]): "agent-panes-toggle",
             // 글자 크기(⌘+ ⌘= ⌘− ⌘0, 터미널·편집기 전체)
             ShortcutKey(24, .command): "font:bigger",
             ShortcutKey(24, [.command, .shift]): "font:bigger",
@@ -551,21 +551,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if action.hasPrefix("pane-find") {
             model.host?.sessionSwitcher.close(restoreFocus: true)
             model.host?.navigator.closePopup(restoreFocus: true)
-            // 하위 에이전트 기록(agents 도구)에 키보드가 있으면 그 글 안에서 찾는다(고른 화면이 터미널·편집기여도)
-            if let agents = toolWindows?.agents, agents.transcriptHasFocus {
-                switch action {
-                case "pane-find": agents.find(.showFindInterface)
-                case "pane-find-next": agents.find(.nextMatch)
-                default: agents.find(.previousMatch)
-                }
-                return
-            }
             if let editor = model.host?.focusedEditor {
                 guard editor.preview == nil, let textView = editor.textView else { return }
                 switch action {
                 case "pane-find": textView.editorFind(nil)
                 case "pane-find-next": textView.editorFindNext(nil)
                 default: textView.editorFindPrevious(nil)
+                }
+            } else if let agentView = model.host?.focusedAgentView {
+                // 하위 에이전트 칸: 그 글 안에서 찾는다
+                switch action {
+                case "pane-find": agentView.find(.showFindInterface)
+                case "pane-find-next": agentView.find(.nextMatch)
+                default: agentView.find(.previousMatch)
                 }
             } else if let pane = model.host?.focusedTerminal {
                 if action == "pane-find" { pane.findBar.show() }
@@ -650,10 +648,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     /// AGENTDECK_SNAPSHOT=<폴더> 면 1초마다 창 그림을 <폴더>/window.png 로 남긴다(화면 기록 권한 없이 확인용. 메모리를 더 쓴다).
     /// 둘 중 하나라도 있으면 분산 알림 "dev.agentdeck.debug" 로 받은 명령을 실행한다.
     ///   select <화면 ID> | action <메뉴 동작 이름> | type <글자> | keys <글자> | ime <조합1>|<조합2>|…|<확정> | screen | close-window
-    ///   도구 창: tool <files|spaces|agents>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
+    ///   도구 창: tool <files|spaces>(토글) | dock <도구> <left|right|hidden> | tool-select <도구> | uilayout | toolmenu <도구>
     ///   작은 터미널: scratch <show|hide|toggle|end> | scratch-state (type·keys·chord 는 키보드가 있는 터미널로 간다)
     ///   화면 모드: appearance <auto|light|dark>(설정 → 화면) | 작은 창 구석: float-corner <top|bottom>(설정 → 화면) | 설정 창 탭: settings-tab <connections|browser|sessions|screen>
-    ///   하위 에이전트 도구: open-agent-view <기록 경로|->[|설명[|종류[|마지막 글]]](가짜 에이전트 끼워 넣기 + 보이기) | agent-views(상태)
+    ///   하위 에이전트 칸: open-agent-view <기록 경로>[|설명[|종류]](포커스된 세션 칸을 부모로 칸을 연다) | agent-views(칸마다 한 줄) | toggle-agent-panes(⇧⌘A)
     ///   files: filesroot | expand <상대 경로> | collapse-all | open-file <상대 경로> | filesmenu <상대 경로>[|<항목>] | footprint
     ///          files-select a|b|c(여러 줄 고르기) | files-enter | files-scroll <상대 경로>(맨 위로) | editor-pin(미리보기 고정)
     ///   배포: alert-answer <번호…>(확인 창 대신) | update-state | update-open | hooks-state | appmenu | menu-dump [<메뉴>] | context-menu <x> <y> | browser-display-menu | fonts
@@ -688,7 +686,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "action":
             perform(argument)
         case "tool":
-            // tool <files|spaces|agents> = ⌘⇧E·⌘⇧S·⌘⇧A 와 같은 토글
+            // tool <files|spaces> = ⌘⇧E·⌘⇧S 와 같은 토글
             toolWindows?.perform("tool-toggle:\(argument)")
         case "dock":
             // dock <도구> <left|right|hidden> (browser 는 float = 작은 창도; browser left|right 는 시험용으로만 남아 있다)
@@ -1391,13 +1389,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             print("browser-autostate end")
             fflush(stdout)
         case "tabs":
-            // 탭 순서·분할 나무(화면 ID 앞 4자 — 편집기는 파일 이름, ~ = 미리보기, browser(주인) = 브라우저, * = 포커스, > = 고른 탭)
+            // 탭 순서·분할 나무(화면 ID 앞 4자 — 편집기는 파일 이름, ~ = 미리보기, browser(주인) = 브라우저, agentpane(기록 파일) = 하위 에이전트 칸, * = 포커스, > = 고른 탭)
             func describe(_ node: SplitNode, _ focused: String) -> String {
                 switch node {
                 case .pane(let id):
-                    let name = model.workspace.editors[id].map {
+                    var name = model.workspace.editors[id].map {
                         ($0.path as NSString).lastPathComponent + ($0.isPreview ? "~" : "")
                     } ?? model.workspace.browsers[id].map { "browser(" + $0.owner.prefix(4) + ")" } ?? String(id.prefix(4))
+                    if let recipe = model.workspace.agentPanes[id] { name = "agentpane(" + (recipe.transcriptPath as NSString).lastPathComponent + ")" }
                     return name + (id == focused ? "*" : "")
                 case .split(let axis, _, let first, let second):
                     return "(" + describe(first, focused) + (axis == .horizontal ? " | " : " / ") + describe(second, focused) + ")"
@@ -1410,28 +1409,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             print("tabs end")
             fflush(stdout)
         case "open-agent-view":
-            // open-agent-view <기록 파일 절대 경로>[|<설명>[|<종류>[|<마지막 글>]]]: 지금 따라가는 세션 몫으로 가짜 하위 에이전트를 끼워 넣고
-            // agents 도구에 보여 고른다(사이드바 줄을 누른 것과 같음). 경로가 "-" 면 기록 파일 없는(Codex) 에이전트.
+            // open-agent-view <기록 파일 절대 경로>[|<설명>[|<종류>]]: 지금 포커스된 세션 칸을 부모로 하위 에이전트 칸을 연다
+            // (사이드바 줄을 누른 것과 같은 배치 — 가짜 에이전트를 끼우지 않고 레시피를 바로 만든다)
             let v = argument.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
-            guard let path = v.first, !path.isEmpty, let tools = toolWindows,
-                  let owner = tools.agents.sessionId ?? model.selectedId.flatMap({ model.row($0) != nil ? $0 : nil }) else { return }
-            let fake = path == "-"
-            let agent = SubagentActivity(
-                id: fake ? "debug-codex" : ((path as NSString).lastPathComponent as NSString).deletingPathExtension, sessionId: "debug", paneId: owner,
-                description: v.count > 1 && !v[1].isEmpty ? v[1] : (path as NSString).lastPathComponent,
-                agentType: v.count > 2 && !v[2].isEmpty ? v[2] : nil, worktreePath: nil, lastActive: Date(),
-                lastText: v.count > 3 && !v[3].isEmpty ? v[3] : nil, running: nil, transcriptPath: fake ? nil : path)
-            tools.agents.debugInject(agent)
-            model.showAgent(agent)
-        case "agent-views":
-            // agents 도구 상태: 자리·보임·고른 도구, 따라가는 세션, 목록 수, 고른 에이전트, 읽은 항목 수, 타이머, 기록 줄
-            if let tools = toolWindows {
-                let side = tools.layout.side(of: .agents)
-                print("agent-views side=\(side.rawValue) visible=\(tools.layout.isVisible(.agents)) "
-                    + "selected-tool=\(side == .hidden ? "-" : tools.layout.visibleTool(in: side)?.rawValue ?? "-") "
-                    + tools.agents.debugSummary)
-                print(tools.agents.debugTranscript)
+            guard let path = v.first, !path.isEmpty, let owner = model.focusedSessionId, model.row(owner) != nil else {
+                print("open-agent-view: 포커스된 세션 칸이 없음")
+                fflush(stdout)
+                return
             }
+            model.openAgentPane(AgentPaneRecipe(
+                transcriptPath: path, description: v.count > 1 && !v[1].isEmpty ? v[1] : (path as NSString).lastPathComponent,
+                agentType: v.count > 2 && !v[2].isEmpty ? v[2] : nil, ownerPaneID: owner))
+        case "toggle-agent-panes":
+            model.toggleAgentPanes()
+        case "agent-views":
+            // 하위 칸마다 한 줄: 잎 ID · 부모 칸 · 탭 번호 · 기록 파일 · 머리 글 · 읽은 항목 수 · 읽는 중(뷰가 있나)
+            for id in model.workspace.agentPanePanes {
+                guard let recipe = model.workspace.agentPanes[id] else { continue }
+                let tab = model.workspace.tabIndex(containing: id).map { String($0 + 1) } ?? "-"
+                let head = model.agentPaneHead(id).map { [$0.name, $0.status].compactMap { $0 }.joined(separator: " · ") } ?? "-"
+                let view = model.host?.agentViews[id]
+                print("agent-view \(id) owner=\(recipe.ownerPaneID) tab=\(tab) path=\(recipe.transcriptPath) head=\(head) "
+                    + "loaded=\(view?.isLoaded == true) \(view?.debugSummary ?? "entries=-")")
+            }
+            print("agent-views end panes=\(model.workspace.agentPanePanes.count) views=\(model.host?.agentViews.count ?? 0)")
             fflush(stdout)
         case "dragpoints":
             print(model.host?.debugDragPoints() ?? "")

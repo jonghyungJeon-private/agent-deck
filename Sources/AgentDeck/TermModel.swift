@@ -99,13 +99,11 @@ struct FolderGroup: Identifiable, Equatable {
 final class TermModel: ObservableObject {
     @Published var rows: [PaneRow] = []
     @Published var groups: [FolderGroup] = []
-    /// 목록에 보이는 하위 에이전트 전부(agents 도구 창이 고른 세션 몫을 골라 보인다. 보여 주기만 하며 알림과 상관없다).
-    /// 사이드바가 이미 훑은 것을 그대로 쓴다 — 도구 창이 따로 훑지 않는다.
+    /// 목록에 보이는 하위 에이전트 전부(하위 에이전트 칸의 머리 상태 "작업 중·완료"와 ⇧⌘A 가 쓴다. 보여 주기만 하며 알림과 상관없다).
+    /// 사이드바가 이미 훑은 것을 그대로 쓴다 — 칸이 따로 훑지 않는다.
     private(set) var agentActivities: [SubagentActivity] = []
-    /// `agentActivities` 가 바뀜(agents 도구 창이 목록·상태를 다시 맞춘다)
-    let agentsChanged = PassthroughSubject<Void, Never>()
-    /// 하위 에이전트 줄을 눌렀을 때 옆 도구 창(agents)을 꺼내 그 에이전트를 고른다(ToolWindowsController 가 연결한다)
-    var onShowAgent: ((SubagentActivity) -> Void)?
+    /// 하위 에이전트 목록을 한 번이라도 받았나(받기 전에는 칸 머리에 상태를 적지 않는다 — 방금 켜서 모르는 것을 "완료"로 적지 않게)
+    private var agentsKnown = false
     @Published private(set) var workspace = Workspace() {
         // 화면이 없어지면(닫기·셸이 끝남·목록에서 빠짐) 그 브라우저도 정리한다. 꺼진 화면(dormant)은 남아 있으니 그대로.
         didSet {
@@ -873,9 +871,10 @@ final class TermModel: ObservableObject {
         updateDockBadge()
         if newGroups != groups { groups = newGroups }
         let activities = newGroups.flatMap { group in group.sections.flatMap { $0.agents + $0.rows.flatMap(\.agents) } }
-        if activities != agentActivities {
+        if activities != agentActivities || !agentsKnown {
             agentActivities = activities
-            agentsChanged.send()
+            agentsKnown = true
+            if !workspace.agentPanes.isEmpty { host?.refreshTitles() }
         }
         let live = newRows.filter { !$0.dormant }.map(\.id)
         if live.contains(where: { reviveFailedAt[$0] != nil }) { lastError = nil } // 다시 시도해 되살아났다
@@ -973,7 +972,7 @@ final class TermModel: ObservableObject {
 
     /// 지금 보고 있는 화면의 "완료"는 확인한 것으로 친다(앱이 앞에 있을 때만)
     func markSeen() {
-        guard NSApp.isActive, let id = selectedId, let row = realRows.first(where: { $0.id == id }), row.status == .done,
+        guard NSApp.isActive, let id = focusedSessionId, let row = realRows.first(where: { $0.id == id }), row.status == .done,
               let sid = row.statusSessionId, let at = row.statusAt,
               !WorkStateRules.isSeen(seenDone[sid], seq: row.statusSeq, at: at)
         else { return }
@@ -992,7 +991,7 @@ final class TermModel: ObservableObject {
             guard notified[sid] != key else { continue }
             notified[sid] = key
             guard notifyPrimed else { continue }
-            let watching = NSApp.isActive && row.id == selectedId
+            let watching = NSApp.isActive && row.id == focusedSessionId
             guard !watching, let label = row.status.label else { continue }
             if AgentDeckEnv.isOn("DEBUG") { // 시험: 알림을 끈 채(NO_NOTIFY) 무엇을 알렸을지 찍는다
                 print("notify \(label) · \(row.name) pane=\(row.id.prefix(4)) key=\(key)")
@@ -1127,7 +1126,9 @@ final class TermModel: ObservableObject {
     }
 
     /// 분할 테두리 제목(탭·목록과 같은 이름). 편집기는 파일 이름, 저장 안 했으면 뒤에 ●.
+    /// 하위 에이전트 칸은 세션이 아니므로 부모 세션 이름을 돌려준다(탭 제목·창 제목이 칸에 포커스가 있어도 세션 것) — 칸 테두리 글은 `agentPaneHead`.
     func paneLabel(_ id: String) -> String {
+        if let recipe = workspace.agentPanes[id] { return paneLabel(recipe.ownerPaneID) }
         if EditorPane.isEditor(id) {
             let name = workspace.editors[id].map { ($0.path as NSString).lastPathComponent } ?? "…"
             return editors.isDirty(id) ? name + " ●" : name
@@ -1153,7 +1154,7 @@ final class TermModel: ObservableObject {
     }
 
     func renameFocused() {
-        if let id = selectedId { rename(pane: id) }
+        if let id = focusedSessionId { rename(pane: id) }
     }
 
     // MARK: - 배치 바꾸기
@@ -1266,7 +1267,10 @@ final class TermModel: ObservableObject {
         newPane(cwd: cwd, command: launch.command(kind))
     }
 
-    var focusedRow: PaneRow? { selectedId.flatMap(row) }
+    /// 지금 포커스된 세션 칸: 하위 에이전트 칸에 포커스가 있으면 그 부모 세션 칸(하위 칸은 세션이 아니다)
+    var focusedSessionId: String? { selectedId.map(workspace.sessionPane(of:)) }
+
+    var focusedRow: PaneRow? { focusedSessionId.flatMap(row) }
 
     /// 지금 화면의 폴더(편집기면 그 파일이 있는 폴더) — 새 탭·분할이 여기서 열린다
     var focusedCwd: String? {
@@ -1279,7 +1283,7 @@ final class TermModel: ObservableObject {
     /// 화면(에이전트 세션)의 브라우저 창을 연다(이미 열려 있으면 앞으로). 없으면 지금 화면.
     /// 브라우저는 그 화면의 claude·codex 가 `abx` 를 쓸 때 뜬다(BrowserBinding) — 창은 보기만 한다.
     func openBrowser(owner: String? = nil) {
-        guard let owner = owner ?? selectedId, !LocalPane.isLocal(owner) else {
+        guard let owner = owner ?? focusedSessionId, !LocalPane.isLocal(owner) else {
             NSSound.beep()
             return
         }
@@ -1504,17 +1508,73 @@ final class TermModel: ObservableObject {
         editors.confirmClose(editors.dirtyDocuments)
     }
 
-    /// 하위 에이전트 줄을 눌렀을 때: 그 에이전트를 띄운 세션으로 포커스하고, 옆 도구 창(agents)을 꺼내 그 에이전트를 보인다.
-    /// 탭·분할에는 아무것도 더하지 않는다(도구 창은 터미널 영역 바깥이다).
-    func showAgent(_ agent: SubagentActivity) {
-        focus(pane: agent.paneId)
-        onShowAgent?(agent)
+    // MARK: - 하위 에이전트 칸
+
+    /// 하위 에이전트 줄을 눌렀을 때(claude 만 — Codex 는 기록 파일이 없어 사이드바가 마지막 메시지를 펼친다):
+    /// 그 에이전트의 기록을 읽기 전용 칸으로 연다. 배치 규칙은 TermLayout `Workspace.openAgentPane`.
+    func openAgentPane(_ agent: SubagentActivity) {
+        guard let path = agent.transcriptPath else { return }
+        openAgentPane(AgentPaneRecipe(transcriptPath: path, description: agent.description, agentType: agent.agentType,
+                                      ownerPaneID: agent.paneId))
+    }
+
+    func openAgentPane(_ recipe: AgentPaneRecipe) {
+        var next = workspace
+        next.openAgentPane(recipe)
+        setWorkspace(next, render: true)
+        host?.focusPane()
+    }
+
+    /// 하위 에이전트 칸의 에이전트가 일하는 중인지(목록을 아직 못 받았으면 nil, 받았는데 없으면 끝난 것). 칸 머리에 보이기만 한다.
+    func agentPaneRunning(_ id: String) -> Bool? {
+        guard let path = workspace.agentPanes[id]?.transcriptPath, agentsKnown else { return nil }
+        return agentActivities.first { $0.transcriptPath == path }?.isRunning ?? false
+    }
+
+    /// 하위 에이전트 칸 머리 글: "↳ <설명>"과 뒤에 붙일 상태("작업 중"·"완료", 모르면 nil)
+    func agentPaneHead(_ id: String) -> (name: String, status: String?)? {
+        guard let recipe = workspace.agentPanes[id] else { return nil }
+        let status = agentPaneRunning(id).map { $0 ? "작업 중" : "완료" }
+        return ("↳ " + recipe.description, status)
+    }
+
+    /// ⇧⌘A·보기 > 하위 에이전트 칸: 지금 탭에 하위 칸이 있으면 모두 닫고, 없으면 포커스된 세션의 하위 에이전트 하나를 연다
+    /// (작업 중인 것 먼저, 없으면 가장 최근 것). 열 것이 없으면 소리만 낸다.
+    func toggleAgentPanes() {
+        guard let tab = workspace.selectedTab else {
+            NSSound.beep()
+            return
+        }
+        let open = workspace.agentPanes(in: tab)
+        if !open.isEmpty {
+            var next = workspace
+            for id in open { next.forget(pane: id) }
+            setWorkspace(next, render: true)
+            host?.focusPane()
+            return
+        }
+        guard let session = focusedSessionId else {
+            NSSound.beep()
+            return
+        }
+        let mine = agentActivities.filter { $0.paneId == session && $0.transcriptPath != nil }
+        guard let index = AgentPaneChoice.pick(mine.map { (running: $0.isRunning, lastActive: $0.lastActive) }) else {
+            NSSound.beep()
+            return
+        }
+        openAgentPane(mine[index])
     }
 
     /// 화면 닫기(셸·claude 종료). 셸이 아닌 프로그램이 돌고 있으면 묻는다(Ghostty 처럼).
     func close(pane id: String, confirm: Bool = true) {
         if EditorPane.isEditor(id) {
             closeEditor(id, confirm: confirm)
+            return
+        }
+        if AgentPane.isAgentPane(id) { // 기록을 보는 칸일 뿐이다: 묻지 않고, 데몬도 건드리지 않는다(레시피도 함께 지운다)
+            var next = workspace
+            next.forget(pane: id)
+            if next != workspace { setWorkspace(next, render: true) }
             return
         }
         let row = row(id)
@@ -1537,7 +1597,7 @@ final class TermModel: ObservableObject {
     }
 
     func closeFocused() {
-        if let id = selectedId { close(pane: id) }
+        if let id = selectedId { close(pane: id) } // 하위 에이전트 칸이면 그 칸만 닫힌다
     }
 
     func closeTab() {
@@ -1549,7 +1609,7 @@ final class TermModel: ObservableObject {
         let busy = rows.filter { !$0.isShell }
         if !busy.isEmpty {
             let alert = NSAlert()
-            alert.messageText = "탭을 닫을까요? 세션 \(tab.root.panes.count)개가 종료됩니다."
+            alert.messageText = "탭을 닫을까요? 세션 \(tab.root.panes.filter { !AgentPane.isAgentPane($0) }.count)개가 종료됩니다."
             alert.informativeText = "실행 중: " + busy.map(\.title).joined(separator: ", ")
             alert.addButton(withTitle: "닫기")
             alert.addButton(withTitle: "취소")
@@ -1653,6 +1713,7 @@ final class TermModel: ObservableObject {
         case "browser-give": browserWindows.keyPane?.giveBack()
         case "close": closeFocused()
         case "close-tab": closeTab()
+        case "agent-panes-toggle": toggleAgentPanes()
         case "rename": renameFocused()
         case "save": saveFocused()
         case "relocate-data": moveToNewLocation()
