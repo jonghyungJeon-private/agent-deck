@@ -98,6 +98,8 @@ struct FolderGroup: Identifiable, Equatable {
 final class TermModel: ObservableObject {
     @Published var rows: [PaneRow] = []
     @Published var groups: [FolderGroup] = []
+    /// 목록에 보이는 하위 에이전트 전부(하위 에이전트 보기 화면의 머리·제목 상태를 정한다. 보여 주기만 하며 알림과 상관없다)
+    private(set) var agentActivities: [SubagentActivity] = []
     @Published private(set) var workspace = Workspace() {
         // 화면이 없어지면(닫기·셸이 끝남·목록에서 빠짐) 그 브라우저도 정리한다. 꺼진 화면(dormant)은 남아 있으니 그대로.
         didSet {
@@ -860,6 +862,11 @@ final class TermModel: ObservableObject {
         markSeen()
         updateDockBadge()
         if newGroups != groups { groups = newGroups }
+        let activities = newGroups.flatMap { group in group.sections.flatMap { $0.agents + $0.rows.flatMap(\.agents) } }
+        if activities != agentActivities {
+            agentActivities = activities
+            if !workspace.agentViews.isEmpty { host?.refreshTitles() }
+        }
         let live = newRows.filter { !$0.dormant }.map(\.id)
         if live.contains(where: { reviveFailedAt[$0] != nil }) { lastError = nil } // 다시 시도해 되살아났다
         live.forEach { awaiting[$0] = nil; reviveFailedAt[$0] = nil }
@@ -1111,6 +1118,7 @@ final class TermModel: ObservableObject {
 
     /// 분할 테두리 제목(탭·목록과 같은 이름). 편집기는 파일 이름, 저장 안 했으면 뒤에 ●.
     func paneLabel(_ id: String) -> String {
+        if let recipe = workspace.agentViews[id] { return "↳ " + recipe.description }
         if EditorPane.isEditor(id) {
             let name = workspace.editors[id].map { ($0.path as NSString).lastPathComponent } ?? "…"
             return editors.isDirty(id) ? name + " ●" : name
@@ -1239,6 +1247,7 @@ final class TermModel: ObservableObject {
 
     /// 지금 화면의 폴더(편집기면 그 파일이 있는 폴더) — 새 탭·분할이 여기서 열린다
     var focusedCwd: String? {
+        if let owner = selectedId.flatMap({ workspace.agentViews[$0] })?.owner { return row(owner)?.cwd }
         if let id = selectedId, let path = workspace.editors[id]?.path { return (path as NSString).deletingLastPathComponent }
         return focusedRow?.cwd
     }
@@ -1473,10 +1482,33 @@ final class TermModel: ObservableObject {
         editors.confirmClose(editors.dirtyDocuments)
     }
 
+    /// 하위 에이전트 줄을 눌렀을 때: 그 기록을 읽기 전용으로 보여 주는 화면을 띄운 에이전트 화면 오른쪽에 연다.
+    /// 이미 어디든 열려 있으면 그 화면으로 간다(배치 규칙은 TermLayout `Workspace.openAgentView`).
+    func openAgentView(_ agent: SubagentActivity) {
+        guard let transcript = agent.transcriptPath else { return }
+        var next = workspace
+        next.openAgentView(AgentViewRecipe(transcript: transcript, owner: agent.paneId, description: agent.description,
+                                           agentType: agent.agentType))
+        setWorkspace(next, render: true)
+        host?.focusPane()
+    }
+
+    /// 하위 에이전트 보기 화면의 에이전트가 일하는 중인지(목록에 없으면 nil). 테두리 제목에 보이기만 한다.
+    func agentViewRunning(_ id: String) -> Bool? {
+        guard let transcript = workspace.agentViews[id]?.transcript else { return nil }
+        return agentActivities.first { $0.transcriptPath == transcript }?.isRunning
+    }
+
     /// 화면 닫기(셸·claude 종료). 셸이 아닌 프로그램이 돌고 있으면 묻는다(Ghostty 처럼).
     func close(pane id: String, confirm: Bool = true) {
         if EditorPane.isEditor(id) {
             closeEditor(id, confirm: confirm)
+            return
+        }
+        if AgentViewPane.isAgentView(id) { // 기록을 보는 화면일 뿐이다: 묻지 않고, 데몬도 건드리지 않는다
+            var next = workspace
+            next.forget(pane: id)
+            setWorkspace(next, render: true)
             return
         }
         let row = row(id)

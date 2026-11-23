@@ -8,7 +8,8 @@ extension TermModel {
                 let row = row(id)
                 let path = workspace.editors[id]?.path
                 let owner = workspace.browsers[id].flatMap { self.row($0.owner) } // 브라우저 화면은 주인의 폴더
-                let folder = path.map { ($0 as NSString).deletingLastPathComponent } ?? row?.cwd ?? owner?.cwd ?? ""
+                let agentOwner = workspace.agentViews[id]?.owner.flatMap { self.row($0) } // 하위 에이전트 보기는 띄운 화면의 폴더
+                let folder = path.map { ($0 as NSString).deletingLastPathComponent } ?? row?.cwd ?? owner?.cwd ?? agentOwner?.cwd ?? ""
                 let state: String
                 switch row?.status {
                 case .waiting?: state = "waiting"
@@ -97,10 +98,11 @@ final class SessionSwitcher {
             let row = host.model.row(target.id)
             let editor = host.model.workspace.editors[target.id] != nil
             let browser = host.model.workspace.browsers[target.id] != nil
+            let agentView = host.model.workspace.agentViews[target.id] != nil
             let status = row?.dormant == true ? WorkStatus.none : (row?.status ?? .none)
-            let label = row?.dormant == true ? "꺼짐" : (row?.status ?? .none).label ?? (editor ? "편집기" : browser ? "브라우저" : "셸")
+            let label = row?.dormant == true ? "꺼짐" : (row?.status ?? .none).label ?? (editor ? "편집기" : browser ? "브라우저" : agentView ? "하위 에이전트" : "셸")
             // 종류: 에이전트는 종류 색, 그 밖(셸·편집기·브라우저)은 중립
-            let kind: SessionKind = row?.isCodex == true ? .codex : row?.isClaude == true ? .claude : editor ? .document : browser ? .browser : .shell
+            let kind: SessionKind = row?.isCodex == true ? .codex : row?.isClaude == true ? .claude : editor ? .document : browser ? .browser : agentView ? .claude : .shell
             return NavigatorRow(
                 title: NSAttributedString(string: target.name, attributes: [.font: EditorStyle.font, .foregroundColor: TermAppearance.textPrimary]),
                 detail: (target.folder as NSString).abbreviatingWithTildeInPath,

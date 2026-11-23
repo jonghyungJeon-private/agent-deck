@@ -150,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "pane-find", "pane-find-next", "pane-find-previous":
             guard NSApp.keyWindow === window else { return false }
             if let editor = model.host?.focusedEditor { return editor.preview == nil && editor.textView != nil }
+            if model.host?.focusedAgentView != nil { return true } // 하위 에이전트 보기: 그 글 안에서 찾는다
             guard let pane = model.host?.focusedTerminal else { return false }
             return menuItem.representedObject as? String == "pane-find" || pane.findBar.superview != nil
                 || !pane.findBar.field.stringValue.isEmpty
@@ -553,6 +554,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 case "pane-find": textView.editorFind(nil)
                 case "pane-find-next": textView.editorFindNext(nil)
                 default: textView.editorFindPrevious(nil)
+                }
+            } else if let agentView = model.host?.focusedAgentView {
+                switch action {
+                case "pane-find": agentView.find(.showFindInterface)
+                case "pane-find-next": agentView.find(.nextMatch)
+                default: agentView.find(.previousMatch)
                 }
             } else if let pane = model.host?.focusedTerminal {
                 if action == "pane-find" { pane.findBar.show() }
@@ -1376,9 +1383,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             func describe(_ node: SplitNode, _ focused: String) -> String {
                 switch node {
                 case .pane(let id):
-                    let name = model.workspace.editors[id].map {
+                    var name = model.workspace.editors[id].map {
                         ($0.path as NSString).lastPathComponent + ($0.isPreview ? "~" : "")
                     } ?? model.workspace.browsers[id].map { "browser(" + $0.owner.prefix(4) + ")" } ?? String(id.prefix(4))
+                    if let recipe = model.workspace.agentViews[id] { name = "agentview(" + (recipe.transcript as NSString).lastPathComponent + ")" }
                     return name + (id == focused ? "*" : "")
                 case .split(let axis, _, let first, let second):
                     return "(" + describe(first, focused) + (axis == .horizontal ? " | " : " / ") + describe(second, focused) + ")"
@@ -1389,6 +1397,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                     + (tab.zoomed ? " zoomed" : ""))
             }
             print("tabs end")
+            fflush(stdout)
+        case "open-agent-view":
+            // open-agent-view <기록 파일 절대 경로>[|<설명>[|<종류>]]: 지금 화면을 띄운 화면으로 삼아 하위 에이전트 보기를 연다(줄을 누른 것과 같음)
+            let v = argument.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+            guard let path = v.first, !path.isEmpty, let owner = model.selectedId else { return }
+            model.openAgentView(SubagentActivity(
+                id: ((path as NSString).lastPathComponent as NSString).deletingPathExtension, sessionId: "debug", paneId: owner,
+                description: v.count > 1 && !v[1].isEmpty ? v[1] : (path as NSString).lastPathComponent,
+                agentType: v.count > 2 && !v[2].isEmpty ? v[2] : nil, worktreePath: nil, lastActive: Date(), lastText: nil,
+                running: nil, transcriptPath: path))
+        case "agent-views":
+            // 보이는 하위 에이전트 보기 화면의 상태(읽은 항목 수·타이머·머리 줄)와 배치에 든 개수
+            for view in model.host?.agentViews.values.sorted(by: { $0.transcript < $1.transcript }) ?? [] { print(view.debugSummary) }
+            print("agent-views visible=\(model.host?.agentViews.count ?? 0) layout=\(model.workspace.agentViews.count)")
             fflush(stdout)
         case "dragpoints":
             print(model.host?.debugDragPoints() ?? "")

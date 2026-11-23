@@ -20,6 +20,8 @@ struct SubagentActivity: Identifiable, Equatable {
     /// claude 하위 에이전트는 끝 표시(meta 의 finished·기록 끝의 end_turn)로 정한다 — 긴 명령을 기다리느라 조용해도 일하는 중.
     var running: Bool? = nil
     var isRunning: Bool { running ?? (Date().timeIntervalSince(lastActive) < 60) }
+    /// 이 에이전트의 기록 파일(agent-*.jsonl, claude 하위 에이전트만 — Codex 는 nil). 있으면 눌러서 옆에 읽기 전용으로 열 수 있다.
+    var transcriptPath: String? = nil
 }
 
 /// 하위 에이전트 기록(~/.claude/projects/<폴더>/<세션>/subagents/agent-*.jsonl)을 훑어 어느 작업 트리에서 일하는지 알아낸다.
@@ -82,7 +84,7 @@ final class SubagentScanner {
                 result.append(SubagentActivity(id: name, sessionId: session.sessionId, paneId: session.paneId,
                                                description: info?.description ?? name, agentType: info?.type,
                                                worktreePath: entry?.worktree, lastActive: modified, lastText: entry?.lastText,
-                                               running: running))
+                                               running: running, transcriptPath: path))
             }
         }
         // 창 밖으로 나간 파일의 캐시는 버린다

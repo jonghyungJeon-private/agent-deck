@@ -369,9 +369,39 @@ public struct BrowserRecipe: Codable, Equatable {
     }
 }
 
-/// 데몬이 붙잡지 않는 화면(편집기·브라우저): 데몬 목록에 없어도 지우거나 되살리지 않는다
+/// 하위 에이전트 보기 화면(읽기 전용, 데몬 화면이 아님). 분할 나무의 잎에 "agentview:<UUID>" 로 들어간다.
+/// 데몬 목록에 없어도 지우지 않고(reconcile), 셸로 되살리지도 않는다.
+public enum AgentViewPane {
+    public static let prefix = "agentview:"
+
+    public static func isAgentView(_ id: String) -> Bool { id.hasPrefix(prefix) }
+
+    public static func newId() -> String { prefix + UUID().uuidString }
+}
+
+/// 하위 에이전트 보기 화면을 다시 열 때 필요한 것
+public struct AgentViewRecipe: Codable, Equatable {
+    /// 보는 하위 에이전트 기록 파일(절대 경로: .../subagents/agent-<id>.jsonl)
+    public var transcript: String
+    /// 그 에이전트를 띄운 화면(데몬 화면 id, 없어도 됨)
+    public var owner: String?
+    /// 에이전트 설명(화면 이름·머리줄)
+    public var description: String
+    public var agentType: String?
+
+    public init(transcript: String, owner: String? = nil, description: String, agentType: String? = nil) {
+        self.transcript = transcript
+        self.owner = owner
+        self.description = description
+        self.agentType = agentType
+    }
+}
+
+/// 데몬이 붙잡지 않는 화면(편집기·브라우저·하위 에이전트 보기): 데몬 목록에 없어도 지우거나 되살리지 않는다
 public enum LocalPane {
-    public static func isLocal(_ id: String) -> Bool { EditorPane.isEditor(id) || BrowserPane.isBrowser(id) }
+    public static func isLocal(_ id: String) -> Bool {
+        EditorPane.isEditor(id) || BrowserPane.isBrowser(id) || AgentViewPane.isAgentView(id)
+    }
 }
 
 /// 끌어 온 탭·화면을 놓을 곳
@@ -398,13 +428,15 @@ public struct Workspace: Codable, Equatable {
     public var editors: [String: EditorRecipe] = [:]
     /// 브라우저 화면별 주인
     public var browsers: [String: BrowserRecipe] = [:]
+    /// 하위 에이전트 보기 화면별 기록 파일
+    public var agentViews: [String: AgentViewRecipe] = [:]
 
     public init(tabs: [TabState] = [], selected: String? = nil) {
         self.tabs = tabs
         self.selected = selected
     }
 
-    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors, browsers }
+    enum CodingKeys: String, CodingKey { case tabs, selected, recipes, daemonPid, daemonInstance, dormant, editors, browsers, agentViews }
 
     // 예전 배치 파일(되살리기 정보 없음)도 읽는다
     public init(from decoder: Decoder) throws {
@@ -417,6 +449,9 @@ public struct Workspace: Codable, Equatable {
         dormant = try c.decodeIfPresent(Set<String>.self, forKey: .dormant) ?? []
         editors = try c.decodeIfPresent([String: EditorRecipe].self, forKey: .editors) ?? [:]
         browsers = try c.decodeIfPresent([String: BrowserRecipe].self, forKey: .browsers) ?? [:]
+        agentViews = try c.decodeIfPresent([String: AgentViewRecipe].self, forKey: .agentViews) ?? [:]
+        // 정보가 없는 하위 에이전트 보기 잎도 열 수 없으니 뺀다
+        for pane in allPanes where AgentViewPane.isAgentView(pane) && agentViews[pane] == nil { remove(pane: pane) }
         // 파일 정보가 없는 편집기 잎·주인이 없는 브라우저 잎은 열 수 없으니 뺀다(망가진 파일)
         for pane in allPanes where EditorPane.isEditor(pane) && editors[pane] == nil { remove(pane: pane) }
         // 브라우저는 이제 화면 잎이 아니라 세션별 창이다(0.6). 예전 배치의 브라우저 잎은 읽을 때 빼고
@@ -548,6 +583,7 @@ public struct Workspace: Codable, Equatable {
         dormant.remove(pane)
         editors[pane] = nil
         browsers[pane] = nil
+        agentViews[pane] = nil
     }
 
     /// 브라우저 화면(나무 순서)
@@ -564,6 +600,45 @@ public struct Workspace: Codable, Equatable {
     /// 그 파일을 연 편집기 화면
     public func editorPane(path: String) -> String? {
         editorPanes.first { editors[$0]?.path == path }
+    }
+
+    /// 하위 에이전트 보기 화면(나무 순서)
+    public var agentViewPanes: [String] { allPanes.filter(AgentViewPane.isAgentView) }
+
+    /// 그 기록 파일을 보는 하위 에이전트 보기 화면
+    public func agentViewPane(transcript: String) -> String? {
+        agentViewPanes.first { agentViews[$0]?.transcript == transcript }
+    }
+
+    /// 하위 에이전트 보기 열기(배치만 정한다 — 뷰는 앱이 만든다). 만든 화면(이미 있으면 그 화면)을 돌려준다.
+    /// 1. 그 기록을 보는 화면이 이미 어디든 있으면 그 탭으로 가서 포커스한다.
+    /// 2. 주인 화면이 어느 탭에 있으면 그 화면 오른쪽을 나눠 연다(그 탭을 고른다).
+    /// 3. 주인 화면이 어느 탭에도 없으면(꺼진 화면 등) 지금 탭 바로 뒤 새 탭에 연다.
+    @discardableResult
+    public mutating func openAgentView(_ recipe: AgentViewRecipe, newId: () -> String = AgentViewPane.newId) -> String {
+        if let existing = agentViewPane(transcript: recipe.transcript), let index = tabIndex(containing: existing) {
+            selected = tabs[index].id
+            if tabs[index].focused != existing {
+                tabs[index].focused = existing
+                tabs[index].zoomed = false
+            }
+            return existing
+        }
+        let id = newId()
+        agentViews[id] = recipe
+        if let owner = recipe.owner, let index = tabIndex(containing: owner) {
+            var tab = tabs[index]
+            tab.root = tab.root.splitting(owner, with: id, axis: .horizontal)
+            tab.focused = id
+            tab.zoomed = false
+            tabs[index] = tab
+            selected = tab.id
+        } else {
+            let tab = TabState(root: .pane(id), focused: id)
+            tabs.insert(tab, at: selectedIndex.map { $0 + 1 } ?? tabs.count)
+            selected = tab.id
+        }
+        return id
     }
 
     /// 데몬 화면 목록에 맞춘다. 바뀐 게 있으면 true.
@@ -604,6 +679,7 @@ public struct Workspace: Codable, Equatable {
         recipes = recipes.filter { placed.contains($0.key) || liveSet.contains($0.key) }
         editors = editors.filter { placed.contains($0.key) }
         browsers = browsers.filter { placed.contains($0.key) }
+        agentViews = agentViews.filter { placed.contains($0.key) }
         if selectedIndex == nil || !tabs.contains(where: { $0.id == selected }) {
             selected = tabs.first?.id
         }

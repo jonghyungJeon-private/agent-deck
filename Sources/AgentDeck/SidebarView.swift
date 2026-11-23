@@ -150,14 +150,28 @@ struct SidebarView: View {
         case .agent(let agent, let depth, let owner, _):
             AgentRowView(agent: agent, depth: depth, owner: owner, expanded: expandedAgent == agent.id)
                 .onTapGesture {
-                    // 띄운 에이전트 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
-                    model.focus(pane: agent.paneId)
-                    withAnimation(Motion.ease()) { expandedAgent = expandedAgent == agent.id ? nil : agent.id }
+                    if agent.transcriptPath != nil {
+                        // claude 하위 에이전트: 기록을 읽기 전용으로 띄운 에이전트 화면 옆에 연다(이미 열려 있으면 그 화면으로)
+                        model.openAgentView(agent)
+                    } else {
+                        // Codex 하위 에이전트: 띄운 에이전트 화면으로 넘어가고, 무엇을 하는지 펼쳐 본다
+                        toggleAgentSummary(agent)
+                    }
+                }
+                .contextMenu {
+                    if agent.transcriptPath != nil { Button("옆에 열기") { model.openAgentView(agent) } }
+                    Button("마지막 메시지 펼치기") { toggleAgentSummary(agent) }
                 }
         case .gap:
             // 묶음 끝 틈: 묶음을 끌어 내릴 때 놓을 자리 줄이 여기 그려진다
             Color.clear.frame(height: ui(Space.md)).contentShape(Rectangle())
         }
+    }
+
+    /// 띄운 에이전트 화면으로 넘어가고, 마지막 메시지를 펼친다(한 번 더 누르면 접는다)
+    private func toggleAgentSummary(_ agent: SubagentActivity) {
+        model.focus(pane: agent.paneId)
+        withAnimation(Motion.ease()) { expandedAgent = expandedAgent == agent.id ? nil : agent.id }
     }
 
     /// ⌘N 힌트는 탭마다 한 번만: 보이는 줄 중 그 탭에서 입력을 받는 세션 줄(없으면 탭의 첫 보이는 세션 줄)에.
@@ -1319,7 +1333,8 @@ private struct SpacesDropDelegate: DropDelegate {
     }
 }
 
-/// 하위 에이전트 한 줄. 누르면 띄운 에이전트 화면으로 넘어가고 마지막 메시지를 펼친다.
+/// 하위 에이전트 한 줄. claude 하위 에이전트는 누르면 기록을 읽기 전용 화면으로 옆에 열고(오른쪽 클릭: 마지막 메시지 펼치기),
+/// 기록 파일이 없는 것(Codex)은 띄운 에이전트 화면으로 넘어가 마지막 메시지를 펼친다.
 struct AgentRowView: View {
     let agent: SubagentActivity
     let depth: Int
@@ -1378,7 +1393,9 @@ struct AgentRowView: View {
         .sidebarPill(hovering ? PillLevel.hover : PillLevel.none, ui)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .help("누르면 이 에이전트를 띄운 에이전트의 세션으로 이동하고 마지막 메시지를 펼칩니다\n\(agent.worktreePath ?? "")")
+        .help((agent.transcriptPath != nil
+            ? "누르면 이 에이전트의 기록을 띄운 에이전트 화면 옆에 읽기 전용으로 엽니다(오른쪽 클릭: 마지막 메시지 펼치기)"
+            : "누르면 이 에이전트를 띄운 에이전트의 세션으로 이동하고 마지막 메시지를 펼칩니다") + "\n\(agent.worktreePath ?? "")")
     }
 }
 

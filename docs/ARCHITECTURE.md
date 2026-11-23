@@ -672,6 +672,25 @@ Metal 은 앞선 작은 시험에서 CoreText 보다 이점이 없어 기본값 
   이때와 `AGENTDECK_SNAPSHOT` 일 때는 창이 뒤에 있어도 files 감시를 멈추지 않는다.
   실제 창은 `screencapture -l <창 번호>` 로 찍을 수 있다(층 그림은 SwiftUI·글자가 빠지는 일이 있다).
 
+## 하위 에이전트 보기(AgentTranscriptPaneView)
+
+사이드바의 claude 하위 에이전트 줄(Agent 도구·워크플로)을 누르면 그 에이전트의 대화를 읽기 전용 화면으로, 띄운 에이전트 화면 **오른쪽**에 나눠 연다.
+하위 에이전트는 PTY 가 없고 기록이 `~/.claude/projects/<폴더>/<세션>/subagents/agent-<id>.jsonl` 에 실시간으로 쓰인다(`agent-<id>.meta.json` 에 설명·종류·finished).
+
+- **무엇을 읽나**: `SubagentScanner` 가 이미 훑는 파일이다(`SubagentActivity.transcriptPath`, Codex 자식은 nil 이라 예전처럼 "마지막 메시지 펼치기").
+  `SessionCore.AgentTranscriptTail` 이 파일 끝을 따라 읽는다 — 처음엔 끝 512KiB 만(줄 중간에서 시작했으면 첫 줄을 버림), 그다음은 늘어난 바이트만.
+  줄바꿈이 오지 않은 끝 줄은 다음 읽기까지 쥐고 있고, 파일이 줄면 처음부터 다시 읽는다. 최근 400 항목만 둔다 — 이어 읽는 동안은 500 개까지 두었다가 한꺼번에 400 으로 줄여, 넘칠 때마다 전체를 다시 그리지 않는다(`poll()` 은 `.none`/`.appended`/`.reset`).
+  `type` 이 user·assistant 인 줄만 JSON 으로 푼다 — `api-request*`·`attachment` 줄(아주 큰 것도 있다)은 바이트 앞부분만 보고 버린다.
+  항목은 질문(prompt)·글(text)·도구(tool, 이름 + 한 줄 요약)·결과(result)이고 thinking 은 건너뛴다.
+- **배치**: 분할 잎 `agentview:<UUID>`(`AgentViewPane`), 정보는 `Workspace.agentViews[id]`(`AgentViewRecipe`: 기록 경로·띄운 화면·설명·종류, layout.json 에 저장).
+  `Workspace.openAgentView`: 같은 기록을 보는 화면이 어디든 있으면 거기로 포커스, 없으면 띄운 화면 오른쪽을 나눠 연다, 띄운 화면이 어느 탭에도 없으면 지금 탭 뒤 새 탭.
+  `LocalPane` 이라 데몬이 되살리거나 끄지 않는다(reconcile 이 그대로 둔다). ⌘W·탭 닫기는 묻지 않고 화면만 뺀다. 이름은 "↳ 설명".
+- **수명·메모리**: `TerminalHostController.render()` 가 보이는 잎에만 뷰를 만들고, 안 보이면 `detach()` 로 타이머·읽기 상태(`AgentTranscriptTail`)·글을 모두 놓는다(편집기와 같다).
+  1초 타이머는 창에 붙어 있고 창이 보일 때만 읽는다. 새 항목은 이어 붙이고(맨 아래를 보고 있을 때만 따라 내려간다), 처음·밀려남·줄어듦은 다시 그린다.
+  기록 파일이 없으면 짧은 안내 글만 보인다. ⌘F 는 그 글 안 찾기 막대(터미널 찾기로 가지 않는다).
+- **상태 표시**: 머리 줄과 분할 테두리의 "작업 중/완료"는 `TermModel.agentActivities`(`transcriptPath` 로 찾음)에서 만든다. 보이기만 하며 `PaneRow.status`·알림·Dock 배지·"봤음"과 이어지지 않는다.
+- **시험 명령**: `open-agent-view <기록 경로>[|<설명>[|<종류>]]`(지금 화면을 띄운 화면으로 삼아 연다)·`agent-views`(보이는 화면의 읽은 항목 수·타이머·머리 줄)·`tabs`(잎은 `agentview(<파일>)`).
+
 ## 메뉴 막대
 
 - 순서: AgentDeck · 파일 · 편집 · **보기** · 셸 · 이동 · **윈도우** · **도움말**(`main.swift` `buildMenu`). macOS 표준 틀을 따른다.
