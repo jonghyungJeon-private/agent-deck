@@ -104,6 +104,10 @@ final class TermModel: ObservableObject {
     private(set) var agentActivities: [SubagentActivity] = []
     /// 하위 에이전트 목록을 한 번이라도 받았나(받기 전에는 칸 머리에 상태를 적지 않는다 — 방금 켜서 모르는 것을 "완료"로 적지 않게)
     private var agentsKnown = false
+    /// 작업 중으로 본 하위 에이전트 칸(끝나면 닫는다 — AgentPaneAutoClose)
+    private var agentPanesSeenRunning: Set<String> = []
+    /// 일을 마친 하위 에이전트 칸이 닫히기까지 기다리는 시간(마지막 글을 잠깐 보이게)
+    static let agentPaneCloseDelay: TimeInterval = 3
     @Published private(set) var workspace = Workspace() {
         // 화면이 없어지면(닫기·셸이 끝남·목록에서 빠짐) 그 브라우저도 정리한다. 꺼진 화면(dormant)은 남아 있으니 그대로.
         didSet {
@@ -874,7 +878,10 @@ final class TermModel: ObservableObject {
         if activities != agentActivities || !agentsKnown {
             agentActivities = activities
             agentsKnown = true
-            if !workspace.agentPanes.isEmpty { host?.refreshTitles() }
+            if !workspace.agentPanes.isEmpty {
+                host?.refreshTitles()
+                closeFinishedAgentPanes()
+            }
         }
         let live = newRows.filter { !$0.dormant }.map(\.id)
         if live.contains(where: { reviveFailedAt[$0] != nil }) { lastError = nil } // 다시 시도해 되살아났다
@@ -1523,6 +1530,28 @@ final class TermModel: ObservableObject {
         next.openAgentPane(recipe)
         setWorkspace(next, render: true)
         host?.focusPane()
+        closeFinishedAgentPanes() // 지금 작업 중인 에이전트면 "봤음"으로 적어 둔다(끝나면 닫히게)
+    }
+
+    /// 작업 중으로 본 하위 에이전트가 끝났으면 잠깐 뒤 그 칸을 닫는다(그 사이 다시 일을 시작했으면 두고).
+    /// 이미 끝난 에이전트를 열어 둔 칸은 닫지 않는다. 목록을 아직 못 받았으면 아무것도 안 한다.
+    private func closeFinishedAgentPanes() {
+        guard agentsKnown else { return }
+        var running: [String: Bool] = [:]
+        for agent in agentActivities {
+            guard let path = agent.transcriptPath else { continue }
+            running[path] = (running[path] ?? false) || agent.isRunning
+        }
+        let step = AgentPaneAutoClose.step(recipes: workspace.agentPanes.mapValues(\.transcriptPath), running: running,
+                                           seenRunning: agentPanesSeenRunning)
+        agentPanesSeenRunning = step.seen
+        guard !step.close.isEmpty else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.agentPaneCloseDelay) { [weak self] in
+            guard let self else { return }
+            var next = self.workspace
+            for id in step.close where next.agentPanes[id] != nil && self.agentPaneRunning(id) != true { next.forget(pane: id) }
+            if next != self.workspace { self.setWorkspace(next, render: true) }
+        }
     }
 
     /// 하위 에이전트 칸의 에이전트가 일하는 중인지(목록을 아직 못 받았으면 nil, 받았는데 없으면 끝난 것). 칸 머리에 보이기만 한다.
@@ -1571,6 +1600,7 @@ final class TermModel: ObservableObject {
         }
         setWorkspace(next, render: true)
         host?.focusPane()
+        closeFinishedAgentPanes()
     }
 
     /// 화면 닫기(셸·claude 종료). 셸이 아닌 프로그램이 돌고 있으면 묻는다(Ghostty 처럼).

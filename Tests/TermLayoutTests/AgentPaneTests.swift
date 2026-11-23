@@ -229,4 +229,19 @@ final class AgentPaneTests: XCTestCase {
         }
         XCTAssertEqual(ws.tabs[0].root.panes, ["A", "agentpane:1", "agentpane:2"])
     }
+
+    func testAutoCloseOnlyPanesSeenRunningThatFinished() {
+        let recipes = ["agentpane:1": "/a.jsonl", "agentpane:2": "/b.jsonl", "agentpane:3": "/c.jsonl"]
+        // 1·2 작업 중, 3 은 이미 끝난 것을 열어 둠 → 아무것도 닫지 않고 1·2 를 봤음으로
+        var s = AgentPaneAutoClose.step(recipes: recipes, running: ["/a.jsonl": true, "/b.jsonl": true, "/c.jsonl": false], seenRunning: [])
+        XCTAssertEqual(s.close, [])
+        XCTAssertEqual(s.seen, ["agentpane:1", "agentpane:2"])
+        // 1 이 끝남, 2 는 목록에서 사라짐(끝난 것으로) → 둘 다 닫기, 3 은 그대로
+        s = AgentPaneAutoClose.step(recipes: recipes, running: ["/a.jsonl": false, "/c.jsonl": false], seenRunning: s.seen)
+        XCTAssertEqual(s.close, ["agentpane:1", "agentpane:2"])
+        XCTAssertEqual(s.seen, [])
+        // 닫힌 칸(레시피 없음)은 잊는다
+        s = AgentPaneAutoClose.step(recipes: [:], running: [:], seenRunning: ["agentpane:9"])
+        XCTAssertEqual(s.seen, [])
+    }
 }

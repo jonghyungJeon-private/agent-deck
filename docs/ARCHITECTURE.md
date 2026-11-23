@@ -711,6 +711,8 @@ claude 가 띄운 하위 에이전트(Agent 도구) **하나가 칸(split pane) 
   목록은 사이드바가 이미 훑은 `TermModel.agentActivities`(`SubagentScanner` 가 10초에 한 번, 최근 15분 안에 바뀐 기록만)를 그대로 쓴다 — 칸이 따로 훑지 않는다.
 - **⇧⌘A / 보기 > 하위 에이전트 칸**(`TermModel.toggleAgentPanes`, 동작 이름 `agent-panes-toggle`): 지금 탭에 하위 칸이 있으면 모두 닫는다. 없으면 포커스된 세션의 하위 에이전트 중
   작업 중인 것을 모두(최근 순, 최대 `AgentPaneChoice.maxOpen` = 4개 — `AgentPaneChoice.pickAll`), 작업 중인 게 없으면 가장 최근 것 하나를 위 배치 규칙으로 한 번에 연다(배치를 한 번만 바꾼다). 열 것이 없으면 `NSSound.beep`.
+- **끝나면 닫힘**(`AgentPaneAutoClose.step`, `TermModel.closeFinishedAgentPanes`): 하위 에이전트 목록이 바뀔 때마다, 작업 중으로 본 칸의 에이전트가 끝났으면(목록에서 사라진 것 포함)
+  `agentPaneCloseDelay`(3초) 뒤 그 칸을 닫는다(그 사이 다시 작업 중이면 둔다). 이미 끝난 에이전트를 열어 둔 칸은 닫지 않는다 — 읽으려고 연 것이므로.
 - **Codex**: 기록 파일이 없다(`transcriptPath == nil`) — 칸을 만들지 않고 사이드바의 "마지막 메시지 펼치기"(줄 아래로 펼침)를 그대로 쓴다. 줄을 눌러도 같다.
   사이드바 오른쪽 클릭 메뉴: "칸으로 보기"(claude 만) · "마지막 메시지 펼치기".
 - **예전 판과의 호환**: 0.11.0~0.11.1 의 분할 잎 `agentview:<UUID>`(+ `agentViews` 키)는 계속 읽을 때 뺀다(`LegacyAgentViewPane` — 옆 화면이 그 자리를 채우고 잎만 있던 탭은 사라진다).

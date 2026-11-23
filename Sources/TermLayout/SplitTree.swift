@@ -416,6 +416,26 @@ public enum AgentPaneChoice {
     }
 }
 
+/// 하위 에이전트가 일을 마치면 그 칸을 닫는다(herdr 처럼 끝난 일은 화면에서 걷힌다).
+/// 작업 중인 것을 본 칸만 닫는다 — 이미 끝난 에이전트를 일부러 열어 읽는 칸은 그대로 둔다.
+public enum AgentPaneAutoClose {
+    /// recipes: 칸 ID → 기록 파일, running: 기록 파일 → 작업 중인지(목록에 없으면 끝난 것), seenRunning: 작업 중으로 본 칸.
+    /// 돌려주는 것: 닫을 칸(작업 중으로 봤는데 이제 끝남)과 다음 seenRunning.
+    public static func step(recipes: [String: String], running: [String: Bool], seenRunning: Set<String>) -> (close: [String], seen: Set<String>) {
+        var seen = seenRunning.intersection(recipes.keys)
+        var close: [String] = []
+        for (id, path) in recipes.sorted(by: { $0.key < $1.key }) {
+            if running[path] == true {
+                seen.insert(id)
+            } else if seen.contains(id) {
+                close.append(id)
+                seen.remove(id)
+            }
+        }
+        return (close, seen)
+    }
+}
+
 /// 하위 에이전트 칸을 다시 열 때 필요한 것(layout.json 의 "agentPanes")
 public struct AgentPaneRecipe: Codable, Equatable {
     /// 보는 하위 에이전트 기록 파일(절대 경로: .../subagents/agent-<id>.jsonl)
