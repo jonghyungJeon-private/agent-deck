@@ -1,6 +1,6 @@
 # 변경 기록
 
-## 다음 버전
+## 0.12.0 — 2026-11-24
 
 - **`agentdeck` 명령**: 한 칸의 claude(지휘)가 다른 칸의 claude·codex(작업)에 일을 시키고, 끝나길 기다리고, 결과를 받는다.
   `list`·`status`·`send`·`wait`·`ask`·`read`·`new`·`close`·`focus`(`agentdeck help`). `ask` 는 보내고 기다린 뒤 그 칸 에이전트의 이번 턴 마지막 답을 대화 기록에서 읽어 낸다
