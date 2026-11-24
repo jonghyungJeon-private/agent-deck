@@ -385,6 +385,10 @@ struct SidebarView: View {
                 return ("세션 데몬이 예전 버전", "세션 데몬이 예전 버전이라 세션에 브라우저가 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 시작됩니다.",
                         nil, "exclamationmark.triangle.fill", TermAppearance.warning)
             }
+            if !model.daemonHasCli {
+                return ("세션 데몬이 예전 버전", "세션 데몬이 예전 버전이라 새로 만드는 칸에 agentdeck 명령(PATH·AGENTDECK_PANE_ID)이 연결되지 않습니다. 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜면(또는 재부팅) 새 데몬이 시작됩니다.",
+                        nil, "exclamationmark.triangle.fill", TermAppearance.warning)
+            }
             if case .updateFailed(let detail) = skill {
                 return ("abx 스킬 갱신 실패", "abx 스킬을 지금 abx 버전으로 바꾸지 못했습니다 — \(detail)", "다시 시도",
                         "exclamationmark.triangle.fill", TermAppearance.statusAttention)

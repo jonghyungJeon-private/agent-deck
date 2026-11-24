@@ -63,6 +63,31 @@ final class CodexTests: XCTestCase {
         XCTAssertEqual(reader.children(of: sid).count, 0)
     }
 
+    /// `agentdeck ask`: SQLite 대체 경로는 보내기 전 기준점보다 뒤의 글만 이번 턴 답이다
+    func testLastAgentMessageOnlyAfterBaselineOrdinal() throws {
+        try database("thread_history_1.sqlite", sql: """
+        CREATE TABLE thread_items(thread_id TEXT,item_type TEXT,item_json TEXT,rollout_ordinal INTEGER);
+        """)
+        let reader = CodexSessions(home: dir)
+        XCTAssertEqual(reader.lastItemOrdinal(sid), -1, "읽을 수 있지만 항목이 아직 없다")
+        XCTAssertNil(reader.lastAgentMessage(sid))
+        try database("thread_history_1.sqlite", sql: """
+        INSERT INTO thread_items VALUES('\(sid)','userMessage','{"text":"지난 질문"}',1);
+        INSERT INTO thread_items VALUES('\(sid)','agentMessage','{"text":"지난 턴 답"}',2);
+        """)
+        let baseline = try XCTUnwrap(reader.lastItemOrdinal(sid))
+        XCTAssertEqual(baseline, 2)
+        XCTAssertEqual(reader.lastAgentMessage(sid), "지난 턴 답", "기준점을 안 주면 마지막 글")
+        XCTAssertNil(reader.lastAgentMessage(sid, after: baseline), "이번 턴 글이 아직 없으면 지난 턴 답을 주지 않는다")
+        try database("thread_history_1.sqlite", sql: """
+        INSERT INTO thread_items VALUES('\(sid)','userMessage','{"text":"새 질문"}',3);
+        INSERT INTO thread_items VALUES('\(sid)','agentMessage','{"text":"이번 턴 답"}',4);
+        """)
+        XCTAssertEqual(reader.lastAgentMessage(sid, after: baseline), "이번 턴 답")
+        // 읽을 수 없으면(파일 없음) 기준점도 nil — 호출한 쪽이 SQLite 글을 쓰지 않는다
+        XCTAssertNil(CodexSessions(home: dir.appendingPathComponent("none")).lastItemOrdinal(sid))
+    }
+
     func testSQLiteWALActivityKeepsOldWorkingTurnWithoutRollout() throws {
         try database("state_5.sqlite", sql: """
         CREATE TABLE threads(id TEXT,cwd TEXT,rollout_path TEXT,title TEXT);

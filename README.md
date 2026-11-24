@@ -30,6 +30,27 @@
   그동안은 "완료"로 알리지 않는다 — 다 끝나고 메인이 쉬면 그때 완료.
 - 입력 대기·완료·오류가 되면 macOS 알림(누르면 그 화면으로), Dock 배지에 확인이 필요한 화면 수.
 
+**칸끼리 일 시키기(`agentdeck` 명령)**
+- AgentDeck 안의 셸·claude·codex 에서 `agentdeck` 로 다른 칸의 claude·codex 에게 일을 시키고, 끝나길 기다리고, **결과 글**을 받는다(설치 없음 — 칸을 새로 띄울 때부터).
+  앱 밖 터미널에서도 쓰려면 설정 → 연결의 "터미널에서도 agentdeck 쓰기"(`~/.local/bin/agentdeck` 링크), 같은 곳에서 claude 에게 쓰는 법을 알려 주는 스킬(`agentdeck-orchestrate`)을 넣고 뺀다.
+- 칸은 전체 ID·고유한 앞부분·이름(정확히)·`.`(내 칸)로 부른다. 앱이 꺼져 있어도 list·status·send·wait·ask·read·close·new 는 동작한다(데몬만 있으면).
+
+```bash
+agentdeck list                                   # 칸(ID·이름·종류·상태·폴더·하위 에이전트, * = 내 칸). --json 이면 기계용
+agentdeck new --claude --model sonnet --effort high --name 리뷰어 "src/ 를 리뷰해" # --model·--effort 는 생략하면 설정의 기본 옵션. 같은 탭 오른쪽에 새 칸(이미 줄이 있으면 그 아래로), ID 출력. 폴더는 --cwd → --of 칸 → 내 칸 → 지금 폴더
+agentdeck ask 리뷰어 "문제만 3줄로 요약해" --timeout 10m   # 보내고 끝나길 기다려 그 칸 에이전트의 이번 턴 마지막 답 글을 출력
+agentdeck send 리뷰어 --file brief.md             # claude·codex 칸에는 붙여넣기로 한 번에(그다음 Enter). --no-enter 면 입력만. 입력 대기 칸은 --force 없이는 거절(종료 코드 2)
+agentdeck wait a1b2c3d4 e5f6a7b8 --any --json     # 일을 시작한 것을 본 뒤 끝나길 기다림. 종료 코드 0 끝남·2 입력 대기·3 오류·124 시간 초과
+agentdeck read 리뷰어 --lines 40                  # 그 칸 화면 끝 40줄(색 코드 없이)
+agentdeck close 리뷰어                            # 작업 중·입력 대기면 --force 없이는 거절
+agentdeck focus 리뷰어                            # 앱에서 그 칸으로
+```
+
+- `wait` 는 사용자가 안 본 완료(done)도 끝으로 세고, 지시 직후의 쉬는 상태를 끝으로 착각하지 않는다(시작을 본 뒤에만 끝을 봄 — 못 보면 3초 뒤 지금 상태).
+  `ask` 는 작업 중·입력 대기 칸에는 거절한다(지난 턴의 끝을 답으로 착각하지 않게). `send` 도 입력 대기(권한 요청·질문) 칸에는 거절한다 — Enter 가 사람 대신 "Yes" 를 고르지 않게.
+  `new` 의 처음 지시는 에이전트가 떴다고 확인한 뒤(claude 는 상태 hook 의 SessionStart, codex 는 세션 기록)에만 보내고, 확인하지 못하면 보내지 않고 알린다(종료 코드 2).
+  예전 세션 데몬(앱 업데이트 뒤에도 살아 있는 것)이 만든 칸에는 `agentdeck` 가 없다 — 앱이 "데몬 재시작이 필요"하다고 알리고 `new` 도 그렇게 알린다. 자세한 규칙은 [ARCHITECTURE](docs/ARCHITECTURE.md)의 "칸 사이 오케스트레이션".
+
 **터미널 탭·분할**
 - Ghostty 기본 단축키와 모양(JetBrains Mono, D2Coding 한글 — 앱에 들어 있어 따로 설치하지 않아도 된다).
 - 좌우·위아래 자유 분할, 탭 끌어서 순서 바꾸기·다른 분할로 합치기·세션을 새 탭으로 꺼내기. 한글 입력 중에도 단축키가 키 위치로 동작한다.

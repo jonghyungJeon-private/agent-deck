@@ -91,8 +91,21 @@ if [[ "${ABX_SKIP:-0}" != 1 ]]; then
   "$APP/Contents/Helpers/abx" skill | cmp -s - "$APP/Contents/Resources/abx/SKILL.md" \
     || { echo "넣은 abx 가 Resources/abx/SKILL.md 를 읽지 못합니다" >&2; exit 1; }
 fi
+# agentdeck 명령(칸 사이 오케스트레이션): Helpers/agentdeck 는 같은 묶음의 AgentDeckDaemon 을 가리키는 상대 심볼릭 링크다 —
+# 데몬 실행 파일이 이름이 agentdeck 로 불리면 `cli` 로 동작한다(main.swift). 데몬이 칸마다 PATH(term/bin 의 agentdeck → 이 링크)와
+# AGENTDECK_PANE_ID 를 넣고, 설정 → 연결이 ~/.local/bin/agentdeck 링크를 걸 수 있다. 에이전트에게 쓰는 법을 가르치는 스킬은 Resources/agentdeck-orchestrate.
+# 왜 셸 래퍼가 아닌가: Helpers 는 코드 위치라 서명 안 된 스크립트가 있으면 `codesign --verify --deep --strict` 가 실패하고,
+# 스크립트 서명은 확장 속성에 들어가 배포 zip(ditto --noextattr)에서 사라진다. 링크는 서명할 것이 없고 앱 서명이 그대로 봉인한다.
+# 서명 순서: 링크·스킬을 먼저 놓고, 실행 파일(AgentDeckDaemon)을 서명한 다음 맨 마지막에 앱을 서명한다.
+mkdir -p "$APP/Contents/Helpers" "$APP/Contents/Resources/agentdeck-orchestrate"
+ln -s ../MacOS/AgentDeckDaemon "$APP/Contents/Helpers/agentdeck"
+cp Resources/agentdeck-orchestrate/SKILL.md "$APP/Contents/Resources/agentdeck-orchestrate/SKILL.md"
 codesign --force --sign - "$APP/Contents/MacOS/AgentDeckDaemon"
 codesign --force --sign - --identifier "$BUNDLE_ID" "$APP"
+# 만든 앱 점검: 서명이 Helpers·Resources 까지 봉인했는지, Helpers/agentdeck 가 묶음 안의 데몬 cli 를 부르는지(데몬에는 붙지 않는 help)
+codesign --verify --deep --strict "$APP"
+CLI_HELP="$("$APP/Contents/Helpers/agentdeck" help)"
+[[ "$CLI_HELP" == agentdeck* ]] || { echo "Helpers/agentdeck 가 cli 를 부르지 못합니다" >&2; exit 1; }
 ZIP="dist/AgentDeck-$VERSION.zip"
 rm -f "$ZIP"
 # 확장 속성(._ 파일)은 빼고 묶는다 — 서명은 실행 파일·_CodeSignature 안에 있다

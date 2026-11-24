@@ -11,9 +11,18 @@ import TermWire
 //   AgentDeckDaemon hook            : Claude Code hook(세션 기록)
 //   AgentDeckDaemon codex-hook      : Codex hook(작업 상태)
 //   AgentDeckDaemon unhook          : 이 앱의 hook 을 Claude Code·Codex 설정에서 뺀다(삭제할 때)
+//   AgentDeckDaemon cli ...         : 명령줄 `agentdeck`(실행 파일 이름이 agentdeck 여도 같다)(list | status | send | wait | ask | read | new | close | focus — `Cli.swift`)
 //   AgentDeckDaemon ctl ...         : 시험·진단용 클라이언트 (list | new <cwd> [명령] | send <id> <글> | dump <id> | kill <id>)
 // hook·ctl 은 쓸 데이터 위치를 스스로 고른다(DataLocation: 새 데몬 → 예전 데몬 → 안 옮긴 예전 데이터 → 새 위치).
 
+// 사용자·에이전트용 명령줄 `agentdeck`: `AgentDeckDaemon cli …`, 또는 앱 묶음의 Helpers/agentdeck(이 실행 파일로 가는 링크 —
+// 이름이 agentdeck 로 불리면 cli 로 동작한다)
+if CommandLine.arguments.dropFirst().first == "cli" {
+    exit(Cli.run(Array(CommandLine.arguments.dropFirst(2))))
+}
+if let name = CommandLine.arguments.first, (name as NSString).lastPathComponent == "agentdeck" {
+    exit(Cli.run(Array(CommandLine.arguments.dropFirst())))
+}
 if CommandLine.arguments.dropFirst().first == "ctl" {
     exit(Ctl.run(Array(CommandLine.arguments.dropFirst(2))))
 }
@@ -157,6 +166,7 @@ final class Daemon {
             exit(0)
         }
         abxBin = BrowserBinding.installShim(abx: BrowserBinding.bundledAbx(), termDir: home)
+        cliBin = CliBinding.installShim(helper: CliBinding.bundledHelper(), daemon: Bundle.main.executableURL, termDir: home)
         let listenFd: Int32
         do {
             listenFd = try UnixSocket.listen(in: home)
@@ -264,10 +274,12 @@ final class Daemon {
     let instance = UUID().uuidString
     /// 화면 PATH 앞에 둘 `abx` 폴더(데몬 잠금을 잡은 뒤 맞춘다 — 곧 끝날 두 번째 데몬이 떠 있는 데몬의 것을 바꾸지 않게). 앱에 abx 가 없으면 nil.
     var abxBin: URL?
+    /// 화면 PATH 앞에 둘 `agentdeck` 폴더(`abx` 와 같은 `term/bin` — CliBinding). 실행 파일을 못 찾으면 nil.
+    var cliBin: URL?
 
     var state: DaemonState {
         DaemonState(pid: getpid(), footprint: Memory.footprint(), panes: order.compactMap { panes[$0]?.info },
-                    instance: instance, features: [DaemonState.browserFeature])
+                    instance: instance, features: [DaemonState.browserFeature, DaemonState.cliFeature])
     }
 
     func broadcastState() {
@@ -325,6 +337,9 @@ final class Daemon {
         for (key, value) in BrowserBinding.environment(pane: id) { env[key] = value }
         // 앱에 든 abx 를 `abx` 로(abx 를 따로 설치하지 않은 동료도). 셸 설정이 PATH 앞에 다른 abx 를 두면 그것이 이긴다.
         if let abxBin { env["PATH"] = BrowserBinding.prependPath(abxBin, to: env["PATH"]) }
+        // `agentdeck` 명령과 자기 칸 ID(그 칸에서 부른 명령이 "."·기본 배치·자기 칸 표시에 쓴다)
+        env[CliBinding.paneVariable] = id
+        if let cliBin { env["PATH"] = BrowserBinding.prependPath(cliBin, to: env["PATH"]) }
         // 예전 이름(앱을 예전 화면 안에서 띄웠으면 남아 있다)은 빼서 다른 화면 ID 로 읽히지 않게
         env.removeValue(forKey: AgentDeckEnv.legacyName("PANE"))
         // Finder 로 띄운 앱에는 LANG 이 없다. 없으면 한글이 깨지므로 지금 언어 설정으로 채운다.

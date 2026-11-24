@@ -84,6 +84,26 @@ public final class CodexSessions {
         return snapshot
     }
 
+    /// 이 세션의 SQLite 대화 항목 중 가장 큰 rollout_ordinal(보내기 전 기준점 — 이 번호보다 큰 것이 이번 턴). 항목이 아직 없으면 -1,
+    /// 파일·표를 읽을 수 없으면 nil(기준을 못 잡았으니 SQLite 의 글은 이번 턴 것인지 알 수 없다).
+    public func lastItemOrdinal(_ id: String) -> Int? {
+        query("thread_history_1.sqlite", "SELECT COALESCE(MAX(rollout_ordinal),-1) AS ordinal FROM thread_items WHERE thread_id=?", id: id)
+            .first?["ordinal"].flatMap { Int($0) }
+    }
+
+    /// 이 세션의 마지막 agent 메시지 전체(앞 `lastText` 는 400자까지만). 새 CLI 가 대화를 SQLite 로 옮겼을 때 `agentdeck ask` 가 쓴다.
+    /// after: 기준점(`lastItemOrdinal`) — 이 번호보다 뒤의 메시지만 돌려준다(이번 턴 글이 아직 없을 때 지난 턴 답을 주지 않게). nil 이면 제한 없음.
+    public func lastAgentMessage(_ id: String, after ordinal: Int? = nil) -> String? {
+        guard let row = query("thread_history_1.sqlite", "SELECT item_json,rollout_ordinal FROM thread_items WHERE thread_id=? AND item_type='agentMessage' ORDER BY rollout_ordinal DESC LIMIT 1", id: id).first,
+              let item = row["item_json"] else { return nil }
+        if let ordinal {
+            guard let found = row["rollout_ordinal"].flatMap({ Int($0) }), found > ordinal else { return nil }
+        }
+        guard let data = item.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = object["text"] as? String, !text.isEmpty else { return nil }
+        return text
+    }
+
     public func children(of id: String) -> [(CodexSession, String)] {
         query("state_5.sqlite", "SELECT child_thread_id,status FROM thread_spawn_edges WHERE parent_thread_id=?", id: id)
             .compactMap { row in

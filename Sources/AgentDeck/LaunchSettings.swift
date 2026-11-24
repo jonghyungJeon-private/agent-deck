@@ -138,6 +138,7 @@ final class SettingsWindowController {
         // 열 때마다 연결 상태를 다시 본다(다른 곳에서 바꿨을 수 있다)
         model.checkHooks()
         model.checkBrowserSkill()
+        model.orchestration.refresh()
         tabs?.fit(animated: false)
         if AgentDeckEnv.isOn("NO_ACTIVATE") {
             window?.orderFront(nil)
@@ -474,6 +475,67 @@ private struct ScreenSection: View {
 
 // MARK: - 연결·브라우저
 
+/// 에이전트끼리 일 시키기(`agentdeck` 명령): 스킬 넣기·빼기, 앱 밖 터미널 링크
+private struct OrchestrationRows: View {
+    @ObservedObject var connection: OrchestrationConnection
+    /// 떠 있는 세션 데몬이 칸에 agentdeck 명령을 넣는 버전인가(예전 데몬이면 새 칸에도 안 들어간다)
+    var daemonHasCli: Bool
+
+    var body: some View {
+        Section {
+            if !daemonHasCli {
+                WarningLine(text: "세션 데몬이 예전 버전이라 새로 만드는 칸에 agentdeck 명령이 연결되지 않습니다(앱 밖 터미널의 링크는 됩니다). 모든 세션을 닫고 앱을 끈 뒤 1분쯤 지나 다시 켜세요.", tone: .warn)
+            }
+            if let notice = connection.notice {
+                WarningLine(text: notice, tone: .neutral)
+            }
+            skillRow
+            linkRow
+        } header: {
+            SectionTitle(title: "에이전트끼리 일 시키기")
+        } footer: {
+            SectionNote("AgentDeck 안의 칸에서는 agentdeck 명령을 따로 설치하지 않아도 씁니다(이미 떠 있는 칸은 새로 띄울 때부터). 스킬은 claude 에게 그 쓰는 법을 알려 줍니다.")
+        }
+    }
+
+    private var skillRow: some View {
+        let status: SettingStatus = {
+            switch connection.skill {
+            case .unavailable: return SettingStatus(text: "이 빌드에는 없음", tone: .neutral)
+            case .missing: return SettingStatus(text: "연결 안 됨", tone: .warn)
+            case .installed, .outdated: return SettingStatus(text: "Claude Code에 있음", tone: .ok)
+            case .userManaged: return SettingStatus(text: "직접 둔 스킬이 있음 — 그대로 씁니다", tone: .neutral)
+            }
+        }()
+        return SettingRow(title: "agentdeck 스킬", detail: "claude 가 다른 칸에 일을 시키고 결과를 받는 법 (~/.claude/skills/agentdeck-orchestrate)", status: status) {
+            switch connection.skill {
+            case .missing: Button("연결하기") { connection.connectSkill() }
+            case .installed, .outdated: Button("연결 해제…") { connection.disconnectSkill() }
+            default: EmptyView()
+            }
+        }
+    }
+
+    private var linkRow: some View {
+        let status: SettingStatus = {
+            switch connection.link {
+            case .unavailable: return SettingStatus(text: "이 빌드에는 없음", tone: .neutral)
+            case .missing: return SettingStatus(text: "연결 안 됨", tone: .neutral)
+            case .installed: return SettingStatus(text: "~/.local/bin/agentdeck", tone: .ok)
+            case .outdated: return SettingStatus(text: "다른 위치의 AgentDeck 를 가리킴", tone: .warn)
+            case .userManaged: return SettingStatus(text: "이미 다른 파일이 있음 — 덮지 않습니다", tone: .warn)
+            }
+        }()
+        return SettingRow(title: "터미널에서도 agentdeck 쓰기", detail: "앱 밖 터미널(iTerm·Ghostty 등)에서도 agentdeck 명령을 씁니다 (~/.local/bin/agentdeck 링크)", status: status) {
+            switch connection.link {
+            case .missing, .outdated: Button(connection.link == .outdated ? "고치기" : "연결하기") { connection.connectLink() }
+            case .installed: Button("연결 해제…") { connection.disconnectLink() }
+            default: EmptyView()
+            }
+        }
+    }
+}
+
 /// 연결(Claude Code·Codex hook)과 브라우저(abx 스킬·전용 브라우저·Chrome 로그인) — 사이드바 안내와 같은 동작을 한 곳에서.
 /// 두 탭(연결·브라우저)이 같은 도우미를 쓰므로 한 뷰에서 part 로 가른다.
 private struct ConnectionsSection: View {
@@ -513,6 +575,7 @@ private struct ConnectionsSection: View {
             } footer: {
                 SectionNote("Claude Code·Codex를 이 앱에 연결합니다. 바꾼 내용은 새로 시작하는 세션부터 적용됩니다.")
             }
+            OrchestrationRows(connection: model.orchestration, daemonHasCli: model.daemonHasCli)
         }
         if part == .browser {
             Section {

@@ -7,9 +7,10 @@ README 는 쓰는 사람용 요약이고, 여기는 만드는 사람용 자세�
 ```
 AgentDeck.app/Contents/MacOS/
   AgentDeck           화면 앱(AppKit + SwiftUI). 목록·탭·분할·도구 창·편집기
-  AgentDeckDaemon     세션 데몬(PTY 를 붙잡음) + hook 처리(hook / codex-hook / unhook) + 진단(ctl)
+  AgentDeckDaemon     세션 데몬(PTY 를 붙잡음) + hook 처리(hook / codex-hook / unhook) + 진단(ctl) + 명령줄(cli = agentdeck)
   ClaudeTermDaemon    → AgentDeckDaemon 심볼릭 링크(예전 이름 — 이미 떠 있던 claude 세션의 hook 용, 아래 "이름과 예전 판 이어받기")
 ```
+- `Contents/Helpers/agentdeck` 는 `../MacOS/AgentDeckDaemon` 으로 가는 상대 링크다(이름이 agentdeck 로 불리면 `cli` 로 동작 — 아래 "칸 사이 오케스트레이션").
 
 - 묶음 ID `dev.agentdeck.app`, 데이터 `~/Library/Application Support/AgentDeck`, 환경 변수 `AGENTDECK_*`. 0.3 까지의 안쪽 이름에서 바꿨다(아래).
 - 앱 ↔ 데몬: 유닉스 소켓(`term/daemon.sock`)으로 짧은 메시지(`Sources/TermWire`). 데몬은 앱이 **launchd 작업**으로 띄워(아래 "데몬 띄우기")
@@ -21,7 +22,7 @@ AgentDeck.app/Contents/MacOS/
   안전한 저장·글자 색 훑기·선언 찾기·이름 맞추기·이동 기록), `Sources/SessionCore`(hook 처리·hook 설치/제거·세션 기록·대화 파일 읽기·프로세스 정보·업데이트 확인),
   `Sources/CPTY`(forkpty), `Vendor/SwiftTerm`(고친 터미널 엔진, `PATCHES.md`).
 - 데이터(`~/Library/Application Support/AgentDeck/`, `AGENTDECK_HOME` 으로 바꿈): `sessions/`(Claude 세션 기록), `codex-sessions/`,
-  `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`launch.json`·`codex-bindings.json`·`update-check.json`, `AGENTDECK_TERM_HOME` 으로 바꿈).
+  `term/`(소켓·로그·`layout.json`·`names.json`·`spaces.json`·`ui.json`·`launch.json`·`codex-bindings.json`·`update-check.json`·`seen.json`·`requests/`(agentdeck 명령의 앱 요청)·`bin/`(칸 PATH 의 abx·agentdeck), `AGENTDECK_TERM_HOME` 으로 바꿈).
 - 새 버전 확인: 켤 때·앞으로 나올 때·떠 있는 동안 한 시간마다, 마지막 확인(`term/update-check.json`)에서 6시간이 지났을 때만 백그라운드에서
   `gh release view --repo <저장소> --json tagName,url`(저장소는 `UpdateCheck.repository`). gh 가 없거나 로그인·권한이 없거나 오프라인이면 조용히 넘어간다.
   새 버전은 상태 줄에 뜨고, 그 버전을 처음 봤을 때 한 번 macOS 알림(ID `update`, 누르면 업데이트 창)도 보낸다. 보낸 태그는 같은 파일의 `announced`
@@ -720,6 +721,69 @@ claude 가 띄운 하위 에이전트(Agent 도구) **하나가 칸(split pane) 
 - **시험 명령**(`AGENTDECK_DEBUG=1`): `open-agent-view <기록 경로>[|<설명>[|<종류>]]` 는 포커스된 세션 칸을 부모로 칸을 연다(사이드바 줄을 누른 것과 같은 배치, 가짜 에이전트 없이 레시피를 바로 만든다).
   `agent-views` 는 하위 칸마다 한 줄 — 잎 ID·`owner=`(부모 칸)·`tab=`·`path=`·`head=`(머리 글)·`loaded=`(뷰가 읽는 중인가)·읽은 항목 수(`entries=`, 뷰가 없으면 `-`)·타이머 — 와 끝줄 `panes=`·`views=` 합계.
   `toggle-agent-panes`(⇧⌘A 와 같음). `tabs` 는 칸을 `agentpane(<기록 파일>)` 로 보인다.
+
+## 칸 사이 오케스트레이션(`agentdeck` 명령)
+
+herdr 의 `herdr agent prompt <칸> "지시" --wait` 처럼 한 칸의 claude(지휘)가 다른 칸의 claude·codex(작업)에 일을 시키고 끝나길 기다리고 결과를 받는다.
+herdr 와 달리 결과 글을 돌려주고, 대기 규칙의 함정 둘(아래)을 도구가 알아서 피한다. 사용법은 README, 에이전트용 안내는 `Resources/agentdeck-orchestrate/SKILL.md`.
+
+- **배치**: 명령은 `AgentDeckDaemon` 의 하위 명령 `cli`(`Sources/AgentDeckDaemon/Cli.swift`, 데몬 연결 `DaemonLink.swift`)다. 실행 파일 이름이 `agentdeck` 여도 같다(`main.swift`).
+  앱 묶음의 `Contents/Helpers/agentdeck` 는 `../MacOS/AgentDeckDaemon` 으로 가는 **상대 링크**다(`scripts/build-term-proto.sh`). 셸 래퍼가 아닌 까닭:
+  Helpers 는 코드 위치라 서명 안 된 스크립트가 있으면 `codesign --verify --deep --strict` 가 실패하고, 스크립트 서명은 확장 속성에 들어가 배포 zip(`ditto --noextattr`)에서 사라진다.
+  링크는 서명할 것이 없고 앱 서명이 봉인한다(순서: 링크·스킬 → AgentDeckDaemon 서명 → 앱 서명 → `--deep --strict` 점검과 `agentdeck help` 실행 점검).
+- **칸 환경**(데몬이 만드는 모든 칸, `Sources/AgentDeckDaemon/main.swift` `environment(for:)`): `AGENTDECK_PANE_ID=<칸 ID>`(기존 `AGENTDECK_PANE` 도 그대로 — hook 이 읽는다)와
+  PATH 앞에 `term/bin`(abx 와 같은 폴더, `CliBinding.installShim` 이 데몬이 뜰 때 `agentdeck` 스크립트를 놓는다 — 묶음의 `Helpers` 를 그대로 넣으면 엔진 실행 파일까지 보이므로 abx 와 같은 방식).
+  이미 떠 있는 칸은 그때의 환경 그대로이므로 **새로 띄운 칸부터** 쓸 수 있다. 앱을 바꿔도 떠 있던 **예전 데몬**이 만드는 칸에는 둘 다 없다 — 데몬이 `DaemonState.features` 에 `cli`(`cliFeature`)를 싣고,
+  앱은 `daemonHasBrowser` 와 같은 방식으로 `daemonHasCli` 를 읽어 설정 → 연결("에이전트끼리 일 시키기")·사이드바 안내에 "데몬 재시작이 필요"(브라우저와 같은 문구·자리)를 띄운다. 명령은 `new` 에서 예전 데몬이면 그 칸에 `agentdeck` 가 없다고 stderr 로 알린다(list·send·wait 등은 데몬 프로토콜이 같아 그대로 된다). 앱 밖 터미널은 설정 → 연결의 "터미널에서도 agentdeck 쓰기"(`~/.local/bin/agentdeck` 링크 — `CliLinkInstaller`:
+  이 앱을 가리키는 링크만 고치고 지우며, 이미 다른 파일이 있으면 덮지 않는다)나 수동 `ln -s /Applications/AgentDeck.app/Contents/Helpers/agentdeck ~/.local/bin/agentdeck`.
+- **데이터 위치**: 데몬·hook 과 같은 규칙(`DataLocation`, `AGENTDECK_HOME` 등)을 그대로 따른다. 시험은 `AGENTDECK_HOME=<임시>` 로 데몬과 명령을 함께 띄운다.
+- **앱이 꺼져 있어도**: list·status·send·wait·ask·read·close·new 는 데몬 연결과 데이터 폴더(hook 기록)만 쓴다. 데몬이 없으면 "앱을 한 번 켜 달라"며 실패한다(명령이 데몬을 띄우지는 않는다 — launchd 작업은 앱이 만든다).
+- **상태 공유**(`SessionCore/PaneStates.swift`): 앱의 `makeRows` 가 하던 화면 ↔ 세션 짝짓기(화면 ID → 부모 프로세스 계보 → tty)·codex 짝짓기(`CodexScanner`, 앱에서 옮김)·작업 폴더·
+  `WorkStateRules.effective` 보완·백그라운드 일 확인을 `PaneStateReader` 로 옮겨 앱(`TermModel.makeRows`)과 명령이 **같은 코드**를 쓴다. 하위 에이전트 훑기(`SubagentScanner`·codex 자식)도 `AgentActivityScanner`로 옮겼다.
+  이름도 `PaneNaming`(직접 바꾼 이름 → 사람이 붙인 대화 이름 → Claude 제목 → 첫 질문 → 폴더)을 같이 쓴다. 명령은 읽기만 한다(codex 짝짓기 기록 `codex-bindings.json` 은 앱만 쓴다).
+  앱 메모리에만 있던 "본 완료"는 `term/seen.json`(`SeenStore`)에도 남기고 앱이 켤 때 읽어 이어 가므로(앱을 껐다 켜도 이미 본 완료는 쉬는 중) 명령과 앱의 "쉬는 중" 판단이 같다.
+  이름은 비싸다(claude 대화 파일을 읽음) — 명령은 `names.json` 의 저장된 이름(직접 바꾼 이름·첫 질문으로 지은 이름, `PaneNaming.storedName`)을 먼저 쓰고, 칸을 이름으로 지정했는데 못 찾을 때와 `list`·`status` 에 이름이 없을 때만 대화 파일을 읽는다(`Observer.completeNames`).
+  `wait` 의 반복 관찰은 이름을 아예 정하지 않는다. 앱의 임시 셸(`ScratchPane`)은 목록·지정에서 뺀다. 한계: 저장된 이름이 있으면 대화 파일의 `claude -n` 이름보다 먼저 보이므로 드물게 앱 표시와 다를 수 있다.
+- **상태 값**(`PaneState`): working(작업 중 — 오케스트레이션 중 포함, 하위 에이전트 수는 별도 칸) · waiting · done · idle · error · dormant(layout.json 의 꺼진 칸) · unknown(claude·codex 인데 상태 hook 이 없음 — 연결 전).
+  셸은 hook 이 없어 앞에서 도는 프로그램으로 본다(셸 프롬프트면 idle, 다른 프로그램이 돌면 working) — 셸 칸에 명령을 보내고 `wait` 할 수 있다.
+- **wait**(`WaitMachine`, 시간·관찰만 받는 순수 로직): 지시 **전**의 관찰을 기준으로 삼고 칸마다 "시작을 봄"을 먼저 요구한다.
+  함정 1 — 사용자가 안 본 완료(done)는 앱에서 idle 로 안 바뀌므로 idle 만 기다리면 영원히 기다린다 → done·idle·waiting·error 모두 끝으로 센다.
+  함정 2 — 지시 직후는 아직 idle·done 이다 → working 을 보거나(이미 working 이면 바로) 기준 때보다 상태 번호(`stateSeq`, 없으면 시각)가 달라진 새 기록을 본 뒤에만 끝을 본다
+  (같은 기록에서 done→idle 로 바뀐 것은 "사용자가 봄"이지 새 일이 아니다). 짧은 일이 관찰 사이에 끝났어도 새 번호의 끝 상태를 보면 끝으로 본다. 시작을 끝내 못 보면 유예(`wait` 3초, `ask` 8초) 뒤 지금 상태를 돌려준다.
+  종료 코드 0 끝남 · 2 입력 대기 · 3 오류 · 124 시간 초과 · 1 기타(칸이 사라짐·꺼짐·상태를 알 수 없음·데몬을 오래 못 읽음). 여러 칸은 3 > 2 > 124 > 1 > 0 순. `--any` 는 먼저 끝난 칸이 나오면 돌아오고 나머지는 pending. 기본 제한 30분(`--timeout 0` 은 없음).
+  0.4초마다 데몬 목록과 상태 기록 파일을 읽는다(앱의 2초 갱신과 무관). 목록을 못 읽은 회차(`observe()` 가 nil)는 건너뛰고(`ObservationGuard`) 연결이 닫혔거나 연속 30초 넘게 못 읽을 때만 `lost`(종료 코드 1)로 끝낸다 —
+  칸이 닫힌 것(`gone`)과 다르다. 건너뛰는 동안에도 제한 시간은 흐른다.
+- **ask**: 보내기 전에 거절할 것을 거른다 — 작업 중(지난 턴의 끝을 이번 답으로 착각), 입력 대기(글이 질문·권한 답이 됨, 종료 코드 2), 꺼짐, 상태 hook 없음. 그다음 대화 기록의 크기를 기준점으로 잡고 보내고 기다린 뒤
+  기준점 **뒤에** 덧붙은 부분에서 마지막 답을 읽는다(`TurnReply`): claude 는 세션 기록 jsonl 에서 같은 `message.id` 의 글 조각을 이어 붙이고 도구 사이의 글("확인해 보겠습니다")은 마지막 답으로 치지 않으며,
+  이번 턴에 글이 없으면 지난 답을 돌려주지 않는다. codex 는 rollout 의 마지막 assistant 메시지(없으면 SQLite 의 agentMessage 전체 — 보내기 전의 `rollout_ordinal` 기준점(`lastItemOrdinal`)보다 **뒤의** 것만, 기준점을 못 잡았으면 쓰지 않음),
+  그것도 없으면 보내기 전보다 늘어난 화면 줄(stderr 에 알림, `--json` 은 `source: screen`).
+  `--json` 은 `reply`·`source`(transcript|screen)·`state`·`exitCode`.
+- **send**: 입력 대기(waiting — 권한 요청·질문)인 칸에는 거절(종료 코드 2, 이유 출력, `SendGuard`) — 글과 Enter 가 사람 대신 "Yes" 를 고르거나 질문의 답이 되기 때문이다. `--force` 일 때만 보낸다(꺼진 칸은 `--force` 로도 안 됨).
+- **send 인코딩**(`PasteEncoding`): 셸 칸의 한 줄 짧은 글은 그대로, claude·codex 칸은 한 줄도 붙여넣기(입력창이 `!`·`/` 로 시작하는 글을 모드·명령으로 해석하지 않게), 여러 줄·400바이트 초과는 모든 칸에서 bracketed paste(`ESC[200~ … ESC[201~`) — 그 칸이 붙여넣기 모드(?2004)를 켰을 때만(데몬 replay 를 `TerminalModeTracker` 에 먹여 확인),
+  꺼져 있으면 줄바꿈을 CR 로 바꿔 보낸다. 글 안의 ESC·제어 문자는 뺀다(붙여넣기 끝 표시를 글에 심어 빠져나오는 것을 막음). Enter 는 글과 **따로** 조금 뒤에(0.15~0.3초) 보낸다 — 같은 덩어리면 입력창이 줄바꿈 글자로 받아 제출되지 않는 일이 있다.
+- **read**(`ScreenText`): 데몬 replay 를 화면 격자에 그려 읽는다(커서 이동·줄 지우기·스크롤 영역·대체 화면·넓은 글자). 색 코드만 지우면 claude 처럼 줄을 지우고 다시 그리는 화면이 겹쳐 나온다.
+  앱의 터미널 엔진(SwiftTerm)을 쓰지 않은 것은 AppKit 을 끌고 와 hook 마다 뜨는 데몬 실행 파일이 무거워지기 때문이다.
+- **new**: 칸을 데몬에 직접 만들고(`CreateRequest` — 앱의 "+ claude" 와 같은 방식: 셸에 `claude <설정 창의 새 세션 기본 옵션(launch.json)>` 을 넣는다, 이름은 `--name`) ID 를 출력한다. 폴더는 `--cwd`(상대 경로는 명령의 현재 폴더 기준으로 절대 경로로) → `--of` 칸의 폴더 → 부른 칸의 폴더 → 명령의 현재 폴더.
+  (소켓 경로가 길어 `UnixSocket.connect` 가 term 폴더로 chdir 하면 "현재 폴더" 가 데몬 폴더가 되던 문제 — `DaemonLink` 가 연결 뒤 되돌린다.)
+  처음 지시는 에이전트가 **자기 기록을 남긴 것을 본 뒤에만** 보낸다(`AgentReadiness`): claude 는 SessionStart hook 으로 세션이 짝지어진 뒤(폴더 신뢰 확인 창을 지나야 시작되므로 그 창에 Enter 를 보내 자동 승인하지 않음) 출력이 0.8초 잠잠할 때,
+  codex 는 codex 세션 기록(스레드)이 생긴 뒤 1.2초 잠잠할 때. 45초 안에 확인하지 못하거나 claude 의 hook 이 설정에 없으면 **보내지 않고** "처음 지시를 보내지 못함: claude 가 확인을 기다리는 중일 수 있음, agentdeck read <ID> 로 확인" 을 stderr 로 내며 종료 코드 2 로 끝난다(칸은 남아 있고 ID 는 이미 출력됨).
+- **앱 요청(배치·focus)**: 데이터 폴더 `term/requests/<ID>.json` 에 한 건씩 두는 **요청 파일**(`AppRequestQueue`)이고 앱이 폴더를 감시한다(`TermModel.watchRequests` — 쓰이면 바로 목록을 다시 받음, 2초 갱신에도 확인).
+  분산 알림 대신 파일을 고른 까닭: 앱이 꺼져 있으면 알림은 사라지지만 파일은 남아 앱이 켜질 때 처리되고(60초 지난 것은 버림), 폴더가 사용자 전용(0700)이라 다른 사용자가 보낼 수 없으며,
+  같은 사용자의 아무 프로세스나 흉내 낼 수 있고 순서·전달이 보장되지 않는 알림보다 단순·확실하다. 네트워크 포트는 없다. 앱이 없으면 요청은 무시돼도(`new`) 칸은 데몬에 있고 앱이 켜질 때 새 탭으로 붙는다.
+  `new` 는 칸 ID 를 미리 정하므로 place 요청을 칸 만들기보다 **먼저** 남긴다(만들기에 실패하면 거둠) — 앱은 칸이 목록에 나타난 뒤에야 요청을 처리하므로 칸을 처음 보는 목록에서 바로 제자리에 붙이고 새 탭에 붙었다 옮겨지는 깜빡임이 없다.
+  요청 id 는 UUID 형식이어야 하고 파일 이름과 같아야 한다(아니면 그 파일만 지우고 무시), 지울 때는 읽은 파일의 URL 로 지우며(`AppRequestQueue.Pending`), 지우기가 실패해도 같은 요청을 두 번 적용하지 않는다(`AppRequestApplier`).
+  처리(`TermModel.applyRequests` → SessionCore `AppRequestApplier`, `show` 에서 `reconcile` 앞): place — 새 칸이 데몬 목록에 나타났으면 `Workspace.place`(`TermLayout/PanePlacement.swift`)로 부른 칸이 있는 탭에 붙인다.
+  `--right`(기본)은 기준 칸 오른쪽, 이미 오른쪽 줄(앞서 만든 칸·하위 에이전트 칸)이 있으면 그 줄 맨 아래에 쌓고 줄을 같은 높이로 맞춘다(기준 칸 | (첫째 / 둘째 / …) — 둘째가 기준 칸과 첫째 사이에 끼지 않는다). `--down` 은 같은 원리를 가로·세로 바꿔
+  아래 줄 맨 오른쪽에 쌓는다(기준 칸 / (첫째 | 둘째 | …), 같은 너비). 줄은 기준 칸과 맞닿은 칸만 센다. 입력 포커스와 보고 있는 탭은 바꾸지 않는다.
+  앱이 먼저 새 탭으로 붙였으면 거기서 옮긴다. 이름은 직접 바꾼 이름이 되고(claude 는 `--name` 도 붙여 대화 이름으로 남는다), `--name` 없이 앱이 꺼져 있으면 데몬 칸 제목을 이름으로 쓴다. focus — 그 칸의 탭으로 가고 앱을 앞으로 가져온다.
+- **close**: working·waiting 이면 `--force` 없이는 거절(종료 코드 1, 이유), 자기 칸도 `--force` 없이는 닫지 않는다. 꺼진 칸은 앱에서 닫는다(데몬에 없음).
+- **스킬·링크 연결**(`OrchestrationConnection`, 설정 → 연결 "에이전트끼리 일 시키기"): 스킬은 `SkillInstaller`(abx 스킬과 같은 표식·덮지 않는 규칙)로 `~/.claude/skills/agentdeck-orchestrate` 에, 앱이 넣은 것이 앱의 것과 다르면 설정 창을 열 때 맞춘다.
+  Codex 에는 넣지 않는다(claude 지휘용). 링크는 위 `CliLinkInstaller`.
+- **한계**: 새 칸의 처음 지시(claude)·`ask` 는 에이전트 hook 이 연결돼 있어야 한다(없으면 처음 지시는 보내지 않고, `ask` 는 `unknown` 이라 거절). 화면 읽기는 데몬이 보관한 마지막 2MB 에서 격자를 다시 그리므로 아주 오래된 줄은 없다.
+  `wait` 는 Esc 로 중단돼 `Stop` 이 안 온 칸을 "작업 중"으로 보고(앞의 "알려진 한계") idle_prompt 가 올 때까지 기다린다. 이미 떠 있는 칸과 예전 데몬이 만든 칸은 `agentdeck` PATH 가 없다(새로 띄우거나 링크 사용, 예전 데몬은 앱이 재시작을 안내).
+- **시험**: `swift test --filter AgentCliTests`(칸 지정·대기 상태 기계·관찰 실패 처리·send 거절·처음 지시 확인·붙여넣기·마지막 답·표/JSON·화면 읽기·요청 파일·요청 적용·`PaneStateReader` 가 예전 `makeRows` 와 같은 상태), `CodexTests`(SQLite 기준점), `PanePlacementTests`, `CliBindingTests`, `CliLinkInstallerTests`.
+  격리 데몬: `AGENTDECK_HOME=<임시> .build/debug/AgentDeckDaemon`(백그라운드) → 같은 환경 변수로 `AgentDeckDaemon cli new --shell`·`send`·`read`·`wait`·`ask`·`close` → 끝나면 `term/daemon.pid` 의 PID 만 `kill`.
+  claude 상태는 `sessions/<세션>.json` 에 `pane`·`pid`(그 칸 셸의 PID 와 정확한 시작 시각)·`state`·`stateSeq` 를 직접 써서 흉내 낼 수 있다(칸의 셸이 "가짜 에이전트" 스크립트로 상태·대화 기록을 바꿈).
 
 ## 메뉴 막대
 

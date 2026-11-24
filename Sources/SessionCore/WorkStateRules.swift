@@ -7,7 +7,7 @@ public enum WorkStateRules {
     public static let resumeGrace: TimeInterval = 2
 
     /// 화면에서 확인한 상태(완료)의 표시. 번호(stateSeq)가 있으면 번호로, 없으면(예전 기록) 시각으로 비교한다.
-    public struct Seen: Equatable {
+    public struct Seen: Equatable, Codable {
         public var seq: Int?
         public var at: Date
 

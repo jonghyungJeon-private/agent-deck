@@ -9,10 +9,14 @@ public struct SkillInstaller {
 
     public let skillsDir: URL
     public let name: String
+    /// 표식 파일에 적는 안내(어떻게 빼는지)
+    public let markerNote: String
 
-    public init(skillsDir: URL, name: String) {
+    public init(skillsDir: URL, name: String,
+                markerNote: String = "AgentDeck이 넣은 스킬입니다. 앱 메뉴의 \"브라우저 스킬 연결 해제\"로 뺄 수 있습니다.\n") {
         self.skillsDir = skillsDir
         self.name = name
+        self.markerNote = markerNote
     }
 
     public var skillDir: URL { skillsDir.appendingPathComponent(name, isDirectory: true) }
@@ -71,7 +75,7 @@ public struct SkillInstaller {
         try fm.createDirectory(at: staging, withIntermediateDirectories: false)
         defer { try? fm.removeItem(at: staging) } // 놓았으면 이미 없다
         try Data(content.utf8).write(to: staging.appendingPathComponent("SKILL.md"))
-        try Data("AgentDeck이 넣은 스킬입니다. 앱 메뉴의 \"브라우저 스킬 연결 해제\"로 뺄 수 있습니다.\n".utf8)
+        try Data(markerNote.utf8)
             .write(to: staging.appendingPathComponent(Self.marker))
         var old: URL?
         if current == .outdated {
@@ -120,8 +124,10 @@ public struct SkillInstaller {
 
 public extension SkillInstaller {
     /// Claude Code 의 사용자 스킬 폴더(CLAUDE_CONFIG_DIR 를 따른다)
-    static func claude(name: String, claudeDir: URL = Paths.claudeDir) -> SkillInstaller {
-        SkillInstaller(skillsDir: claudeDir.appendingPathComponent("skills", isDirectory: true), name: name)
+    static func claude(name: String, claudeDir: URL = Paths.claudeDir, markerNote: String? = nil) -> SkillInstaller {
+        let dir = claudeDir.appendingPathComponent("skills", isDirectory: true)
+        guard let markerNote else { return SkillInstaller(skillsDir: dir, name: name) }
+        return SkillInstaller(skillsDir: dir, name: name, markerNote: markerNote)
     }
 
     /// Codex 의 사용자 스킬 폴더(`~/.agents/skills`). 시험용 `AGENTDECK_CODEX_SKILLS_DIR` 로 바꾼다 — `CODEX_HOME` 은 이 폴더를

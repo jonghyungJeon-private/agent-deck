@@ -1,4 +1,5 @@
 import Foundation
+import SessionCore
 import TermWire
 
 /// 화면·세션 이름을 한곳에서 정한다(탭·왼쪽 목록·분할 테두리가 모두 이 이름을 쓴다).
@@ -7,11 +8,8 @@ import TermWire
 /// 제목 짓기는 `claude -p`(sonnet, 도구·MCP·설정·대화 저장 없이)를 세션마다 한 번 부른다. 그동안은 첫 질문 앞부분을 보여 준다.
 /// `AGENTDECK_AUTO_TITLE=0` 이면 부르지 않고 첫 질문 앞부분만 쓴다.
 final class SessionNames {
-    struct Entry: Codable, Equatable {
-        var title: String
-        /// "user"(직접 바꿈) | "auto"(첫 질문으로 지음)
-        var source: String
-    }
+    /// names.json 한 건(SessionCore.SavedName — `agentdeck` 명령이 같은 파일을 읽는다)
+    typealias Entry = SavedName
 
     /// 제목을 새로 지었을 때(목록을 다시 그리게)
     var onChange: (() -> Void)?
@@ -31,8 +29,8 @@ final class SessionNames {
         }
     }
 
-    static func sessionKey(_ id: String) -> String { "session:\(id)" }
-    static func paneKey(_ id: String) -> String { "pane:\(id)" }
+    static func sessionKey(_ id: String) -> String { SavedNames.sessionKey(id) }
+    static func paneKey(_ id: String) -> String { SavedNames.paneKey(id) }
 
     func userTitle(_ key: String) -> String? {
         lock.withLock { entries[key].flatMap { $0.source == "user" ? $0.title : nil } }

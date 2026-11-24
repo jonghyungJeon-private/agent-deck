@@ -1,33 +1,47 @@
 import Foundation
-import SessionCore
 
 /// claude 세션이 띄운 하위 에이전트(Agent 도구) 하나의 최근 활동
-struct SubagentActivity: Identifiable, Equatable {
+public struct SubagentActivity: Identifiable, Equatable {
     /// 에이전트 기록 파일 이름(agent-xxxx)
-    var id: String
-    var sessionId: String
+    public var id: String
+    public var sessionId: String
     /// 이 에이전트를 띄운 claude 가 도는 화면
-    var paneId: String
-    var description: String
-    var agentType: String?
+    public var paneId: String
+    public var description: String
+    public var agentType: String?
     /// 기록에 가장 많이 나온 작업 트리(없으면 nil)
-    var worktreePath: String?
-    var lastActive: Date
+    public var worktreePath: String?
+    public var lastActive: Date
     /// 마지막으로 남긴 글(펼쳐 볼 때)
-    var lastText: String?
+    public var lastText: String?
 
     /// 일하는 중인지(Codex 는 부모 DB 의 상태로 정한다). nil 이면 최근 1분 안에 기록이 늘었는지로 본다.
     /// claude 하위 에이전트는 끝 표시(meta 의 finished·기록 끝의 end_turn)로 정한다 — 긴 명령을 기다리느라 조용해도 일하는 중.
-    var running: Bool? = nil
-    var isRunning: Bool { running ?? (Date().timeIntervalSince(lastActive) < 60) }
+    public var running: Bool? = nil
+    public var isRunning: Bool { running ?? (Date().timeIntervalSince(lastActive) < 60) }
     /// 이 에이전트의 기록 파일(agent-*.jsonl, claude 하위 에이전트만 — Codex 는 nil). 있으면 눌러서 옆에 읽기 전용으로 열 수 있다.
-    var transcriptPath: String? = nil
+    public var transcriptPath: String? = nil
+
+    public init(id: String, sessionId: String, paneId: String, description: String, agentType: String? = nil,
+                worktreePath: String? = nil, lastActive: Date, lastText: String? = nil, running: Bool? = nil,
+                transcriptPath: String? = nil) {
+        self.id = id
+        self.sessionId = sessionId
+        self.paneId = paneId
+        self.description = description
+        self.agentType = agentType
+        self.worktreePath = worktreePath
+        self.lastActive = lastActive
+        self.lastText = lastText
+        self.running = running
+        self.transcriptPath = transcriptPath
+    }
 }
 
 /// 하위 에이전트 기록(~/.claude/projects/<폴더>/<세션>/subagents/agent-*.jsonl)을 훑어 어느 작업 트리에서 일하는지 알아낸다.
 /// claude 프로세스와 하위 에이전트는 메인 폴더에서 돌고 작업 트리는 경로로만 쓰므로, 작업 폴더(cwd)로는 알 수 없다.
 /// 가볍게: 최근 15분 안에 바뀐 파일만, 끝 64KB 만 읽고, 크기가 그대로인 파일은 다시 읽지 않는다. worker 에서만 쓴다.
-final class SubagentScanner {
+public final class SubagentScanner {
     static let window: TimeInterval = 15 * 60
     static let tailBytes = 64 * 1024
 
@@ -44,8 +58,10 @@ final class SubagentScanner {
     private var cache: [String: Cached] = [:]
     private var meta: [String: (description: String, type: String?, finished: Bool, modified: Date?)] = [:]
 
+    public init() {}
+
     /// sessions: (화면 ID, 세션 ID, 대화 파일 경로, 그 저장소의 작업 트리 경로들)
-    func scan(_ sessions: [(paneId: String, sessionId: String, transcript: String, worktrees: [String])]) -> [SubagentActivity] {
+    public func scan(_ sessions: [(paneId: String, sessionId: String, transcript: String, worktrees: [String])]) -> [SubagentActivity] {
         let fm = FileManager.default
         var result: [SubagentActivity] = []
         var seen: Set<String> = []

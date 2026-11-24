@@ -189,6 +189,10 @@ public struct DaemonState: Codable, Equatable {
 
     /// 화면 셸에 브라우저(abx 세션·`abx` 명령·받은 브라우저 폴더)를 넣는다
     public static let browserFeature = "browser"
+    /// 화면 환경에 `agentdeck` 명령(AGENTDECK_PANE_ID·PATH 앞의 agentdeck 폴더)을 넣는다. 예전 데몬이 만든 칸에는 없다.
+    public static let cliFeature = "cli"
+
+    public func supports(_ feature: String) -> Bool { features?.contains(feature) ?? false }
 
     public init(pid: Int32, footprint: UInt64, panes: [PaneInfo], instance: String? = nil, features: [String]? = nil) {
         self.pid = pid

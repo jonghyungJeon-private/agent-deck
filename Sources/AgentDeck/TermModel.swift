@@ -40,7 +40,7 @@ struct PaneRow: Identifiable, Equatable {
     var isClaude: Bool { session != nil || pane.foreground == "claude" || dormantClaude }
     /// 꺼진 화면에서 claude 가 돌고 있었는지
     var dormantClaude = false
-    static let shellNames: Set<String> = ["zsh", "bash", "fish", "sh", "tcsh", "ksh", "dash", "nu"]
+    static let shellNames = PaneKind.shellNames
     /// 앞에 셸만 떠 있는지("zsh (kiro-cli-term)" 처럼 감싼 셸도 셸로 본다). claude 가 짝지어졌으면 셸이 아니다.
     var isShell: Bool {
         guard session == nil, !isCodex, let name = pane.foreground?.split(separator: " ").first else { return false }
@@ -142,6 +142,8 @@ final class TermModel: ObservableObject {
     @Published var browserChrome: BrowserChromeState = .unknown
     /// 떠 있는 데몬이 화면에 브라우저를 넣는 판인가(앱만 새로 바꾸면 예전 데몬이 남는다)
     @Published private(set) var daemonHasBrowser = true
+    /// 데몬이 칸 환경에 `agentdeck` 명령(AGENTDECK_PANE_ID·PATH)을 넣는 버전인가(예전 데몬은 안 넣는다 — 데몬을 다시 띄워야 한다)
+    @Published private(set) var daemonHasCli = true
     @Published var notice: String?
     /// 예전 데몬(예전 데이터 폴더 ClaudeSessions)에 붙어 있다. 그 데몬이 끝나면(재시작·재부팅) 새 위치로 옮긴다.
     @Published private(set) var legacyDaemon = DataLocation.mode == .legacy
@@ -193,11 +195,13 @@ final class TermModel: ObservableObject {
     let launch = LaunchSettings()
     /// 도크 아래 상태 줄의 "설정" 버튼 → 앱 메뉴 "설정…"(perform "settings")과 같은 동작. AppDelegate 가 연결한다.
     var openSettings: () -> Void = {}
-    private let codexScanner = CodexScanner()
+    /// 화면 ↔ 세션 짝짓기·작업 상태 읽기(SessionCore — `agentdeck` 명령도 같은 것을 쓴다)
+    private let stateReader = PaneStateReader()
+    private var codexScanner: CodexScanner { stateReader.codexScanner }
     /// 하위 에이전트 훑기(worker 전용). 10초에 한 번만.
-    private let subagents = SubagentScanner()
-    private var lastAgentScan = Date.distantPast
-    private var lastAgents: [SubagentActivity] = []
+    private let agentScanner = AgentActivityScanner()
+    /// 설정 → 연결의 `agentdeck` 스킬·터미널 링크
+    let orchestration = OrchestrationConnection()
     /// 되살린 시각(그 직후 잠깐은 세션 정보를 지키려고)
     private var revivedAt: [String: Date] = [:]
     /// 만들라고 보냈지만 아직 목록에 안 나타난 화면(그 사이 온 목록 때문에 배치에서 빠지지 않게)
@@ -534,6 +538,40 @@ final class TermModel: ObservableObject {
         let timer = Timer(timeInterval: 2, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+        watchRequests()
+    }
+
+    // MARK: - `agentdeck` 명령의 요청(칸 배치·이름·그 칸으로 가기)
+
+    /// 요청 파일 폴더(`term/requests`, SessionCore.AppRequestQueue — 왜 파일인지는 거기 주석)
+    private let requests = AppRequestQueue()
+    private var requestApplier = AppRequestApplier()
+    private var requestSource: DispatchSourceFileSystemObject?
+
+    /// 폴더에 파일이 생기면 바로 목록을 다시 받아 처리한다(2초 갱신을 기다리지 않게). 못 열면 2초 갱신이 처리한다.
+    private func watchRequests() {
+        requests.ensureDirectory()
+        let fd = open(requests.dir.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: .write, queue: .main)
+        source.setEventHandler { [weak self] in self?.client.list() }
+        source.setCancelHandler { Darwin.close(fd) }
+        source.resume()
+        requestSource = source
+    }
+
+    /// 남겨진 요청을 처리한다(목록을 받을 때마다 — 칸이 데몬 목록에 나타난 것만). 배치 규칙은 SessionCore.AppRequestApplier(시험 가능한 순수 부분).
+    /// - place: 새 칸을 부른 칸의 탭에 붙이고(앞서 앱이 새 탭으로 붙였으면 거기서 옮긴다) 이름을 직접 바꾼 이름으로 둔다.
+    ///   부른 칸이 어느 탭에도 없으면 붙이지 않는다(`reconcile` 이 새 탭으로 붙인다).
+    /// - focus: 그 칸이 있는 탭으로 가서 포커스하고 앱을 앞으로 가져온다.
+    /// 처리한 파일은 지운다. 오래된(AppRequestQueue.ttl)·이상한 요청은 읽을 때 버려진다.
+    private func applyRequests(to next: inout Workspace, live: Set<String>) -> (changed: Bool, activate: Bool) {
+        let result = requestApplier.apply(requests.pending(), to: &next, live: live)
+        for (pane, name) in result.names where names.userTitle(SessionNames.paneKey(pane)) != name {
+            names.setUserTitle(SessionNames.paneKey(pane), name)
+        }
+        for item in result.done { requests.remove(item) }
+        return (result.changed, result.activate)
     }
 
     /// 데몬에 붙는다(없으면 띄운다). 메인 스레드 밖에서 하고 끝나면 화면을 붙인다. 붙는 중이거나 실패 뒤 기다리는 동안은 넘어간다.
@@ -671,7 +709,8 @@ final class TermModel: ObservableObject {
     private let worker = DispatchQueue(label: "AgentDeck.rows", qos: .utility)
 
     private func apply(_ state: DaemonState) {
-        daemonHasBrowser = state.features?.contains(DaemonState.browserFeature) ?? false
+        daemonHasBrowser = state.supports(DaemonState.browserFeature)
+        daemonHasCli = state.supports(DaemonState.cliFeature)
         daemonFootprint = state.footprint
         appFootprint = Memory.footprint()
         let seen = seenDone
@@ -717,58 +756,34 @@ final class TermModel: ObservableObject {
 
     /// worker 에서만 부른다(titles 도 worker 에서만 쓴다)
     private func makeRows(_ panes: [PaneInfo], seen: [String: WorkStateRules.Seen] = [:]) -> [PaneRow] {
-        // hook 기록 중 실행 중인 세션을 화면에 짝짓는다. claude 에서 부모 프로세스를 따라 올라가 화면의 셸을 만나면 그 화면이다.
-        // (Kiro CLI 처럼 셸을 자기 가상 터미널로 한 겹 감싸는 도구가 있으면 claude 의 tty 가 화면의 tty 와 다르다.)
-        // 계보로 못 찾으면 tty 로 짝짓는다.
-        // 프로세스 목록은 sysctl 한 번으로 찍어 아래 계보 찾기들이 같이 쓴다
-        let snapshot = ProcessUtil.snapshot()
-        let codexMatches = codexScanner.scan(panes, snapshot: snapshot)
-        let running = SessionStore().all().filter(\.isRunning)
-        func device(_ tty: String?) -> String? { tty.map { ($0 as NSString).lastPathComponent } } // "/dev/ttys002" ↔ "ttys002"
-        let shells = Dictionary(panes.map { ($0.pid, $0.id) }, uniquingKeysWith: { first, _ in first })
-        var sessionByPane: [String: SessionRecord] = [:]
-        // hook 이 남긴 화면 ID 가 맞으면 그대로(가장 정확). 같은 화면에 여럿이면 최근 것.
-        let paneIds = Set(panes.map(\.id))
-        for record in running.sorted(by: { ($0.activeSince ?? $0.startedAt) < ($1.activeSince ?? $1.startedAt) }) {
-            if let pane = record.pane, paneIds.contains(pane) { sessionByPane[pane] = record }
-        }
-        for record in running where !sessionByPane.values.contains(where: { $0.sessionId == record.sessionId }) {
-            if let pane = snapshot.pane(of: record.pid, shells: shells, maxHops: 32), sessionByPane[pane] == nil {
-                sessionByPane[pane] = record
-            }
-        }
-        // 감싼 셸이 있는 화면은 안쪽 셸의 폴더를 읽어야 cd 를 따라간다
-        let wrapped = panes.contains { ($0.foreground ?? "").contains(" (") }
-        func innermostShell(_ pid: pid_t) -> pid_t { snapshot.innermostShell(from: pid, names: PaneRow.shellNames) }
-        return panes.map { pane -> PaneRow in
-            let codexMatch = codexMatches[pane.id]
-            let session = codexMatch == nil ? (sessionByPane[pane.id]
-                ?? device(pane.tty).flatMap { tty in running.first { device($0.tty) == tty } }) : nil
-            let shell = wrapped ? innermostShell(pane.pid) : pane.pid
-            let codexSessionCwd: String? = codexMatch?.session?.cwd
-            let codexProcessCwd: String? = codexMatch.flatMap { ProcessUtil.cwd($0.process.pid) }
-            let claudeCwd: String? = session.flatMap { ProcessUtil.cwd($0.pid) ?? $0.cwd }
-            let agentCwd: String? = codexSessionCwd.flatMap { $0.isEmpty ? nil : $0 } ?? codexProcessCwd ?? claudeCwd
-            let cwd: String = agentCwd ?? ProcessUtil.cwd(shell) ?? pane.cwd
+        // 화면 ↔ 세션 짝짓기(화면 ID → 부모 프로세스 계보 → tty)·작업 폴더·작업 상태는 PaneStateReader 가 읽는다.
+        let readings = stateReader.read(panes, seen: seen, transcriptFallback: { [unowned self] id in self.titles[id]?.path })
+        return readings.map { reading -> PaneRow in
+            let pane = reading.pane
+            let session = reading.session
+            let cwd = reading.cwd
             var row = PaneRow(pane: pane, session: session, name: name(pane: pane, session: session, cwd: cwd),
                               cwd: cwd, git: GitWorktrees.locate(cwd),
                               claudeArgs: session.flatMap { ProcessUtil.arguments($0.pid) }.map(PaneRecipe.keptArgs))
-            if let match = codexMatch {
+            if let match = reading.codex {
                 row.codex = match.session
                 row.codexArgs = CodexArguments.keptArgs(match.args)
                 row.codexHome = match.home.path
                 if let codex = match.session {
-                    row.name = names.userTitle("codex:" + codex.id) ?? names.userTitle(SessionNames.paneKey(pane.id))
-                        ?? (codex.title.isEmpty ? (cwd as NSString).lastPathComponent : SessionNaming.preview(of: codex.title))
-                    let state = WorkStateRules.effective(state: codex.state, at: codex.stateAt, seq: codex.stateSeq,
-                        transcriptModifiedAt: nil, seen: seen["codex:" + codex.id])
-                    row.status = WorkStatus(state: state, message: codex.message)
+                    row.name = PaneNaming.codexName(userTitle: names.userTitle("codex:" + codex.id),
+                                                    paneUserTitle: names.userTitle(SessionNames.paneKey(pane.id)),
+                                                    title: codex.title, folder: (cwd as NSString).lastPathComponent)
+                    row.status = WorkStatus(state: reading.state, message: reading.message)
                     if row.status == .unknown { row.status = .codexUnknown }
-                    row.statusAt = codex.stateAt
-                    row.statusSeq = codex.stateSeq
+                    row.statusAt = reading.at
+                    row.statusSeq = reading.seq
                 } else { row.status = .codexUnknown }
+            } else if session != nil {
+                row.status = WorkStatus(state: reading.state, message: reading.message, background: reading.background)
+                row.statusAt = reading.at
+                row.statusSeq = reading.seq
             } else {
-                (row.status, row.statusAt, row.statusSeq) = workStatus(session, isClaude: row.isClaude, seen: seen)
+                row.status = row.isClaude ? .unknown : .none
             }
             return row
         }
@@ -776,32 +791,12 @@ final class TermModel: ObservableObject {
 
     /// 실행 중인 claude 의 하위 에이전트를 10초에 한 번 훑는다(worker 에서)
     private func scanAgents(_ rows: [PaneRow]) -> [SubagentActivity] {
-        guard Date().timeIntervalSince(lastAgentScan) >= 10 else { return lastAgents }
-        lastAgentScan = Date()
-        let sessions = rows.compactMap { row -> (paneId: String, sessionId: String, transcript: String, worktrees: [String])? in
-            guard !row.dormant, let session = row.session,
-                  let path = session.transcriptPath ?? TranscriptReader.locate(sessionId: session.sessionId)
-            else { return nil }
-            let worktrees = row.git.map { GitWorktrees.list($0).filter { !$0.isMain }.map(\.path) } ?? []
-            return (row.id, session.sessionId, path, worktrees)
-        }
-        lastAgents = subagents.scan(sessions)
-        for row in rows where !row.dormant {
-            guard let codex = row.codex else { continue }
-            let home = URL(fileURLWithPath: row.codexHome ?? CodexSessions.defaultHome.path)
-            for (child, status) in codexScanner.reader(home).children(of: codex.id) {
-                let at = child.stateAt ?? .distantPast
-                guard let activity = CodexChildRules.activity(state: child.state, stateAt: child.stateAt,
-                    edgeStatus: status, lastActivityAt: child.lastActivityAt) else { continue }
-                let worktrees = row.git.map { GitWorktrees.list($0).filter { !$0.isMain }.map(\.path) } ?? []
-                let tree = worktrees.first { child.cwd == $0 || child.cwd.hasPrefix($0 + "/") }
-                lastAgents.append(SubagentActivity(id: child.id, sessionId: "codex:" + codex.id, paneId: row.id,
-                    description: child.title.isEmpty ? "Codex 하위 에이전트" : SessionNaming.preview(of: child.title),
-                    agentType: "codex", worktreePath: tree, lastActive: at, lastText: child.lastText,
-                    running: activity == .running))
-            }
-        }
-        return lastAgents
+        let live = rows.filter { !$0.dormant }
+        let targets = live.map { AgentScanTarget(paneId: $0.id, session: $0.session, codex: $0.codex, codexHome: $0.codexHome) }
+        let git = Dictionary(live.map { ($0.id, $0.git) }, uniquingKeysWith: { first, _ in first })
+        return agentScanner.scan(targets, worktrees: { id in
+            (git[id] ?? nil).map { GitWorktrees.list($0).filter { !$0.isMain }.map(\.path) } ?? []
+        }, codexReader: stateReader.codexScanner.reader)
     }
 
     #if DEBUG
@@ -901,8 +896,9 @@ final class TermModel: ObservableObject {
                 lastError = "새 세션을 만들지 못했습니다."
             }
         }
+        let requested = applyRequests(to: &next, live: Set(live))
         var changed = next.reconcile(live: live, keep: Set(awaiting.keys), ignore: closing,
-                                     daemonPid: daemonPid, daemonInstance: instance) || !failed.isEmpty
+                                     daemonPid: daemonPid, daemonInstance: instance) || !failed.isEmpty || requested.changed
         // 되살리기 정보: 지금 폴더, claude 세션, 실행 옵션
         for row in newRows where !row.dormant && next.allPanes.contains(row.id) {
             var recipe = PaneRecipe(cwd: row.cwd, sessionId: row.session?.sessionId, claudeArgs: row.claudeArgs,
@@ -927,6 +923,10 @@ final class TermModel: ObservableObject {
         reconciled = true
         let newlyDormant = next.dormant != workspace.dormant
         if changed || first { setWorkspace(next, render: true) }
+        if requested.activate {
+            NSApp.activate(ignoringOtherApps: true)
+            (NSApp.windows.first { $0.canBecomeMain && $0.isVisible } ?? NSApp.windows.first)?.makeKeyAndOrderFront(nil)
+        }
         if newlyDormant { client.list() } // 꺼진 화면을 목록에 바로 보이게
     }
 
@@ -934,30 +934,8 @@ final class TermModel: ObservableObject {
     private var realRows: [PaneRow] = []
 
     /// 화면에서 확인한 "완료"의 시각(세션별). 이보다 늦은 완료만 "완료"로, 아니면 "쉬는 중"으로 보인다.
-    private var seenDone: [String: WorkStateRules.Seen] = [:]
-
-    /// 작업 상태(worker 에서). hook 이 없는 때는 가볍게 보완한다(WorkStateRules.effective):
-    /// 입력 대기 뒤에 대화 파일이 다시 늘면(권한을 허락해 이어서 일함) 작업 중으로 본다.
-    /// 대화 파일 수정 시각은 이름 정하기(titles)와 따로, 입력 대기일 때만 stat 한 번으로 읽는다
-    /// (이 앱에서 이름을 바꾼 세션은 이름 정하기가 대화 파일을 읽지 않아 titles 가 비거나 낡는다).
-    private func workStatus(_ session: SessionRecord?, isClaude: Bool,
-                            seen: [String: WorkStateRules.Seen]) -> (WorkStatus, Date?, Int?) {
-        guard let session else { return (isClaude ? .unknown : .none, nil, nil) }
-        let at = session.stateAt
-        let modified = session.state == "waiting"
-            ? WorkStateRules.transcriptModifiedAt(session.transcriptPath ?? titles[session.sessionId]?.path)
-            : nil
-        // 응답을 마칠 때(Stop) 남은 백그라운드 일이 있었던 세션만 그 일들을 파일로 확인한다(일마다 stat 몇 번 — 2초 목록 갱신에 얹음)
-        var background: WorkStateRules.Background?
-        if let tasks = session.background, let stoppedAt = at, ["done", "idle", "waiting"].contains(session.state ?? "") {
-            background = BackgroundWork.inspect(tasks, transcriptPath: session.transcriptPath ?? titles[session.sessionId]?.path,
-                                                sessionId: session.sessionId, stoppedAt: stoppedAt)
-        }
-        let state = WorkStateRules.effective(state: session.state, at: at, seq: session.stateSeq,
-                                             transcriptModifiedAt: modified, seen: seen[session.sessionId],
-                                             background: background)
-        return (WorkStatus(state: state, message: session.stateMessage, background: background), at, session.stateSeq)
-    }
+    /// 앱을 켤 때 `term/seen.json` 에서 읽어 이어 간다(`agentdeck` 명령과 앱의 완료·쉬는 중 표시가 같게).
+    private var seenDone: [String: WorkStateRules.Seen] = SeenStore.load()
 
     /// Codex: 부모가 턴을 마쳤는데 하위 에이전트(spawn)가 아직 일하면 "오케스트레이션 중"(하위 훑기 10초 주기의 결과로)
     static func applyCodexOrchestration(_ rows: [PaneRow], agents: [SubagentActivity]) -> [PaneRow] {
@@ -967,7 +945,7 @@ final class TermModel: ObservableObject {
             case .done, .idle, .orchestrating: break
             default: return row
             }
-            let running = agents.filter { $0.sessionId == "codex:" + codex.id && $0.agentType == "codex" && $0.isRunning }.count
+            let running = AgentActivityScanner.runningCodexChildren(of: codex.id, in: agents)
             var row = row
             if running > 0 { row.status = .orchestrating(agents: running, shells: 0) }
             return row
@@ -984,6 +962,7 @@ final class TermModel: ObservableObject {
               !WorkStateRules.isSeen(seenDone[sid], seq: row.statusSeq, at: at)
         else { return }
         seenDone[sid] = WorkStateRules.Seen(seq: row.statusSeq, at: at)
+        SeenStore.save(seenDone) // `agentdeck` 명령이 같은 "쉬는 중" 판단을 하도록(읽기만 한다)
         notifier.clear(paneId: id)
         client.list() // 바로 "쉬는 중"으로 다시 그린다
     }
@@ -1107,13 +1086,10 @@ final class TermModel: ObservableObject {
             titles[session.sessionId] = (path, cursor)
             summary = cursor.summary
         }
-        let custom = summary.customTitle
-        if let custom, !SessionNaming.isAutomatic(custom, cwd: session.cwd) { return custom }
-        if let ai = summary.aiTitle { return ai }
-        if let path, let prompt = firstPrompt(session: session.sessionId, path: path) {
-            return names.autoTitle(session: session.sessionId, prompt: prompt) ?? SessionNaming.preview(of: prompt)
-        }
-        return custom ?? folder
+        // 이름 정하기 순서는 SessionCore.PaneNaming(`agentdeck list` 와 같다)
+        return PaneNaming.claudeName(userTitle: nil, summary: summary, sessionCwd: session.cwd, folder: folder,
+                                     firstPrompt: { path.flatMap { firstPrompt(session: session.sessionId, path: $0) } },
+                                     autoTitle: { names.autoTitle(session: session.sessionId, prompt: $0) })
     }
 
     private func firstPrompt(session id: String, path: String) -> String? {

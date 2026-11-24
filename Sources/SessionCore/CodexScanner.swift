@@ -1,14 +1,14 @@
 import Foundation
-import SessionCore
 import TermWire
 
-/// UI 앱에서 실행하므로 기존 터미널 데몬을 재시작할 필요가 없다.
-final class CodexScanner {
-    struct Match {
-        var process: ProcInfo
-        var args: [String]
-        var session: CodexSession?
-        var home: URL
+/// 화면마다 도는 codex 와 그 세션을 짝짓는다(앱과 `agentdeck` 명령이 같은 규칙을 쓴다 — SessionCore).
+/// 짝짓기 기록(`term/codex-bindings.json`)은 앱만 쓴다(`persist`). 명령줄 도구는 읽기만 해 앱과 서로 덮어쓰지 않는다.
+public final class CodexScanner {
+    public struct Match {
+        public var process: ProcInfo
+        public var args: [String]
+        public var session: CodexSession?
+        public var home: URL
     }
     struct Binding: Codable, Equatable {
         var pid: pid_t
@@ -19,17 +19,19 @@ final class CodexScanner {
     private var readers: [URL: CodexSessions] = [:]
     /// 데이터 위치를 옮기면(예전 폴더 → 새 폴더) 따라가도록 매번 계산한다
     private var url: URL { TermPaths.home.appendingPathComponent("codex-bindings.json") }
-    init() {
+    private let persist: Bool
+    public init(persist: Bool = true) {
+        self.persist = persist
         if let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode([String: Binding].self, from: data) { bindings = saved }
     }
-    func reader(_ home: URL) -> CodexSessions {
+    public func reader(_ home: URL) -> CodexSessions {
         if let reader = readers[home] { return reader }
         let reader = CodexSessions(home: home); readers[home] = reader; return reader
     }
     /// 인자·환경 읽기를 (pid, 시작 시각)별로 기억해 두므로 이 객체 하나를 계속 쓴다(worker 에서만).
     private let finder = CodexProcessFinder()
 
-    func scan(_ panes: [PaneInfo], snapshot: ProcessSnapshot) -> [String: Match] {
+    public func scan(_ panes: [PaneInfo], snapshot: ProcessSnapshot) -> [String: Match] {
         let before = bindings
         let paneIds = Set(panes.map(\.id))
         let shells = Dictionary(panes.map { ($0.pid, $0.id) }, uniquingKeysWith: { a, _ in a })
@@ -55,7 +57,7 @@ final class CodexScanner {
             result[pane] = Match(process: process, args: args, session: session, home: home)
         }
         bindings = bindings.filter { result[$0.key] != nil }
-        if before != bindings, let data = try? JSONEncoder().encode(bindings) { try? data.write(to: url, options: .atomic) }
+        if persist, before != bindings, let data = try? JSONEncoder().encode(bindings) { try? data.write(to: url, options: .atomic) }
         return result
     }
 }

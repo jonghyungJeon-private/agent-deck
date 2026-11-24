@@ -16,12 +16,12 @@ let package = Package(
     targets: [
         // 앱과 데몬이 주고받는 메시지 형식, 데이터 위치(예전 ClaudeSessions 폴더에서 옮기기 포함)
         .target(name: "TermWire"),
-        .target(name: "SessionCore", dependencies: ["TermWire"]),
-        .testTarget(name: "SessionCoreTests", dependencies: ["SessionCore", "TermWire"]),
+        .target(name: "SessionCore", dependencies: ["TermWire", "TermLayout"]),
+        .testTarget(name: "SessionCoreTests", dependencies: ["SessionCore", "TermWire", "TermLayout"]),
 
         // forkpty + exec (Swift 에서 fork 뒤 코드를 안전하게 돌리기 어려워 C 로 둔다)
         .target(name: "CPTY"),
-        .executableTarget(name: "AgentDeckDaemon", dependencies: ["TermWire", "CPTY", "SessionCore"]),
+        .executableTarget(name: "AgentDeckDaemon", dependencies: ["TermWire", "CPTY", "SessionCore", "TermLayout"]),
         // 탭·분할 배치, git 작업 트리 읽기(화면과 떨어진 순수 로직이라 따로 시험한다)
         .target(name: "TermLayout"),
         // 가벼운 편집기의 화면 없는 부분: 줄 diff(git 변경 표시), 줄 끝·바이너리 판별·안전한 저장, 글자 색 훑기
