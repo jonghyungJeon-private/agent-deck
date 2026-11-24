@@ -1,5 +1,13 @@
 # 변경 기록
 
+## 다음 버전
+
+- 하위 에이전트 칸을 **Claude Code 화면과 같은 모양**으로 그린다: `> 프롬프트`(줄 배경), `⏺ 글`(마크다운 — 굵게·기울임·`코드`·제목·코드 블록),
+  `⏺ Read(src/foo.ts)`·`Bash(…)`·`Update(…)`·`Search(pattern: …)`·`Fetch(…)` 같은 도구 이름, `⎿  Read 120 lines`·`Updated … with 2 additions and 1 removal`·`Found 3 files` 같은 결과 요약
+  (긴 출력은 앞 3줄 + `… +N lines`), `✻ Thinking…`. ⏺ 는 결과에 따라 성공·실패 색, 결과 전에는 흐리게.
+- 색은 **사용자의 Claude Code 테마**(`~/.claude.json` 의 `theme` — dark·light·daltonized·ansi·auto)와 같은 팔레트를 쓰고(Claude Code 2.1 에서 뽑은 값), 본문은 터미널 글자색이다.
+- 기록 파일이 다시 쓰여 비면 칸의 옛 글을 지운다.
+
 ## 0.12.0 — 2026-11-24
 
 - **`agentdeck` 명령**: 한 칸의 claude(지휘)가 다른 칸의 claude·codex(작업)에 일을 시키고, 끝나길 기다리고, 결과를 받는다.
