@@ -1,6 +1,6 @@
 # 변경 기록
 
-## 다음 버전
+## 0.12.1 — 2026-11-24
 
 - 하위 에이전트 칸을 **Claude Code 화면과 같은 모양**으로 그린다: `> 프롬프트`(줄 배경), `⏺ 글`(마크다운 — 굵게·기울임·`코드`·제목·코드 블록),
   `⏺ Read(src/foo.ts)`·`Bash(…)`·`Update(…)`·`Search(pattern: …)`·`Fetch(…)` 같은 도구 이름, `⎿  Read 120 lines`·`Updated … with 2 additions and 1 removal`·`Found 3 files` 같은 결과 요약
