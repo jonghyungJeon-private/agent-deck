@@ -178,7 +178,12 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(seen.last??.type, "confirm")
         XCTAssertFalse(stream.handle(dialogEvent("S-OTHER"))) // 이 스트림이 붙인 연결이 아니면 모른다
 
-        await stream.answerDialog(target: "T1", accept: true)
+        let shown = try XCTUnwrap(stream.currentDialog)
+        await stream.answerDialog(target: "T1", dialogId: shown.id + 1, accept: true) // 다른(새) 대화상자 번호: 보내지 않는다
+        XCTAssertTrue(t.methods("Page.handleJavaScriptDialog").isEmpty)
+        await stream.answerDialog(target: "T1", dialogId: shown.id, accept: true)
+        await stream.answerDialog(target: "T1", dialogId: shown.id, accept: false) // 두 번째 누름은 버린다
+        XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").count, 1)
         let answer = t.methods("Page.handleJavaScriptDialog").first
         XCTAssertEqual(answer?["sessionId"] as? String, "S-T1")
         XCTAssertEqual((answer?["params"] as? [String: Any])?["accept"] as? Bool, true)
@@ -219,9 +224,9 @@ final class ScreencastDialogTests: XCTestCase {
 
         // 답은 사람이 본 대화상자의 탭으로만: 보는 탭이 T2 로 바뀐 뒤 T1 의 답은 T1 의 남겨 둔 연결로, 대화상자 없는 T2 에는 보내지 않는다
         try await stream.show(target: "T2")
-        await stream.answerDialog(target: "T2", accept: true)
+        await stream.answerDialog(target: "T2", dialogId: 1, accept: true)
         XCTAssertTrue(t.methods("Page.handleJavaScriptDialog").isEmpty)
-        await stream.answerDialog(target: "T1", accept: false)
+        await stream.answerDialog(target: "T1", dialogId: 1, accept: false)
         XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").map { $0["sessionId"] as? String }, ["S-T1"])
         // 칸이 잠깐 가려져도(그림만 멈춤) 연결은 그대로 둔다
         XCTAssertTrue(stream.hasPendingDialogs)

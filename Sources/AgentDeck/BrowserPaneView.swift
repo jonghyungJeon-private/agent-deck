@@ -105,6 +105,8 @@ final class BrowserPaneView: NSView {
     private var pageDialog: PageDialog?
     /// 응답 없는 탭(카드에 보이는 그 탭)
     private var pageUnresponsive: String?
+    /// 답을 보낸 대화상자(닫힘 알림이 올 때까지 단추를 끈다)
+    private var answeredDialog: Int?
     /// 마지막 상태의 제어권(입력을 보낼지 정한다)
     private(set) var control: AbxStatus.Control?
     /// 제어 가져오기·돌려주기를 abx 에 보내 답을 기다리는 중
@@ -405,7 +407,7 @@ final class BrowserPaneView: NSView {
     /// 화면 위 카드: 대화상자가 먼저, 없으면 응답 없는 탭. 대화상자는 사람이 제어를 가진 동안만 답한다(페이지 입력과 같은 규칙)
     private func updateNotice() {
         if let dialog = pageDialog {
-            notice.show(dialog: dialog, canAnswer: acceptsInput)
+            notice.show(dialog: dialog, canAnswer: acceptsInput, sending: answeredDialog == dialog.id)
         } else if pageUnresponsive != nil {
             notice.showUnresponsive()
         } else {
@@ -416,8 +418,10 @@ final class BrowserPaneView: NSView {
     private func answerNotice(accept: Bool, text: String?) {
         onUserInteraction?()
         if let dialog = pageDialog {
-            guard acceptsInput else { return }
-            feed?.answerDialog(target: dialog.targetId, accept: accept, text: text)
+            guard acceptsInput, answeredDialog != dialog.id else { return }
+            answeredDialog = dialog.id // 한 번만(두 번 눌러도, 닫힘 알림이 오기 전에 다시 Return 을 눌러도)
+            updateNotice()
+            feed?.answerDialog(dialog, accept: accept, text: text)
         } else if let target = pageUnresponsive {
             // 카드의 그 탭에(그새 다른 탭으로 옮겼어도 다른 탭을 닫거나 새로고침하지 않게)
             if accept { feed?.reloadTab(target) } else { feed?.closeTab(target) }
@@ -1711,6 +1715,8 @@ final class BrowserFeed {
             applySize()
         }
         if new.screencast != old.screencast, connectedURL != nil {
+            // 답하지 않은 대화상자가 있으면 다시 붙기를 미룬다(끊으면 그 대화상자에 답할 연결이 사라진다) — refresh 가 닫힌 뒤에 한다
+            if stream?.hasPendingDialogs == true { reconnectAfterDialogs = true; return }
             disconnect()
             refresh()
         }
@@ -1770,6 +1776,8 @@ final class BrowserFeed {
 
     /// 대화상자 때문에 연결을 둔 채 그림만 멈췄다(pause) — resume 에서 다시 받는다
     private var framesSuspended = false
+    /// 선명도를 바꿨는데 대화상자가 떠 있어 다시 붙기를 미뤘다
+    private var reconnectAfterDialogs = false
 
     /// 다시 보인다: 상태를 읽고 다시 붙는다(고른 탭이 있으면 watch 파일도 다시 쓴다)
     func resume() {
@@ -1862,6 +1870,10 @@ final class BrowserFeed {
             else { publish(.waiting("에이전트가 아직 브라우저를 쓰지 않았습니다\n(이 세션의 claude·codex가 abx를 쓰면 여기에 보입니다)")) }
             return
         }
+        if reconnectAfterDialogs, stream?.hasPendingDialogs != true {
+            reconnectAfterDialogs = false
+            if connectedURL != nil { disconnect() } // 아래에서 바뀐 선명도로 다시 붙는다
+        }
         let wasControlled = control == .agent || control == .switching
         control = status.control
         if control != .user { userTarget = nil }
@@ -1918,10 +1930,10 @@ final class BrowserFeed {
 
     /// 카드에 보인 대화상자(그 탭)에 답한다 — 그새 보는 탭이 바뀌어도 그 탭의 것에만.
     /// 페이지 입력과 같은 규칙: 사람이 제어를 가진 동안만(그새 에이전트에게 넘어갔으면 늦은 클릭은 버린다)
-    func answerDialog(target: String, accept: Bool, text: String?) {
+    func answerDialog(_ dialog: PageDialog, accept: Bool, text: String?) {
         queue.async { [self] in
             guard control == .user, !releasing, let stream else { return }
-            Task { await stream.answerDialog(target: target, accept: accept, text: text) }
+            Task { await stream.answerDialog(target: dialog.targetId, dialogId: dialog.id, accept: accept, text: text) }
         }
     }
 

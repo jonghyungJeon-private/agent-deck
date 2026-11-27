@@ -26,6 +26,8 @@ public struct ScreencastSettings: Equatable {
 /// 누군가 `Page.handleJavaScriptDialog` 로 답할 때까지 그 탭은 멈춘다(스크립트도, 렌더러가 답하는 DevTools 요청도).
 /// 답할 수 있는 것은 대화상자가 뜰 때 그 탭에 붙어 Page 를 켜 둔 연결뿐이다 — 그 연결을 떼면 아무도 닫지 못한다.
 public struct PageDialog: Equatable {
+    /// 뜰 때마다 새 번호 — 답은 사람이 본 바로 그 대화상자에만(두 번 눌러 다음 대화상자에 답이 가지 않게)
+    public let id: Int
     public let targetId: String
     /// alert | confirm | prompt | beforeunload
     public let type: String
@@ -33,7 +35,8 @@ public struct PageDialog: Equatable {
     public let defaultPrompt: String
     public let url: String
 
-    public init(targetId: String, type: String, message: String, defaultPrompt: String = "", url: String = "") {
+    public init(id: Int = 0, targetId: String, type: String, message: String, defaultPrompt: String = "", url: String = "") {
+        self.id = id
         self.targetId = targetId
         self.type = type
         self.message = message
@@ -50,6 +53,9 @@ public final class ScreencastStream {
     private let settings: ScreencastSettings
     /// 탭에 붙은 뒤 Page.enable 을 기다리는 시간. 넘기면 그 탭은 "응답 없음"(대화상자가 떠 있는데 답할 연결이 없는 탭 등)
     private let enableTimeout: TimeInterval
+    /// 대화상자 번호(PageDialog.id)와 이미 답을 보낸 대화상자
+    fileprivate var nextDialogId = 0
+    private var answered: Set<Int> = []
     /// 응답 없는 탭에 다시 물어보는 간격(오래 도는 스크립트 등은 이동 없이 풀린다 — 이동 알림만 기다리면 계속 막힌 것으로 남는다)
     private let probeInterval: TimeInterval
     fileprivate let lock = NSLock()
@@ -253,9 +259,10 @@ public final class ScreencastStream {
 
     /// `target` 탭의 대화상자에 답한다(`accept`: 확인·나가기, `text`: prompt 에 넣을 글) — 사람이 본 그 대화상자의 탭으로.
     /// 누른 뒤 보는 탭이 바뀌었어도 다른 탭의 대화상자에 답이 가지 않는다(그 탭이 남겨 둔 연결이면 그리로). 이미 닫혔으면 그렇다고 알린다.
-    public func answerDialog(target: String, accept: Bool, text: String? = nil) async {
+    /// `dialogId`: 사람이 본 대화상자 — 그것이 아직 떠 있을 때 한 번만 답한다.
+    public func answerDialog(target: String, dialogId: Int, accept: Bool, text: String? = nil) async {
         guard let session = lock.locked({ () -> String? in
-            guard dialogs[target] != nil else { return nil }
+            guard dialogs[target]?.id == dialogId, answered.insert(dialogId).inserted else { return nil }
             return targetId == target ? sessionId : kept[target]
         }) else { return }
         var params: [String: Any] = ["accept": accept]
@@ -419,7 +426,8 @@ extension ScreencastStream {
             return true
         }
         let p = event.params
-        let dialog = PageDialog(targetId: target, type: p["type"] as? String ?? "alert", message: p["message"] as? String ?? "",
+        let id: Int = lock.locked { nextDialogId += 1; return nextDialogId }
+        let dialog = PageDialog(id: id, targetId: target, type: p["type"] as? String ?? "alert", message: p["message"] as? String ?? "",
                                 defaultPrompt: p["defaultPrompt"] as? String ?? "", url: p["url"] as? String ?? "")
         let shown: Bool = lock.locked {
             dialogs[target] = dialog
