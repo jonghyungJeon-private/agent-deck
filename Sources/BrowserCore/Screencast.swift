@@ -116,7 +116,6 @@ public final class ScreencastStream {
         if claimed.hadDialog { onDialog?(nil) }
         if let previous = claimed.detach { await detach(previous) }
         if let parked = claimed.park { _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2) }
-        let current = { self.lock.locked { self.generation == claimed.generation } }
         if let session = claimed.reuse {
             // 대화상자 때문에 남겨 둔 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
             guard install(session, generation: claimed.generation) else { await release(session); return }
@@ -135,8 +134,13 @@ public final class ScreencastStream {
             } catch CDPError.timeout {
                 answered = false
             }
-            guard current() else { return } // 새 show·stop 이 이 연결을 이미 가져가 뗐다
-            if !answered { lock.locked { unresponsive = true } }
+            // 세대 확인과 표시를 한 자물쇠 안에서: 그새 다른 탭으로 옮겼으면 옛 탭의 시간 초과가 새 탭을 막힌 것으로 만들지 않는다
+            let stillCurrent: Bool = lock.locked {
+                guard generation == claimed.generation else { return false }
+                if !answered { unresponsive = true }
+                return true
+            }
+            guard stillCurrent else { return } // 새 show·stop 이 이 연결을 이미 가져가 뗐다
             _ = try await client.send("Page.startScreencast", screencastParams, sessionId: session)
             announce(target: target, generation: claimed.generation)
             if !answered { probe(session, generation: claimed.generation) }
@@ -218,11 +222,12 @@ public final class ScreencastStream {
         lock.locked { _ = sessionTargets.removeValue(forKey: session) }
     }
 
-    /// 보는 탭의 대화상자에 답한다(`accept`: 확인·나가기, `text`: prompt 에 넣을 글). 이미 닫혔으면 그렇다고 알린다.
-    public func answerDialog(accept: Bool, text: String? = nil) async {
-        guard let (session, target) = lock.locked({ () -> (String, String)? in
-            guard let sessionId, let targetId else { return nil }
-            return (sessionId, targetId)
+    /// `target` 탭의 대화상자에 답한다(`accept`: 확인·나가기, `text`: prompt 에 넣을 글) — 사람이 본 그 대화상자의 탭으로.
+    /// 누른 뒤 보는 탭이 바뀌었어도 다른 탭의 대화상자에 답이 가지 않는다(그 탭이 남겨 둔 연결이면 그리로). 이미 닫혔으면 그렇다고 알린다.
+    public func answerDialog(target: String, accept: Bool, text: String? = nil) async {
+        guard let session = lock.locked({ () -> String? in
+            guard dialogs[target] != nil else { return nil }
+            return targetId == target ? sessionId : kept[target]
         }) else { return }
         var params: [String: Any] = ["accept": accept]
         if let text { params["promptText"] = text }

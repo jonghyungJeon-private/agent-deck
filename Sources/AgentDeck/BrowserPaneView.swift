@@ -410,9 +410,9 @@ final class BrowserPaneView: NSView {
 
     private func answerNotice(accept: Bool, text: String?) {
         onUserInteraction?()
-        if pageDialog != nil {
+        if let dialog = pageDialog {
             guard acceptsInput else { return }
-            feed?.answerDialog(accept: accept, text: text)
+            feed?.answerDialog(target: dialog.targetId, accept: accept, text: text)
         } else if pageUnresponsive {
             if accept { feed?.reloadShown() } else { feed?.closeShown() }
         }
@@ -1896,11 +1896,11 @@ final class BrowserFeed {
         queue.async { [self] in client?.post("Target.closeTarget", ["targetId": target]) }
     }
 
-    /// 보는 탭의 대화상자에 답한다(카드의 단추)
-    func answerDialog(accept: Bool, text: String?) {
+    /// 카드에 보인 대화상자(그 탭)에 답한다 — 그새 보는 탭이 바뀌어도 그 탭의 것에만
+    func answerDialog(target: String, accept: Bool, text: String?) {
         queue.async { [self] in
             guard let stream else { return }
-            Task { await stream.answerDialog(accept: accept, text: text) }
+            Task { await stream.answerDialog(target: target, accept: accept, text: text) }
         }
     }
 

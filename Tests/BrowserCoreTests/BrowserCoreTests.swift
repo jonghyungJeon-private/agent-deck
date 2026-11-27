@@ -175,7 +175,7 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(seen.last??.type, "confirm")
         XCTAssertFalse(stream.handle(dialogEvent("S-OTHER"))) // 이 스트림이 붙인 연결이 아니면 모른다
 
-        await stream.answerDialog(accept: true)
+        await stream.answerDialog(target: "T1", accept: true)
         let answer = t.methods("Page.handleJavaScriptDialog").first
         XCTAssertEqual(answer?["sessionId"] as? String, "S-T1")
         XCTAssertEqual((answer?["params"] as? [String: Any])?["accept"] as? Bool, true)
@@ -214,8 +214,13 @@ final class ScreencastDialogTests: XCTestCase {
         // T2 는 대화상자가 없으니 떼었다
         XCTAssertEqual(t.methods("Target.detachFromTarget").map { ($0["params"] as? [String: Any])?["sessionId"] as? String }, ["S-T2"])
 
-        // 남겨 둔 탭의 대화상자가 다른 쪽에서 닫히면 그 연결을 뗀다
+        // 답은 사람이 본 대화상자의 탭으로만: 보는 탭이 T2 로 바뀐 뒤 T1 의 답은 T1 의 남겨 둔 연결로, 대화상자 없는 T2 에는 보내지 않는다
         try await stream.show(target: "T2")
+        await stream.answerDialog(target: "T2", accept: true)
+        XCTAssertTrue(t.methods("Page.handleJavaScriptDialog").isEmpty)
+        await stream.answerDialog(target: "T1", accept: false)
+        XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").map { $0["sessionId"] as? String }, ["S-T1"])
+        // 남겨 둔 탭의 대화상자가 다른 쪽에서 닫히면 그 연결을 뗀다
         XCTAssertTrue(stream.handle(closedEvent("S-T1")))
         await until { t.methods("Target.detachFromTarget").count == 2 }
         XCTAssertEqual(t.methods("Target.detachFromTarget").last.flatMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }, "S-T1")
