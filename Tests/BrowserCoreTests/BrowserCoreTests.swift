@@ -220,6 +220,14 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertTrue(t.methods("Page.handleJavaScriptDialog").isEmpty)
         await stream.answerDialog(target: "T1", accept: false)
         XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").map { $0["sessionId"] as? String }, ["S-T1"])
+        // 칸이 잠깐 가려져도(그림만 멈춤) 연결은 그대로 둔다
+        XCTAssertTrue(stream.hasPendingDialogs)
+        let stops = t.methods("Page.stopScreencast").count
+        await stream.suspendFrames()
+        XCTAssertEqual(t.methods("Page.stopScreencast").count, stops + 1)
+        XCTAssertEqual(t.methods("Target.detachFromTarget").count, 1)
+        stream.resumeFrames()
+        XCTAssertEqual(t.methods("Page.startScreencast").last?["sessionId"] as? String, "S-T2")
         // 남겨 둔 탭의 대화상자가 다른 쪽에서 닫히면 그 연결을 뗀다
         XCTAssertTrue(stream.handle(closedEvent("S-T1")))
         await until { t.methods("Target.detachFromTarget").count == 2 }

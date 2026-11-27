@@ -1747,6 +1747,7 @@ final class BrowserFeed {
 
     /// 칸이 안 보이게 됐다: 스트림·감시를 멈춘다. 사람이 보던 탭 표시(watch 파일)는 지운다 — 보는 사람이 없으니
     /// abx 가 커서를 적고 기다리거나 그 탭을 남길 까닭이 없다. 고른 탭·크기 기록은 들고 있다가 resume 에서 이어 간다.
+    /// 답하지 않은 대화상자가 있으면 연결은 끊지 않고 그림만 멈춘다(끊으면 그 대화상자에 아무도 답할 수 없다).
     func pause() {
         queue.async { [self] in
             guard !stopped, !paused else { return }
@@ -1758,15 +1759,27 @@ final class BrowserFeed {
             watchers.forEach { $0.cancel() }
             watchers = []
             frames = LatestFrameQueue<ScreencastFrame>()
-            disconnect()
+            if let stream, stream.hasPendingDialogs {
+                framesSuspended = true
+                Task { await stream.suspendFrames() }
+            } else {
+                disconnect()
+            }
         }
     }
+
+    /// 대화상자 때문에 연결을 둔 채 그림만 멈췄다(pause) — resume 에서 다시 받는다
+    private var framesSuspended = false
 
     /// 다시 보인다: 상태를 읽고 다시 붙는다(고른 탭이 있으면 watch 파일도 다시 쓴다)
     func resume() {
         queue.async { [self] in
             guard !stopped, paused else { return }
             paused = false
+            if framesSuspended {
+                framesSuspended = false
+                stream?.resumeFrames()
+            }
             guard locateRunner() else { return }
             startTimer()
         }
@@ -2277,6 +2290,7 @@ final class BrowserFeed {
     private func disconnect() {
         connectGeneration += 1
         connecting = false
+        framesSuspended = false
         if stream != nil {
             DispatchQueue.main.async { [weak self] in
                 self?.onDialog?(nil)

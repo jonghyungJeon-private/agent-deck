@@ -207,6 +207,21 @@ public final class ScreencastStream {
         if !park { await detach(session) }
     }
 
+    /// 답하지 않은 대화상자가 있다(보는 탭이든 남겨 둔 탭이든)
+    public var hasPendingDialogs: Bool { lock.locked { !dialogs.isEmpty } }
+
+    /// 칸이 잠깐 안 보인다(가려짐·최소화): 그림만 멈추고 연결은 둔다 — 대화상자에 답할 연결을 지키려고(떼면 그 탭은 응답 없음이 된다)
+    public func suspendFrames() async {
+        guard let session = lock.locked({ sessionId }) else { return }
+        _ = try? await client.send("Page.stopScreencast", sessionId: session, timeout: 2)
+    }
+
+    /// 다시 보인다: 그림을 다시 받는다
+    public func resumeFrames() {
+        guard let session = lock.locked({ sessionId }) else { return }
+        client.post("Page.startScreencast", screencastParams, sessionId: session)
+    }
+
     public func stop() async {
         let sessions: [String] = lock.locked {
             generation += 1
