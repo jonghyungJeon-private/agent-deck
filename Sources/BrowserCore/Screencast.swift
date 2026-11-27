@@ -70,8 +70,8 @@ public final class ScreencastStream {
     public var onFrame: ((ScreencastFrame) -> Void)?
     /// 보는 탭의 대화상자가 바뀌었다(nil = 없음). 아무 스레드에서나 불린다
     public var onDialog: ((PageDialog?) -> Void)?
-    /// 보는 탭이 응답하지 않게 됐다(true)·다시 응답한다(false). 아무 스레드에서나 불린다
-    public var onUnresponsive: ((Bool) -> Void)?
+    /// 탭(target)이 응답하지 않게 됐다(true)·다시 응답한다(false) — 보는 탭이거나 막 떠난 탭. 아무 스레드에서나 불린다
+    public var onUnresponsive: ((String, Bool) -> Void)?
 
     public init(client: CDPClient, settings: ScreencastSettings = ScreencastSettings(), enableTimeout: TimeInterval = 5,
                 probeInterval: TimeInterval = 3) {
@@ -96,7 +96,7 @@ public final class ScreencastStream {
     /// 붙었는데 페이지가 답하지 않으면(Page.enable 시간 초과) 실패로 끝내지 않는다: 그 탭을 보는 채로
     /// `onUnresponsive(true)` 를 알리고 screencast 는 시작한다(브라우저가 주는 마지막 그림이라도) — 다시 붙기를 되풀이하지 않게.
     public func show(target: String) async throws {
-        typealias Claim = (generation: Int, detach: String?, park: String?, reuse: String?, wasUnresponsive: Bool, hadDialog: Bool)
+        typealias Claim = (generation: Int, detach: String?, park: String?, reuse: String?, wasUnresponsive: String?, hadDialog: Bool)
         let claimed: Claim? = lock.locked {
             if targetId == target { return nil }
             generation += 1
@@ -106,13 +106,13 @@ public final class ScreencastStream {
                 park = previous
                 detach = nil
             }
-            let wasUnresponsive = unresponsive
+            let wasUnresponsive = unresponsive ? targetId : nil
             defer { targetId = target; sessionId = nil; unresponsive = false }
             return (generation, detach, park, kept.removeValue(forKey: target), wasUnresponsive, park != nil)
         }
         guard let claimed else { return }
         // 떠나는 탭의 카드는 바로 걷는다(새 탭의 것은 붙은 뒤 announce 가 — 새 탭이 막혀 있으면 몇 초 걸린다)
-        if claimed.wasUnresponsive { onUnresponsive?(false) }
+        if let old = claimed.wasUnresponsive { onUnresponsive?(old, false) }
         if claimed.hadDialog { onDialog?(nil) }
         if let previous = claimed.detach { await detach(previous) }
         if let parked = claimed.park { _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2) }
@@ -143,7 +143,7 @@ public final class ScreencastStream {
             guard stillCurrent else { return } // 새 show·stop 이 이 연결을 이미 가져가 뗐다
             _ = try await client.send("Page.startScreencast", screencastParams, sessionId: session)
             announce(target: target, generation: claimed.generation)
-            if !answered { probe(session, generation: claimed.generation) }
+            if !answered { probe(session, target: target, generation: claimed.generation) }
         } catch {
             // 실패하면 이 탭을 본다고 남기지 않는다(다음에 다시 시도할 수 있게)
             lock.locked { if generation == claimed.generation { targetId = nil; unresponsive = false } }
@@ -163,7 +163,7 @@ public final class ScreencastStream {
     /// 붙은 연결을 이 스트림의 것으로 — 그새 다른 show·stop 이 왔으면 false
     /// 응답 없는 탭: 이 탭을 보는 동안 `probeInterval` 마다 Page.enable(이미 켜졌으면 아무 일 없음)을 다시 보내 답이 오면 풀린 것으로 본다.
     /// 다른 탭으로 옮기거나 멈추거나(세대가 바뀜) 다른 길로 풀리면 그만둔다.
-    private func probe(_ session: String, generation claimed: Int) {
+    private func probe(_ session: String, target: String, generation claimed: Int) {
         Task { [weak self] in
             while let self {
                 try? await Task.sleep(nanoseconds: UInt64(self.probeInterval * 1_000_000_000))
@@ -174,7 +174,7 @@ public final class ScreencastStream {
                     self.unresponsive = false
                     return true
                 }
-                if recovered { self.onUnresponsive?(false) }
+                if recovered { self.onUnresponsive?(target, false) }
                 return
             }
         }
@@ -194,7 +194,7 @@ public final class ScreencastStream {
         let state: (dialog: PageDialog?, hung: Bool)? = lock.locked { generation == claimed ? (dialogs[target], unresponsive) : nil }
         guard let state else { return }
         onDialog?(state.dialog)
-        if state.hung { onUnresponsive?(true) }
+        if state.hung { onUnresponsive?(target, true) }
     }
 
     /// 이 스트림이 쓰지 않게 된 연결: 대화상자가 떠 있는 탭이면 남겨 두고, 아니면 뗀다
@@ -239,10 +239,10 @@ public final class ScreencastStream {
         } catch {}
     }
 
-    /// 보는 탭을 새로고침한다. 아무도 답할 수 없는 대화상자가 떠 있어 멈춘 탭도 이것으로 풀린다(대화상자는 취소로 닫힌다).
-    /// 다시 답하는지 Page.enable 로 본다.
-    public func reload() async {
-        guard let session = lock.locked({ sessionId }) else { return }
+    /// `target` 이 보는 탭이면 새로고침한다(누른 뒤 다른 탭으로 옮겼으면 아무것도 하지 않는다). 아무도 답할 수 없는 대화상자가 떠 있어
+    /// 멈춘 탭도 이것으로 풀린다(대화상자는 취소로 닫힌다). 다시 답하는지 Page.enable 로 본다.
+    public func reload(target: String) async {
+        guard let session = lock.locked({ targetId == target ? sessionId : nil }) else { return }
         guard (try? await client.send("Page.reload", sessionId: session)) != nil else { return }
         let answered = (try? await client.send("Page.enable", sessionId: session, timeout: enableTimeout)) != nil
         let changed: Bool = lock.locked {
@@ -250,7 +250,7 @@ public final class ScreencastStream {
             unresponsive = !answered
             return true
         }
-        if changed { onUnresponsive?(!answered) }
+        if changed { onUnresponsive?(target, !answered) }
     }
 
     fileprivate func dialogClosed(target: String) {
@@ -326,12 +326,12 @@ public final class ScreencastStream {
             // 응답 없던 탭에서 렌더러가 보내는 Page 알림(이동·읽기)이 왔다: 막혔던 렌더러가 풀려(다른 쪽이 대화상자에 답했거나
             // 이동) 미뤄진 Page.enable 이 돌았다. screencast 알림(screencastVisibilityChanged 등)은 브라우저가 보내 막혀도 온다
             if Self.rendererEvents.contains(event.method), let session = event.sessionId {
-                let recovered: Bool = lock.locked {
-                    guard unresponsive, session == sessionId else { return false }
+                let recovered: String? = lock.locked {
+                    guard unresponsive, session == sessionId else { return nil }
                     unresponsive = false
-                    return true
+                    return targetId
                 }
-                if recovered { onUnresponsive?(false) }
+                if let recovered { onUnresponsive?(recovered, false) }
             }
             return false
         }

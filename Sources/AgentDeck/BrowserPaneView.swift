@@ -103,7 +103,8 @@ final class BrowserPaneView: NSView {
     /// 화면 위 카드: 보는 탭의 대화상자(alert·confirm·prompt — headless 라 Chrome 이 그리지 않는다)나 응답 없는 탭
     private let notice = PageNoticeView()
     private var pageDialog: PageDialog?
-    private var pageUnresponsive = false
+    /// 응답 없는 탭(카드에 보이는 그 탭)
+    private var pageUnresponsive: String?
     /// 마지막 상태의 제어권(입력을 보낼지 정한다)
     private(set) var control: AbxStatus.Control?
     /// 제어 가져오기·돌려주기를 abx 에 보내 답을 기다리는 중
@@ -317,7 +318,11 @@ final class BrowserPaneView: NSView {
         feed.onTabs = { [weak self] chips, pinned in self?.showTabs(chips, pinned: pinned) }
         feed.onCursor = { [weak self] cursor in self?.offerCursor(cursor) }
         feed.onDialog = { [weak self] dialog in self?.pageDialog = dialog; self?.updateNotice() }
-        feed.onUnresponsive = { [weak self] hung in self?.pageUnresponsive = hung; self?.updateNotice() }
+        feed.onUnresponsive = { [weak self] target, hung in
+            guard let self else { return }
+            if hung { self.pageUnresponsive = target } else if target == nil || target == self.pageUnresponsive { self.pageUnresponsive = nil }
+            self.updateNotice()
+        }
         feed.onImage = { [weak self] image, viewport, target in
             guard let self else { return }
             self.viewport = viewport
@@ -393,7 +398,7 @@ final class BrowserPaneView: NSView {
         feed?.stop()
         feed = nil
         pageDialog = nil
-        pageUnresponsive = false
+        pageUnresponsive = nil
         updateNotice()
     }
 
@@ -401,7 +406,7 @@ final class BrowserPaneView: NSView {
     private func updateNotice() {
         if let dialog = pageDialog {
             notice.show(dialog: dialog, canAnswer: acceptsInput)
-        } else if pageUnresponsive {
+        } else if pageUnresponsive != nil {
             notice.showUnresponsive()
         } else {
             notice.hide()
@@ -413,8 +418,9 @@ final class BrowserPaneView: NSView {
         if let dialog = pageDialog {
             guard acceptsInput else { return }
             feed?.answerDialog(target: dialog.targetId, accept: accept, text: text)
-        } else if pageUnresponsive {
-            if accept { feed?.reloadShown() } else { feed?.closeShown() }
+        } else if let target = pageUnresponsive {
+            // 카드의 그 탭에(그새 다른 탭으로 옮겼어도 다른 탭을 닫거나 새로고침하지 않게)
+            if accept { feed?.reloadTab(target) } else { feed?.closeTab(target) }
         }
     }
 
@@ -1629,7 +1635,8 @@ final class BrowserFeed {
     var onCursor: ((AgentCursor) -> Void)?
     /// 보는 탭의 대화상자(nil = 없음) · 보는 탭이 응답하지 않음 — 메인 스레드에서
     var onDialog: ((PageDialog?) -> Void)?
-    var onUnresponsive: ((Bool) -> Void)?
+    /// (탭, 응답 없음) — 끊겨서 모두 지울 때는 (nil, false)
+    var onUnresponsive: ((String?, Bool) -> Void)?
 
     private let session: AbxSession
     private let watchDirs: [String]
@@ -1896,27 +1903,20 @@ final class BrowserFeed {
         queue.async { [self] in client?.post("Target.closeTarget", ["targetId": target]) }
     }
 
-    /// 카드에 보인 대화상자(그 탭)에 답한다 — 그새 보는 탭이 바뀌어도 그 탭의 것에만
+    /// 카드에 보인 대화상자(그 탭)에 답한다 — 그새 보는 탭이 바뀌어도 그 탭의 것에만.
+    /// 페이지 입력과 같은 규칙: 사람이 제어를 가진 동안만(그새 에이전트에게 넘어갔으면 늦은 클릭은 버린다)
     func answerDialog(target: String, accept: Bool, text: String?) {
         queue.async { [self] in
-            guard let stream else { return }
+            guard control == .user, !releasing, let stream else { return }
             Task { await stream.answerDialog(target: target, accept: accept, text: text) }
         }
     }
 
-    /// 보는 탭 새로고침(응답 없는 탭 카드) — 답할 곳 없는 대화상자는 취소로 닫힌다
-    func reloadShown() {
+    /// 응답 없는 탭 카드의 새로고침 — 카드의 그 탭이 아직 보는 탭일 때만. 답할 곳 없는 대화상자는 취소로 닫힌다
+    func reloadTab(_ target: String) {
         queue.async { [self] in
             guard let stream else { return }
-            Task { await stream.reload() }
-        }
-    }
-
-    /// 보는 탭 닫기(응답 없는 탭 카드)
-    func closeShown() {
-        queue.async { [self] in
-            guard let target = stream?.currentTarget else { return }
-            client?.post("Target.closeTarget", ["targetId": target])
+            Task { await stream.reload(target: target) }
         }
     }
 
@@ -2031,8 +2031,8 @@ final class BrowserFeed {
                     DispatchQueue.main.async { self?.onDialog?(dialog) }
                     if dialog == nil { self?.queue.async { self?.applySize() } } // 막혀 있는 동안 미룬 크기 맞추기
                 }
-                stream.onUnresponsive = { [weak self] hung in
-                    DispatchQueue.main.async { self?.onUnresponsive?(hung) }
+                stream.onUnresponsive = { [weak self] target, hung in
+                    DispatchQueue.main.async { self?.onUnresponsive?(target, hung) }
                     if !hung { self?.queue.async { self?.applySize() } } // 멈춰 있는 동안 미룬 크기 맞추기
                 }
                 self.client = client
@@ -2280,7 +2280,7 @@ final class BrowserFeed {
         if stream != nil {
             DispatchQueue.main.async { [weak self] in
                 self?.onDialog?(nil)
-                self?.onUnresponsive?(false)
+                self?.onUnresponsive?(nil, false)
             }
         }
         if let stream { Task { await stream.stop() } }

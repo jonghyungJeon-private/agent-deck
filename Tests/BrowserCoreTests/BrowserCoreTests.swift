@@ -231,7 +231,7 @@ final class ScreencastDialogTests: XCTestCase {
         t.silent = ["T1"]
         let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.05)
         var flags: [Bool] = []
-        stream.onUnresponsive = { flags.append($0) }
+        stream.onUnresponsive = { _, hung in flags.append(hung) }
         try await stream.show(target: "T1") // 실패로 끝나지 않는다
         XCTAssertEqual(stream.currentTarget, "T1")
         XCTAssertTrue(stream.isUnresponsive)
@@ -242,7 +242,9 @@ final class ScreencastDialogTests: XCTestCase {
 
         // 새로고침: 대화상자가 취소로 닫히고 렌더러가 풀린다
         t.silent = []
-        await stream.reload()
+        await stream.reload(target: "T2") // 카드의 탭이 보는 탭이 아니면 아무것도 하지 않는다
+        XCTAssertTrue(t.methods("Page.reload").isEmpty)
+        await stream.reload(target: "T1")
         XCTAssertEqual(t.methods("Page.reload").first?["sessionId"] as? String, "S-T1")
         XCTAssertFalse(stream.isUnresponsive)
         XCTAssertEqual(flags, [true, false])
@@ -253,7 +255,7 @@ final class ScreencastDialogTests: XCTestCase {
         t.silent = ["T1"]
         let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.05, probeInterval: 0.05)
         var flags: [Bool] = []
-        stream.onUnresponsive = { flags.append($0) }
+        stream.onUnresponsive = { _, hung in flags.append(hung) }
         try await stream.show(target: "T1")
         XCTAssertTrue(stream.isUnresponsive)
         await until { t.methods("Page.enable").count >= 3 } // 막혀 있는 동안 다시 묻는다
@@ -273,7 +275,7 @@ final class ScreencastDialogTests: XCTestCase {
         t.silent = ["T1"]
         let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.05)
         var flags: [Bool] = []
-        stream.onUnresponsive = { flags.append($0) }
+        stream.onUnresponsive = { _, hung in flags.append(hung) }
         try await stream.show(target: "T1")
         // screencast 알림은 브라우저가 보낸다(렌더러가 막혀도 온다): 풀린 것이 아니다
         XCTAssertFalse(stream.handle(CDPEvent(method: "Page.screencastVisibilityChanged", params: ["visible": true], sessionId: "S-T1")))
