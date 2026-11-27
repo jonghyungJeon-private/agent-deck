@@ -219,14 +219,15 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(t.methods("Page.enable").count, 2)
         XCTAssertEqual(stream.currentDialog?.message, "발송할까요?")
         XCTAssertEqual(seen.last??.targetId, "T1")
+        let kept1 = try XCTUnwrap(stream.currentDialog?.id)
         // T2 는 대화상자가 없으니 떼었다
         XCTAssertEqual(t.methods("Target.detachFromTarget").map { ($0["params"] as? [String: Any])?["sessionId"] as? String }, ["S-T2"])
 
         // 답은 사람이 본 대화상자의 탭으로만: 보는 탭이 T2 로 바뀐 뒤 T1 의 답은 T1 의 남겨 둔 연결로, 대화상자 없는 T2 에는 보내지 않는다
         try await stream.show(target: "T2")
-        await stream.answerDialog(target: "T2", dialogId: 1, accept: true)
+        await stream.answerDialog(target: "T2", dialogId: kept1, accept: true)
         XCTAssertTrue(t.methods("Page.handleJavaScriptDialog").isEmpty)
-        await stream.answerDialog(target: "T1", dialogId: 1, accept: false)
+        await stream.answerDialog(target: "T1", dialogId: kept1, accept: false)
         XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").map { $0["sessionId"] as? String }, ["S-T1"])
         // 칸이 잠깐 가려져도(그림만 멈춤) 연결은 그대로 둔다
         XCTAssertTrue(stream.hasPendingDialogs)
@@ -256,6 +257,37 @@ final class ScreencastDialogTests: XCTestCase {
         try await stream.show(target: "T1")
         XCTAssertEqual(t.methods("Target.attachToTarget").count, 2) // 돌아올 때 그 연결을 다시 쓴다
         XCTAssertEqual(stream.currentDialog?.targetId, "T1")
+    }
+
+    func testANewDialogRightAfterAKeptOneClosesKeepsTheSession() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        try await stream.show(target: "T1")
+        _ = stream.handle(dialogEvent("S-T1"))
+        try await stream.show(target: "T2")
+        // 남겨 둔 T1 의 대화상자가 닫히자마자 페이지가 또 띄운다(떼려고 screencast 를 멈추는 사이)
+        t.beforeReply = { method, session in
+            if method == "Page.stopScreencast", session == "S-T1" { _ = stream.handle(self.dialogEvent("S-T1", message: "또?")) }
+        }
+        XCTAssertTrue(stream.handle(closedEvent("S-T1")))
+        await until { t.methods("Page.stopScreencast").filter { $0["sessionId"] as? String == "S-T1" }.count >= 2 }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertFalse(t.methods("Target.detachFromTarget").contains { ($0["params"] as? [String: Any])?["sessionId"] as? String == "S-T1" })
+        t.beforeReply = nil
+        try await stream.show(target: "T1")
+        XCTAssertEqual(stream.currentDialog?.message, "또?")
+        XCTAssertEqual(t.methods("Target.attachToTarget").count, 2)
+    }
+
+    func testDialogIdsDoNotRepeatAcrossStreams() async throws {
+        var ids: [Int] = []
+        for _ in 0..<2 {
+            let stream = ScreencastStream(client: CDPClient(transport: AutoTransport()))
+            try await stream.show(target: "T1")
+            _ = stream.handle(dialogEvent("S-T1"))
+            ids.append(try XCTUnwrap(stream.currentDialog?.id))
+        }
+        XCTAssertNotEqual(ids[0], ids[1])
     }
 
     func testAClosedTabForgetsItsDialogAndKeptSession() async throws {

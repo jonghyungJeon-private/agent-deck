@@ -53,9 +53,12 @@ public final class ScreencastStream {
     private let settings: ScreencastSettings
     /// 탭에 붙은 뒤 Page.enable 을 기다리는 시간. 넘기면 그 탭은 "응답 없음"(대화상자가 떠 있는데 답할 연결이 없는 탭 등)
     private let enableTimeout: TimeInterval
-    /// 대화상자 번호(PageDialog.id)와 이미 답을 보낸 대화상자
-    fileprivate var nextDialogId = 0
+    /// 이미 답을 보낸 대화상자(PageDialog.id)
     private var answered: Set<Int> = []
+    /// 대화상자 번호는 앱 전체에서 하나씩 늘린다 — 다시 붙어 새 스트림이 되어도 예전 번호와 겹치지 않게(칸은 답을 보낸 번호를 기억한다)
+    private static let idLock = NSLock()
+    private static var lastDialogId = 0
+    fileprivate static func newDialogId() -> Int { idLock.locked { lastDialogId += 1; return lastDialogId } }
     /// 응답 없는 탭에 다시 물어보는 간격(오래 도는 스크립트 등은 이동 없이 풀린다 — 이동 알림만 기다리면 계속 막힌 것으로 남는다)
     private let probeInterval: TimeInterval
     fileprivate let lock = NSLock()
@@ -321,7 +324,7 @@ public final class ScreencastStream {
             return (targetId == target, kept.removeValue(forKey: target))
         }
         if shown { onDialog?(nil) }
-        if let park { Task { await detach(park) } }
+        if let park { Task { await detachOrKeep(park) } } // 그새 같은 탭에 새 대화상자가 떴으면 남겨 둔다
     }
 
     /// 지금 보는 탭에 명령을 보낸다(입력 이벤트처럼 순서만 지키면 되는 것). 보는 탭이 없으면 버린다.
@@ -426,7 +429,7 @@ extension ScreencastStream {
             return true
         }
         let p = event.params
-        let id: Int = lock.locked { nextDialogId += 1; return nextDialogId }
+        let id = Self.newDialogId()
         let dialog = PageDialog(id: id, targetId: target, type: p["type"] as? String ?? "alert", message: p["message"] as? String ?? "",
                                 defaultPrompt: p["defaultPrompt"] as? String ?? "", url: p["url"] as? String ?? "")
         let shown: Bool = lock.locked {
