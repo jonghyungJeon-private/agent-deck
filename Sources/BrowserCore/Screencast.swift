@@ -123,8 +123,9 @@ public final class ScreencastStream {
                 detaching[old] = previous // 응답 없거나 아직 켜는 중인 탭의 연결은 다시 쓰지 않는다(돌아오면 새로 붙어 다시 잰다)
             }
             let wasUnresponsive = unresponsive ? targetId : nil
-            defer { targetId = target; sessionId = nil; unresponsive = false }
+            // 다시 쓸 연결은 지금 바로 이 스트림의 것으로 둔다 — 앞 연결을 떼는 동안 다른 떼기가 이것을 주인 없는 연결로 보고 떼지 않게
             let reuse = kept.removeValue(forKey: target) ?? detaching.removeValue(forKey: target)
+            defer { targetId = target; sessionId = reuse; unresponsive = false }
             return (generation, detach, park, reuse, wasUnresponsive, park != nil)
         }
         guard let claimed else { return }
@@ -138,8 +139,9 @@ public final class ScreencastStream {
             if lock.locked({ sessionId == parked }) { client.post("Page.startScreencast", screencastParams, sessionId: parked) }
         }
         if let session = claimed.reuse {
-            // 대화상자 때문에 남겨 둔(또는 떼던) 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
-            guard install(session, generation: claimed.generation) else { await release(session); return }
+            // 대화상자 때문에 남겨 둔(또는 떼던) 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다).
+            // 그새 다른 show·stop 이 왔으면 그쪽이 이 연결을 앞 연결로 가져가 남기거나 뗐다
+            guard lock.locked({ generation == claimed.generation }) else { return }
             _ = try? await client.send("Page.startScreencast", screencastParams, sessionId: session)
             announce(target: target, generation: claimed.generation)
             return

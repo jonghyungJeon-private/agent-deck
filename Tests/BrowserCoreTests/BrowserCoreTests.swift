@@ -311,6 +311,35 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(Set(t.methods("Target.detachFromTarget").compactMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }), ["S-T1", "S-T2"])
     }
 
+    func testAReusedSessionIsNotDetachedWhileThePreviousOneIsStillBeingLeft() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        try await stream.show(target: "A")
+        // A → B 로 떠나며 A 를 멈추는 사이: C 를 거쳐 다시 A 로 온다. A 로 오는 show 가 C 를 떼는 동안 A 의 멈춤이 끝난다
+        let done = DispatchSemaphore(value: 0)
+        t.beforeReply = { method, session in
+            guard method == "Page.stopScreencast", session == "S-A" else { return }
+            t.beforeReply = { method, session in
+                guard method == "Page.stopScreencast", session == "S-C" else { return }
+                t.beforeReply = nil
+                // C 를 멈추는 중(A 로 오는 show 가 기다림): 여기서 A 의 첫 멈춤의 답이 가도록 놓아준다
+                done.signal()
+                Thread.sleep(forTimeInterval: 0.2)
+            }
+            Task {
+                try? await stream.show(target: "C")
+                try? await stream.show(target: "A")
+            }
+            _ = done.wait(timeout: .now() + 3)
+        }
+        try await stream.show(target: "B")
+        await until { stream.currentTarget == "A" && t.methods("Page.startScreencast").last?["sessionId"] as? String == "S-A" }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(stream.currentTarget, "A")
+        XCTAssertFalse(t.methods("Target.detachFromTarget").contains { ($0["params"] as? [String: Any])?["sessionId"] as? String == "S-A" })
+        XCTAssertEqual(t.methods("Target.attachToTarget").filter { ($0["params"] as? [String: Any])?["targetId"] as? String == "A" }.count, 1)
+    }
+
     func testANewDialogRightAfterAKeptOneClosesKeepsTheSession() async throws {
         let t = AutoTransport()
         let stream = ScreencastStream(client: CDPClient(transport: t))
