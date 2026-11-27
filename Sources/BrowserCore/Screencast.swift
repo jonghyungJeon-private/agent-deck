@@ -22,72 +22,215 @@ public struct ScreencastSettings: Equatable {
     }
 }
 
+/// 페이지가 띄운 대화상자(alert·confirm·prompt·beforeunload). 창 없는(headless) Chrome 은 이것을 그리지 않고,
+/// 누군가 `Page.handleJavaScriptDialog` 로 답할 때까지 그 탭은 멈춘다(스크립트도, 렌더러가 답하는 DevTools 요청도).
+/// 답할 수 있는 것은 대화상자가 뜰 때 그 탭에 붙어 Page 를 켜 둔 연결뿐이다 — 그 연결을 떼면 아무도 닫지 못한다.
+public struct PageDialog: Equatable {
+    public let targetId: String
+    /// alert | confirm | prompt | beforeunload
+    public let type: String
+    public let message: String
+    public let defaultPrompt: String
+    public let url: String
+
+    public init(targetId: String, type: String, message: String, defaultPrompt: String = "", url: String = "") {
+        self.targetId = targetId
+        self.type = type
+        self.message = message
+        self.defaultPrompt = defaultPrompt
+        self.url = url
+    }
+}
+
 /// 탭(CDP target) 하나의 화면을 받아 넘긴다. 받은 프레임은 곧바로 확인(ack)한다 —
 /// 확인하지 않으면 Chrome 이 다음 프레임을 보내지 않는다. 보이지 않을 때는 `stop()` 으로 멈춘다.
+/// 보는 탭의 대화상자(`onDialog`)와 응답하지 않는 탭(`onUnresponsive`)도 알린다.
 public final class ScreencastStream {
     private let client: CDPClient
     private let settings: ScreencastSettings
-    private let lock = NSLock()
-    private var targetId: String?
+    /// 탭에 붙은 뒤 Page.enable 을 기다리는 시간. 넘기면 그 탭은 "응답 없음"(대화상자가 떠 있는데 답할 연결이 없는 탭 등)
+    private let enableTimeout: TimeInterval
+    fileprivate let lock = NSLock()
+    fileprivate var targetId: String?
     private var sessionId: String?
     /// 탭을 바꾸거나 멈춘 뒤 늦게 온 프레임을 버리려는 세대 번호
     private var generation = 0
+    /// 이 스트림이 붙여 둔 연결 → 탭(보는 탭 + 대화상자 때문에 남겨 둔 탭)
+    fileprivate var sessionTargets: [String: String] = [:]
+    /// 답하지 않은 대화상자(탭마다)
+    fileprivate var dialogs: [String: PageDialog] = [:]
+    /// 대화상자가 떠 있는 채로 다른 탭으로 옮겨 간 탭의 연결: 떼지 않고 둔다(떼면 그 대화상자는 아무도 닫을 수 없다).
+    /// 그 탭으로 돌아오면 이 연결을 다시 쓴다. 대화상자가 닫히면(누가 답했든) 뗀다.
+    private var kept: [String: String] = [:]
+    /// 보는 탭이 응답하지 않는다(Page.enable 이 시간 안에 끝나지 않음)
+    private var unresponsive = false
 
     public var onFrame: ((ScreencastFrame) -> Void)?
+    /// 보는 탭의 대화상자가 바뀌었다(nil = 없음). 아무 스레드에서나 불린다
+    public var onDialog: ((PageDialog?) -> Void)?
+    /// 보는 탭이 응답하지 않게 됐다(true)·다시 응답한다(false). 아무 스레드에서나 불린다
+    public var onUnresponsive: ((Bool) -> Void)?
 
-    public init(client: CDPClient, settings: ScreencastSettings = ScreencastSettings()) {
+    public init(client: CDPClient, settings: ScreencastSettings = ScreencastSettings(), enableTimeout: TimeInterval = 5) {
         self.client = client
         self.settings = settings
+        self.enableTimeout = enableTimeout
     }
 
     public var currentTarget: String? { lock.locked { targetId } }
+    /// 보는 탭이 응답하지 않는 중(그 탭에 계산·크기 맞추기를 보내면 시간만 쓴다)
+    public var isUnresponsive: Bool { lock.locked { unresponsive } }
+    /// 보는 탭의 대화상자
+    public var currentDialog: PageDialog? { lock.locked { targetId.flatMap { dialogs[$0] } } }
+    /// 보는 탭의 렌더러가 막혀 있다(대화상자가 떠 있거나 응답 없음): 계산을 보내면 시간 초과까지 기다리기만 한다
+    public var isBlocked: Bool { lock.locked { blocked } }
+    private var blocked: Bool { unresponsive || targetId.map { dialogs[$0] != nil } == true }
 
-    /// 이 탭을 보기 시작한다(이미 보고 있으면 그대로). 다른 탭을 보던 중이면 그쪽은 멈춘다.
+    /// 이 탭을 보기 시작한다(이미 보고 있으면 그대로). 다른 탭을 보던 중이면 그쪽은 멈춘다 —
+    /// 그 탭에 답하지 않은 대화상자가 있으면 연결은 남겨 둔다(screencast 만 멈춤).
     /// 붙는 동안 다른 `show`·`stop` 이 오면(세대가 바뀌면) 늦게 붙은 연결은 떼고 끝낸다.
+    /// 붙었는데 페이지가 답하지 않으면(Page.enable 시간 초과) 실패로 끝내지 않는다: 그 탭을 보는 채로
+    /// `onUnresponsive(true)` 를 알리고 screencast 는 시작한다(브라우저가 주는 마지막 그림이라도) — 다시 붙기를 되풀이하지 않게.
     public func show(target: String) async throws {
-        let claimed: (generation: Int, previous: String?)? = lock.locked {
+        typealias Claim = (generation: Int, detach: String?, park: String?, reuse: String?, wasUnresponsive: Bool, hadDialog: Bool)
+        let claimed: Claim? = lock.locked {
             if targetId == target { return nil }
             generation += 1
-            defer { targetId = target; sessionId = nil }
-            return (generation, sessionId)
+            var detach = sessionId, park: String?
+            if let previous = sessionId, let old = targetId, dialogs[old] != nil {
+                kept[old] = previous
+                park = previous
+                detach = nil
+            }
+            let wasUnresponsive = unresponsive
+            defer { targetId = target; sessionId = nil; unresponsive = false }
+            return (generation, detach, park, kept.removeValue(forKey: target), wasUnresponsive, park != nil)
         }
         guard let claimed else { return }
-        if let previous = claimed.previous { await detach(previous) }
+        // 떠나는 탭의 카드는 바로 걷는다(새 탭의 것은 붙은 뒤 announce 가 — 새 탭이 막혀 있으면 몇 초 걸린다)
+        if claimed.wasUnresponsive { onUnresponsive?(false) }
+        if claimed.hadDialog { onDialog?(nil) }
+        if let previous = claimed.detach { await detach(previous) }
+        if let parked = claimed.park { _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2) }
         let current = { self.lock.locked { self.generation == claimed.generation } }
+        if let session = claimed.reuse {
+            // 대화상자 때문에 남겨 둔 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
+            guard install(session, generation: claimed.generation) else { await release(session); return }
+            _ = try? await client.send("Page.startScreencast", screencastParams, sessionId: session)
+            announce(target: target, generation: claimed.generation)
+            return
+        }
         do {
             let attached = try await client.send("Target.attachToTarget", ["targetId": target, "flatten": true])
             guard let session = attached["sessionId"] as? String else { throw CDPError.protocolError("attachToTarget") }
-            let installed: Bool = lock.locked {
-                guard generation == claimed.generation else { return false }
-                sessionId = session
-                return true
+            lock.locked { sessionTargets[session] = target }
+            guard install(session, generation: claimed.generation) else { await release(session); return }
+            var answered = true
+            do {
+                _ = try await client.send("Page.enable", sessionId: session, timeout: enableTimeout)
+            } catch CDPError.timeout {
+                answered = false
             }
-            guard installed else { await detach(session); return }
-            _ = try await client.send("Page.enable", sessionId: session)
             guard current() else { return } // 새 show·stop 이 이 연결을 이미 가져가 뗐다
-            _ = try await client.send("Page.startScreencast", [
-                "format": "jpeg", "quality": settings.quality,
-                "maxWidth": settings.maxWidth, "maxHeight": settings.maxHeight, "everyNthFrame": 1,
-            ], sessionId: session)
+            if !answered { lock.locked { unresponsive = true } }
+            _ = try await client.send("Page.startScreencast", screencastParams, sessionId: session)
+            announce(target: target, generation: claimed.generation)
         } catch {
             // 실패하면 이 탭을 본다고 남기지 않는다(다음에 다시 시도할 수 있게)
-            lock.locked { if generation == claimed.generation { targetId = nil } }
+            lock.locked { if generation == claimed.generation { targetId = nil; unresponsive = false } }
             throw error
         }
     }
 
-    public func stop() async {
-        let session: String? = lock.locked {
-            generation += 1
-            defer { targetId = nil; sessionId = nil }
-            return sessionId
+    /// 렌더러가 살아 있어야 오는 Page 알림
+    static let rendererEvents: Set<String> = ["Page.frameNavigated", "Page.frameStartedLoading", "Page.frameStoppedLoading",
+                                              "Page.loadEventFired", "Page.domContentEventFired", "Page.navigatedWithinDocument",
+                                              "Page.lifecycleEvent"]
+
+    private var screencastParams: [String: Any] {
+        ["format": "jpeg", "quality": settings.quality, "maxWidth": settings.maxWidth, "maxHeight": settings.maxHeight, "everyNthFrame": 1]
+    }
+
+    /// 붙은 연결을 이 스트림의 것으로 — 그새 다른 show·stop 이 왔으면 false
+    private func install(_ session: String, generation claimed: Int) -> Bool {
+        lock.locked {
+            guard generation == claimed else { return false }
+            sessionId = session
+            return true
         }
-        if let session { await detach(session) }
+    }
+
+    /// 새 탭을 보기 시작했다: 그 탭의 대화상자·응답 여부를 알린다(그새 다른 탭으로 옮겼으면 조용히).
+    /// 응답 여부는 지금 값으로 — 그새 렌더러가 풀렸으면 알리지 않는다
+    private func announce(target: String, generation claimed: Int) {
+        let state: (dialog: PageDialog?, hung: Bool)? = lock.locked { generation == claimed ? (dialogs[target], unresponsive) : nil }
+        guard let state else { return }
+        onDialog?(state.dialog)
+        if state.hung { onUnresponsive?(true) }
+    }
+
+    /// 이 스트림이 쓰지 않게 된 연결: 대화상자가 떠 있는 탭이면 남겨 두고, 아니면 뗀다
+    private func release(_ session: String) async {
+        let park: Bool = lock.locked {
+            guard let target = sessionTargets[session], dialogs[target] != nil, kept[target] == nil, targetId != target else { return false }
+            kept[target] = session
+            return true
+        }
+        if !park { await detach(session) }
+    }
+
+    public func stop() async {
+        let sessions: [String] = lock.locked {
+            generation += 1
+            defer { targetId = nil; sessionId = nil; unresponsive = false; kept = [:]; dialogs = [:] }
+            return (sessionId.map { [$0] } ?? []) + Array(kept.values)
+        }
+        for session in sessions { await detach(session) }
     }
 
     private func detach(_ session: String) async {
         _ = try? await client.send("Page.stopScreencast", sessionId: session, timeout: 2)
         _ = try? await client.send("Target.detachFromTarget", ["sessionId": session], timeout: 2)
+        lock.locked { _ = sessionTargets.removeValue(forKey: session) }
+    }
+
+    /// 보는 탭의 대화상자에 답한다(`accept`: 확인·나가기, `text`: prompt 에 넣을 글). 이미 닫혔으면 그렇다고 알린다.
+    public func answerDialog(accept: Bool, text: String? = nil) async {
+        guard let (session, target) = lock.locked({ () -> (String, String)? in
+            guard let sessionId, let targetId else { return nil }
+            return (sessionId, targetId)
+        }) else { return }
+        var params: [String: Any] = ["accept": accept]
+        if let text { params["promptText"] = text }
+        do {
+            _ = try await client.send("Page.handleJavaScriptDialog", params, sessionId: session)
+        } catch CDPError.protocolError {
+            // "No dialog is showing": 다른 쪽(abx 등)이 먼저 답했다 — 닫힘 알림을 놓쳤어도 지운다
+            dialogClosed(target: target)
+        } catch {}
+    }
+
+    /// 보는 탭을 새로고침한다. 아무도 답할 수 없는 대화상자가 떠 있어 멈춘 탭도 이것으로 풀린다(대화상자는 취소로 닫힌다).
+    /// 다시 답하는지 Page.enable 로 본다.
+    public func reload() async {
+        guard let session = lock.locked({ sessionId }) else { return }
+        guard (try? await client.send("Page.reload", sessionId: session)) != nil else { return }
+        let answered = (try? await client.send("Page.enable", sessionId: session, timeout: enableTimeout)) != nil
+        let changed: Bool = lock.locked {
+            guard sessionId == session, unresponsive == answered else { return false }
+            unresponsive = !answered
+            return true
+        }
+        if changed { onUnresponsive?(!answered) }
+    }
+
+    fileprivate func dialogClosed(target: String) {
+        let (shown, park): (Bool, String?) = lock.locked {
+            guard dialogs.removeValue(forKey: target) != nil else { return (false, nil) }
+            return (targetId == target, kept.removeValue(forKey: target))
+        }
+        if shown { onDialog?(nil) }
+        if let park { Task { await detach(park) } }
     }
 
     /// 지금 보는 탭에 명령을 보낸다(입력 이벤트처럼 순서만 지키면 되는 것). 보는 탭이 없으면 버린다.
@@ -99,7 +242,8 @@ public final class ScreencastStream {
 
     /// 지금 보는 탭에서 식을 계산한다(값으로 받음). 못 하면 nil.
     public func evaluate(_ expression: String) async -> Any? {
-        guard let session = lock.locked({ sessionId }),
+        // 막힌 탭에는 보내지 않는다(대화상자가 닫히기 전엔 답이 오지 않는다 — 크기 맞추기가 writer 자리를 쥔 채 기다리게 된다)
+        guard let session = lock.locked({ blocked ? nil : sessionId }),
               let result = try? await client.send("Runtime.evaluate", ["expression": expression, "returnByValue": true], sessionId: session)
         else { return nil }
         return (result["result"] as? [String: Any])?["value"]
@@ -146,7 +290,22 @@ public final class ScreencastStream {
     /// CDPClient 의 이벤트를 여기로 넘긴다. 이 스트림의 프레임이면 처리하고 true.
     @discardableResult
     public func handle(_ event: CDPEvent) -> Bool {
-        guard event.method == "Page.screencastFrame" else { return false }
+        if event.method == "Page.javascriptDialogOpening" || event.method == "Page.javascriptDialogClosed" {
+            return handleDialog(event)
+        }
+        guard event.method == "Page.screencastFrame" else {
+            // 응답 없던 탭에서 렌더러가 보내는 Page 알림(이동·읽기)이 왔다: 막혔던 렌더러가 풀려(다른 쪽이 대화상자에 답했거나
+            // 이동) 미뤄진 Page.enable 이 돌았다. screencast 알림(screencastVisibilityChanged 등)은 브라우저가 보내 막혀도 온다
+            if Self.rendererEvents.contains(event.method), let session = event.sessionId {
+                let recovered: Bool = lock.locked {
+                    guard unresponsive, session == sessionId else { return false }
+                    unresponsive = false
+                    return true
+                }
+                if recovered { onUnresponsive?(false) }
+            }
+            return false
+        }
         let (current, target): (String?, String?) = lock.locked { (sessionId, targetId) }
         guard let session = event.sessionId, session == current else { return false }
         // 확인은 항상 먼저(그려지지 않을 프레임이라도) — 정수 ack id 와 문자열 sessionId 는 다른 것
@@ -159,6 +318,26 @@ public final class ScreencastStream {
         let height = (meta["deviceHeight"] as? NSNumber)?.doubleValue ?? 0
         let time = (meta["timestamp"] as? NSNumber)?.doubleValue ?? 0
         onFrame?(ScreencastFrame(jpeg: jpeg, viewport: CGSize(width: width, height: height), timestamp: time, targetId: target))
+        return true
+    }
+}
+
+extension ScreencastStream {
+    /// 대화상자 알림: 이 스트림이 붙인 연결의 것만(보는 탭, 남겨 둔 탭)
+    fileprivate func handleDialog(_ event: CDPEvent) -> Bool {
+        guard let session = event.sessionId, let target = lock.locked({ sessionTargets[session] }) else { return false }
+        if event.method == "Page.javascriptDialogClosed" {
+            dialogClosed(target: target)
+            return true
+        }
+        let p = event.params
+        let dialog = PageDialog(targetId: target, type: p["type"] as? String ?? "alert", message: p["message"] as? String ?? "",
+                                defaultPrompt: p["defaultPrompt"] as? String ?? "", url: p["url"] as? String ?? "")
+        let shown: Bool = lock.locked {
+            dialogs[target] = dialog
+            return targetId == target
+        }
+        if shown { onDialog?(dialog) }
         return true
     }
 }

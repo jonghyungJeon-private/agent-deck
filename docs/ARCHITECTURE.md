@@ -344,13 +344,24 @@ Dock 의 남은 AgentDeck 아이콘을 "강제 종료"해도 같다(2026-10-19 �
     조합 → `Input.imeSetComposition`, 편집 명령 선택자 → 키 + Chrome 편집 명령(실제 수정 키 유지 — ⇧⏎ 가 ⏎ 가 되지 않게).
   - 편집 메뉴: ⌘A·⌘Z·⇧⌘Z, ⌘V(클립보드 글자), ⌘C·⌘X(그림자 DOM·같은 출처 iframe 안 선택까지, 비밀번호 칸은 거절, 잘라내기는 읽기와 지우기를 한 번에).
   - 입력은 `CDPClient.post` 로 부른 순서 그대로 보낸다. 사람이 연 새 탭은 따라가고 사람 제어 중에는 그 탭을 유지한다.
+  - **페이지 대화상자**(alert·confirm·prompt·beforeunload): 창 없는 Chrome 은 그리지 않고 누가 `Page.handleJavaScriptDialog` 로 답할 때까지 그 탭이 멈춘다
+    (스크립트도, 렌더러가 답하는 DevTools 요청 — `Page.enable`·`Runtime.evaluate` — 도). 답할 수 있는 것은 대화상자가 뜰 때 그 탭에 붙어 Page 를 켜 둔 연결뿐이라,
+    그 연결을 떼면 아무도 닫지 못한다(2026-11-26 실제로: 사람이 조작하다 뜬 확인창을 앱이 무시하고 다른 탭으로 옮겨 연결을 뗐고, 그 탭을 다시 누르면 `Page.enable` 이
+    시간 초과로 실패해 3초마다 다시 붙기만 하고 화면이 바뀌지 않았다). 그래서 `ScreencastStream` 이 보는 탭의 `Page.javascriptDialogOpening/Closed` 를 받아
+    칸 위 카드(`PageNoticeView`)로 보이고 답을 보낸다(사람이 제어를 가진 동안만 — 아니면 "제어 가져오기" 안내). 대화상자가 떠 있는 탭에서 다른 탭으로 옮기면 그 연결은
+    떼지 않고 screencast 만 멈췄다가, 돌아오면 그 연결을 다시 쓴다(대화상자가 다른 쪽에서 닫히면 그때 뗀다). alert 는 엔진(agent-browser)이 스스로 닫는다.
+  - **응답 없는 탭**: 붙었는데 `Page.enable` 이 5초 안에 끝나지 않으면(답할 곳 없는 대화상자 등) 실패로 끝내지 않고 그 탭을 보는 채로 "이 탭이 응답하지 않습니다" 카드를 보인다
+    (새로고침·탭 닫기). 새로고침(`Page.reload`)은 브라우저가 처리해 막힌 탭도 풀린다 — 대화상자는 취소로 닫힌다. 렌더러가 보내는 Page 알림(이동·읽기)이 오면 풀린 것으로 본다
+    (screencast 알림은 브라우저가 보내 막혀도 오니 세지 않는다). 막힌 탭(대화상자·응답 없음)에는 계산·크기 맞추기를 보내지 않는다 — 크기 맞추기는 abx writer 자리를 쥐고
+    계산을 기다리므로, 그동안 사람 차례가 "넘기는 중"으로 읽혀 카드 단추가 꺼졌다.
 - 아직 없는 것: 칩 메뉴(브라우저 끄기·로그인 템플릿으로 저장·빈 프로필로 초기화), 마우스를 올렸을 때 미리보기, 앱이 꺼져 있을 때 닫힌 화면의 브라우저 정리
   (데몬이 맡아야 한다 — 지금은 엔진이 12시간 쉬면 끝남), 후보 창 정확한 자리, 데몬이 브라우저를 미리 띄우기(Codex 기본 샌드박스용).
 - 시험: `swift test --filter BrowserCoreTests`(CDP·screencast·좌표·입력 변환·상태 파일 읽기), `BrowserPaneWorkspaceTests`(예전 브라우저 잎 빼기),
   `BrowserBindingTests`. 실제 확인은 위 "시험 앱은 반드시 LaunchServices 로 띄운다" 절차로 띄운 시험 앱에서 `ctl send <화면> 'abx open …'` 뒤
   시험 명령: `browser-open [화면 ID 앞부분]`(⇧⌘B 와 같음)·`browsers`(화면마다 상태, 열린 창마다 주인·보임·스트림·프레임 수·제어·페이지 크기)·
   `action browser-take`·`action browser-give`·`browser-click <css x> <css y>`·`browser-keys <글>`(`\r` = Enter)·`browser-ime 조합|…|확정`·
-  `browser-resize <너비> <높이>`. 시험 앱 창이 다른 창에 가려지면 스트림이 멈추는 것이 정상이다.
+  `browser-resize <너비> <높이>`·`browser-notice`(화면 위 카드: 제목·글·단추, 꺼졌으면 까닭)·`browser-notice-answer <accept|cancel> [글]`(카드 단추 — 대화상자: 확인·취소, 응답 없음: 새로고침·탭 닫기).
+  `browsers` 의 창 줄에 `connects=`(다시 붙은 횟수)·`fits=`(writer 자리를 잡고 크기를 맞추려 한 횟수)·`blocked=`(보는 탭이 막힘)도 찍는다. 시험 앱 창이 다른 창에 가려지면 스트림이 멈추는 것이 정상이다.
 
 ## 터미널 그리기 성능
 

@@ -1352,6 +1352,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         case "browser-watch":
             // browser-watch <targetId 앞부분|t3|이름|follow>: 탭 칩 누르기
             model.browserWindows.targetPane?.debugWatch(argument)
+        case "browser-notice":
+            // 맨 앞 브라우저 창의 화면 위 카드(대화상자·응답 없는 탭)
+            print("browser-notice " + (model.browserWindows.targetPane?.debugNotice ?? "no browser window"))
+            fflush(stdout)
+        case "browser-notice-answer":
+            // browser-notice-answer <accept|cancel> [글]: 카드의 단추 누르기(대화상자: 확인·취소, 응답 없음: 새로고침·탭 닫기)
+            let parts = argument.split(separator: " ", maxSplits: 1).map(String.init)
+            model.browserWindows.targetPane?.debugAnswerNotice(accept: parts.first == "accept", text: parts.count > 1 ? parts[1] : nil)
         case "browser-device":
             // browser-device <기기 id|desktop> [landscape]: 머리 줄 기기 메뉴에서 고른 것과 같은 길(보고 있는 탭)
             let v = argument.split(separator: " ").map(String.init)

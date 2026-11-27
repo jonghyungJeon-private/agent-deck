@@ -123,6 +123,147 @@ final class ScreencastTests: XCTestCase {
     }
 }
 
+/// 요청에 바로 답하는 가짜 통로: attachToTarget 은 탭마다 연결 이름(S-<탭>)을, `silent` 탭의 Page.enable 에는 답하지 않는다(멈춘 렌더러)
+final class AutoTransport: CDPTransport {
+    var onMessage: ((String) -> Void)?
+    var onClose: ((Error?) -> Void)?
+    var silent: Set<String> = []
+    private let lock = NSLock()
+    private var _sent: [[String: Any]] = []
+    var sent: [[String: Any]] { lock.locked { _sent } }
+    func methods(_ name: String) -> [[String: Any]] { sent.filter { $0["method"] as? String == name } }
+
+    func send(_ text: String) {
+        let message = try! JSONSerialization.jsonObject(with: Data(text.utf8)) as! [String: Any]
+        lock.locked { _sent.append(message) }
+        let method = message["method"] as? String ?? ""
+        let session = message["sessionId"] as? String ?? ""
+        var result: [String: Any] = [:]
+        if method == "Target.attachToTarget", let target = (message["params"] as? [String: Any])?["targetId"] as? String {
+            result = ["sessionId": "S-" + target]
+        }
+        if method == "Page.enable", silent.contains(String(session.dropFirst(2))) { return }
+        let reply: [String: Any] = ["id": message["id"]!, "result": result]
+        DispatchQueue.global().async { self.push(reply) }
+    }
+    func close() { onClose?(nil) }
+    func push(_ message: [String: Any]) {
+        onMessage?(String(data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!)
+    }
+}
+
+final class ScreencastDialogTests: XCTestCase {
+    func dialogEvent(_ session: String, type: String = "confirm", message: String = "발송할까요?") -> CDPEvent {
+        CDPEvent(method: "Page.javascriptDialogOpening", params: ["type": type, "message": message, "url": "http://x/", "defaultPrompt": ""],
+                 sessionId: session)
+    }
+    func closedEvent(_ session: String) -> CDPEvent {
+        CDPEvent(method: "Page.javascriptDialogClosed", params: ["result": false], sessionId: session)
+    }
+    private func until(_ condition: () -> Bool) async {
+        for _ in 0..<200 where !condition() { try? await Task.sleep(nanoseconds: 5_000_000) }
+    }
+
+    func testDialogOnShownTabIsAnnouncedAnsweredAndCleared() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        var seen: [PageDialog?] = []
+        stream.onDialog = { seen.append($0) }
+        try await stream.show(target: "T1")
+        XCTAssertTrue(stream.handle(dialogEvent("S-T1")))
+        XCTAssertEqual(stream.currentDialog?.message, "발송할까요?")
+        XCTAssertEqual(seen.last??.type, "confirm")
+        XCTAssertFalse(stream.handle(dialogEvent("S-OTHER"))) // 이 스트림이 붙인 연결이 아니면 모른다
+
+        await stream.answerDialog(accept: true)
+        let answer = t.methods("Page.handleJavaScriptDialog").first
+        XCTAssertEqual(answer?["sessionId"] as? String, "S-T1")
+        XCTAssertEqual((answer?["params"] as? [String: Any])?["accept"] as? Bool, true)
+        // 대화상자가 떠 있는 동안은 계산을 보내지 않는다(답이 오지 않아 시간 초과까지 기다리게 된다)
+        XCTAssertTrue(stream.isBlocked)
+        let value = await stream.evaluate("1")
+        XCTAssertNil(value)
+        XCTAssertTrue(t.methods("Runtime.evaluate").isEmpty)
+        XCTAssertTrue(stream.handle(closedEvent("S-T1")))
+        XCTAssertNil(stream.currentDialog)
+        XCTAssertFalse(stream.isBlocked)
+        XCTAssertEqual(seen.count, 3) // 처음 붙을 때(nil) · 뜸 · 닫힘
+        XCTAssertNil(seen.last!)
+    }
+
+    func testLeavingATabWithADialogKeepsItsSessionAndComingBackReusesIt() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        var seen: [PageDialog?] = []
+        stream.onDialog = { seen.append($0) }
+        try await stream.show(target: "T1")
+        _ = stream.handle(dialogEvent("S-T1"))
+        try await stream.show(target: "T2")
+        // 떼지 않고 screencast 만 멈춘다 — 떼면 그 대화상자는 아무도 닫지 못한다
+        XCTAssertTrue(t.methods("Target.detachFromTarget").isEmpty)
+        XCTAssertEqual(t.methods("Page.stopScreencast").map { $0["sessionId"] as? String }, ["S-T1"])
+        XCTAssertNil(stream.currentDialog)
+        XCTAssertNil(seen.last!)
+        XCTAssertEqual(seen.count, 4) // 처음(nil) · 뜸 · 떠날 때 바로 걷음(nil) · T2 를 보기 시작(nil)
+
+        try await stream.show(target: "T1")
+        XCTAssertEqual(t.methods("Target.attachToTarget").count, 2) // T1·T2 한 번씩, 돌아올 때는 다시 붙지 않는다
+        XCTAssertEqual(t.methods("Page.enable").count, 2)
+        XCTAssertEqual(stream.currentDialog?.message, "발송할까요?")
+        XCTAssertEqual(seen.last??.targetId, "T1")
+        // T2 는 대화상자가 없으니 떼었다
+        XCTAssertEqual(t.methods("Target.detachFromTarget").map { ($0["params"] as? [String: Any])?["sessionId"] as? String }, ["S-T2"])
+
+        // 남겨 둔 탭의 대화상자가 다른 쪽에서 닫히면 그 연결을 뗀다
+        try await stream.show(target: "T2")
+        XCTAssertTrue(stream.handle(closedEvent("S-T1")))
+        await until { t.methods("Target.detachFromTarget").count == 2 }
+        XCTAssertEqual(t.methods("Target.detachFromTarget").last.flatMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }, "S-T1")
+    }
+
+    func testAHungTabIsShownAsUnresponsiveWithoutRetryingAndRecovers() async throws {
+        let t = AutoTransport()
+        t.silent = ["T1"]
+        let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.05)
+        var flags: [Bool] = []
+        stream.onUnresponsive = { flags.append($0) }
+        try await stream.show(target: "T1") // 실패로 끝나지 않는다
+        XCTAssertEqual(stream.currentTarget, "T1")
+        XCTAssertTrue(stream.isUnresponsive)
+        XCTAssertEqual(flags, [true])
+        XCTAssertEqual(t.methods("Page.startScreencast").count, 1) // 브라우저가 주는 그림은 받는다
+        try await stream.show(target: "T1") // 같은 탭: 다시 붙지 않는다
+        XCTAssertEqual(t.methods("Target.attachToTarget").count, 1)
+
+        // 새로고침: 대화상자가 취소로 닫히고 렌더러가 풀린다
+        t.silent = []
+        await stream.reload()
+        XCTAssertEqual(t.methods("Page.reload").first?["sessionId"] as? String, "S-T1")
+        XCTAssertFalse(stream.isUnresponsive)
+        XCTAssertEqual(flags, [true, false])
+    }
+
+    func testAPageEventFromAnUnresponsiveTabMeansItAnswersAgain() async throws {
+        let t = AutoTransport()
+        t.silent = ["T1"]
+        let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.05)
+        var flags: [Bool] = []
+        stream.onUnresponsive = { flags.append($0) }
+        try await stream.show(target: "T1")
+        // screencast 알림은 브라우저가 보낸다(렌더러가 막혀도 온다): 풀린 것이 아니다
+        XCTAssertFalse(stream.handle(CDPEvent(method: "Page.screencastVisibilityChanged", params: ["visible": true], sessionId: "S-T1")))
+        XCTAssertTrue(stream.isUnresponsive)
+        XCTAssertTrue(stream.isBlocked)
+        XCTAssertFalse(stream.handle(CDPEvent(method: "Page.frameStartedLoading", params: [:], sessionId: "S-T1")))
+        XCTAssertFalse(stream.isUnresponsive)
+        XCTAssertEqual(flags, [true, false])
+        // 다른 탭으로 옮기면 그 탭 기준으로 다시 정한다
+        t.silent = ["T1"]
+        try await stream.show(target: "T2")
+        XCTAssertFalse(stream.isUnresponsive)
+    }
+}
+
 final class ScreencastChoiceTests: XCTestCase {
     func testChoosesWantedThenCurrentThenFirst() {
         XCTAssertEqual(ScreencastStream.choose(wanted: "B", current: "A", open: ["A", "B"]), "B")

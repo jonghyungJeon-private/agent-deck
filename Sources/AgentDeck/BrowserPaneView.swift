@@ -100,6 +100,10 @@ final class BrowserPaneView: NSView {
     /// 마지막으로 보인 그림 — 빈 주소로 바뀌었는데 내용이 있는 페이지였으면 다시 그리길 기다리지 않고 이걸 보인다
     private var lastFrame: (image: CGImage, size: CGSize, target: String?)?
     private var feed: BrowserFeed?
+    /// 화면 위 카드: 보는 탭의 대화상자(alert·confirm·prompt — headless 라 Chrome 이 그리지 않는다)나 응답 없는 탭
+    private let notice = PageNoticeView()
+    private var pageDialog: PageDialog?
+    private var pageUnresponsive = false
     /// 마지막 상태의 제어권(입력을 보낼지 정한다)
     private(set) var control: AbxStatus.Control?
     /// 제어 가져오기·돌려주기를 abx 에 보내 답을 기다리는 중
@@ -166,7 +170,9 @@ final class BrowserPaneView: NSView {
         tabScroll.horizontalScrollElasticity = .allowed
         tabScroll.verticalScrollElasticity = .none
         tabScroll.isHidden = true
-        for view in [statePill, header, deviceButton, displayButton, controlButton, tabScroll, screen, statusBar, placeholder, wakeButton] {
+        notice.isHidden = true
+        notice.onAnswer = { [weak self] accept, text in self?.answerNotice(accept: accept, text: text) }
+        for view in [statePill, header, deviceButton, displayButton, controlButton, tabScroll, screen, statusBar, placeholder, wakeButton, notice] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -207,6 +213,10 @@ final class BrowserPaneView: NSView {
             placeholder.widthAnchor.constraint(lessThanOrEqualTo: screen.widthAnchor, constant: -40),
             wakeButton.centerXAnchor.constraint(equalTo: screen.centerXAnchor),
             wakeButton.topAnchor.constraint(equalTo: placeholder.bottomAnchor, constant: Space.md),
+            notice.topAnchor.constraint(equalTo: screen.topAnchor, constant: Space.md),
+            notice.centerXAnchor.constraint(equalTo: screen.centerXAnchor),
+            notice.widthAnchor.constraint(lessThanOrEqualTo: screen.widthAnchor, constant: -2 * Space.md),
+            notice.widthAnchor.constraint(lessThanOrEqualToConstant: TermAppearance.scaled(460)),
         ])
         deviceAfterDisplay = deviceButton.trailingAnchor.constraint(equalTo: displayButton.leadingAnchor, constant: -Space.xs)
         deviceAtControl = deviceButton.trailingAnchor.constraint(equalTo: controlButton.leadingAnchor, constant: -Space.sm)
@@ -306,6 +316,8 @@ final class BrowserPaneView: NSView {
         }
         feed.onTabs = { [weak self] chips, pinned in self?.showTabs(chips, pinned: pinned) }
         feed.onCursor = { [weak self] cursor in self?.offerCursor(cursor) }
+        feed.onDialog = { [weak self] dialog in self?.pageDialog = dialog; self?.updateNotice() }
+        feed.onUnresponsive = { [weak self] hung in self?.pageUnresponsive = hung; self?.updateNotice() }
         feed.onImage = { [weak self] image, viewport, target in
             guard let self else { return }
             self.viewport = viewport
@@ -380,7 +392,35 @@ final class BrowserPaneView: NSView {
         screen.releaseInput()
         feed?.stop()
         feed = nil
+        pageDialog = nil
+        pageUnresponsive = false
+        updateNotice()
     }
+
+    /// 화면 위 카드: 대화상자가 먼저, 없으면 응답 없는 탭. 대화상자는 사람이 제어를 가진 동안만 답한다(페이지 입력과 같은 규칙)
+    private func updateNotice() {
+        if let dialog = pageDialog {
+            notice.show(dialog: dialog, canAnswer: acceptsInput)
+        } else if pageUnresponsive {
+            notice.showUnresponsive()
+        } else {
+            notice.hide()
+        }
+    }
+
+    private func answerNotice(accept: Bool, text: String?) {
+        onUserInteraction?()
+        if pageDialog != nil {
+            guard acceptsInput else { return }
+            feed?.answerDialog(accept: accept, text: text)
+        } else if pageUnresponsive {
+            if accept { feed?.reloadShown() } else { feed?.closeShown() }
+        }
+    }
+
+    /// 시험 명령 `browser-notice`
+    var debugNotice: String { notice.debugText }
+    func debugAnswerNotice(accept: Bool, text: String?) { answerNotice(accept: accept, text: text) }
 
     private func show(_ state: BrowserFeed.State) {
         if case .resting = state {} else { wakeButton.isHidden = true }
@@ -737,6 +777,7 @@ final class BrowserPaneView: NSView {
         if self.control == .user, control != .user { screen.releaseInput() }
         self.control = control
         if control != .agent { screen.hideCursor(); pendingCursor = nil } // AI 커서는 AI 가 쥐고 있을 때만
+        updateNotice() // 대화상자 단추는 사람이 제어를 가진 동안만
         // AI 가 쓰는 동안: 화면에 초록 테두리, 아래 상태 줄에 "보기만 돼요"(ego-browser 처럼 — updateStatusLine)
         updateStatusLine()
         controlButton.isHidden = control == nil
@@ -1586,6 +1627,9 @@ final class BrowserFeed {
     var onTabs: (([BrowserTabs.Chip], Bool) -> Void)?
     /// AI 커서(abx 가 단계 직전에 적은 자리) — 보여 줄 탭의 것만
     var onCursor: ((AgentCursor) -> Void)?
+    /// 보는 탭의 대화상자(nil = 없음) · 보는 탭이 응답하지 않음 — 메인 스레드에서
+    var onDialog: ((PageDialog?) -> Void)?
+    var onUnresponsive: ((Bool) -> Void)?
 
     private let session: AbxSession
     private let watchDirs: [String]
@@ -1742,6 +1786,8 @@ final class BrowserFeed {
         onPage = nil
         onTabs = nil
         onCursor = nil
+        onDialog = nil
+        onUnresponsive = nil
         if let optionsObserver { NotificationCenter.default.removeObserver(optionsObserver) }
         queue.async { [self] in
             stopped = true
@@ -1850,6 +1896,30 @@ final class BrowserFeed {
         queue.async { [self] in client?.post("Target.closeTarget", ["targetId": target]) }
     }
 
+    /// 보는 탭의 대화상자에 답한다(카드의 단추)
+    func answerDialog(accept: Bool, text: String?) {
+        queue.async { [self] in
+            guard let stream else { return }
+            Task { await stream.answerDialog(accept: accept, text: text) }
+        }
+    }
+
+    /// 보는 탭 새로고침(응답 없는 탭 카드) — 답할 곳 없는 대화상자는 취소로 닫힌다
+    func reloadShown() {
+        queue.async { [self] in
+            guard let stream else { return }
+            Task { await stream.reload() }
+        }
+    }
+
+    /// 보는 탭 닫기(응답 없는 탭 카드)
+    func closeShown() {
+        queue.async { [self] in
+            guard let target = stream?.currentTarget else { return }
+            client?.post("Target.closeTarget", ["targetId": target])
+        }
+    }
+
     private var watchFile: URL {
         URL(fileURLWithPath: session.stateDir).appendingPathComponent("\(session.name).watch.json")
     }
@@ -1923,6 +1993,7 @@ final class BrowserFeed {
         guard !connecting, let endpoint = URL(string: url) else { return }
         disconnect()
         connecting = true
+        connects += 1
         let generation = connectGeneration
         // queue 는 강하게 잡는다: 이 feed 가 먼저 사라져도 늦게 열린 연결을 닫는 일은 반드시 돈다
         let queue = self.queue
@@ -1955,6 +2026,15 @@ final class BrowserFeed {
                     }
                 }
                 stream.onFrame = { [weak self] frame in self?.queue.async { self?.received(frame) } }
+                // 보는 탭의 대화상자·응답 없음: 칸이 카드로 보인다(headless Chrome 은 대화상자를 그리지 않는다)
+                stream.onDialog = { [weak self] dialog in
+                    DispatchQueue.main.async { self?.onDialog?(dialog) }
+                    if dialog == nil { self?.queue.async { self?.applySize() } } // 막혀 있는 동안 미룬 크기 맞추기
+                }
+                stream.onUnresponsive = { [weak self] hung in
+                    DispatchQueue.main.async { self?.onUnresponsive?(hung) }
+                    if !hung { self?.queue.async { self?.applySize() } } // 멈춰 있는 동안 미룬 크기 맞추기
+                }
                 self.client = client
                 self.stream = stream
                 self.connectedURL = url
@@ -2024,7 +2104,8 @@ final class BrowserFeed {
 
     /// 시험 명령 `browsers`: 맞추려는 크기와 설정
     var debugSize: String {
-        queue.sync { "page=\(size.map { "\(Int($0.width))x\(Int($0.height))" } ?? "-") resolution=\(options.resolution.rawValue) sharpness=\(options.sharpness.rawValue)" }
+        queue.sync { "page=\(size.map { "\(Int($0.width))x\(Int($0.height))" } ?? "-") resolution=\(options.resolution.rawValue) sharpness=\(options.sharpness.rawValue)"
+            + " connects=\(connects) fits=\(fits) blocked=\(stream?.isBlocked == true) target=\(stream?.currentTarget?.prefix(8) ?? "-")" }
     }
 
     /// 브라우저 페이지 크기를 칸에 맞춘다(지금 보는 탭의 창). 탭을 옮겨 가거나 다시 붙으면 또 맞춘다.
@@ -2041,6 +2122,9 @@ final class BrowserFeed {
     /// 화면 위아래·좌우에 빈 띠가 생긴다 — 그런 탭은 AI 차례여도 처음 한 번은 맞춘다.
     private var sizedFor: [String: CGSize] = [:]
     private var fitting = false
+    /// 시험 명령 `browsers`: 다시 붙은 횟수·writer 자리를 잡고 크기를 맞추려 한 횟수
+    private var connects = 0
+    private var fits = 0
     /// 맞추는 동안 또 맞출 일이 생겼다(크기·탭·스트림이 바뀜): 끝나면 지금 것으로 다시
     private var fitAgain = false
 
@@ -2051,6 +2135,9 @@ final class BrowserFeed {
         guard !halted else { return }
         guard !fitting else { fitAgain = true; return }
         guard let stream, let size, let target = stream.currentTarget else { return }
+        // 대화상자가 떠 있거나 응답 없는 탭: 크기를 재는 계산이 시간만 쓰고(writer 자리를 쥔 채 — 그동안 사람 차례가
+        // "넘기는 중"으로 읽힌다) 실패한다. 풀리면 다시 맞춘다
+        if stream.isBlocked { return }
         // 기기(폰·태블릿·창 크기)를 흉내 내는 탭: 페이지 크기는 abx 가 정했고 창 크기와 상관없다. 창을 바꾸면 Chrome 이
         // 다음 그리기까지 창 크기 그림을 보내므로 맞추지 않는다(데스크톱으로 돌아오면 refresh 가 다시 맞춘다)
         if device(of: target) != nil { return }
@@ -2058,6 +2145,7 @@ final class BrowserFeed {
         guard control == .user || control == .idle || (first && control == .agent) else { return }
         let session = self.session
         fitting = true
+        fits += 1
         Task { [weak self] in
             // abx 의 writer 자리를 잡고 크기를 바꾼다: 그동안 에이전트 동작은 시작하지 않고, 잡은 뒤 제어를 다시 보아
             // (그새 resume 등) AI 차례면 바꾸지 않는다 — 늦게 도착한 크기 변경이 AI 의 화면 배치를 바꾸지 않게.
@@ -2189,6 +2277,12 @@ final class BrowserFeed {
     private func disconnect() {
         connectGeneration += 1
         connecting = false
+        if stream != nil {
+            DispatchQueue.main.async { [weak self] in
+                self?.onDialog?(nil)
+                self?.onUnresponsive?(false)
+            }
+        }
         if let stream { Task { await stream.stop() } }
         client?.onClose = nil
         client?.close()
