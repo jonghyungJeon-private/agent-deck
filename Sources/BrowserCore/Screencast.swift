@@ -210,10 +210,11 @@ public final class ScreencastStream {
     /// 답하지 않은 대화상자가 있다(보는 탭이든 남겨 둔 탭이든)
     public var hasPendingDialogs: Bool { lock.locked { !dialogs.isEmpty } }
 
-    /// 칸이 잠깐 안 보인다(가려짐·최소화): 그림만 멈추고 연결은 둔다 — 대화상자에 답할 연결을 지키려고(떼면 그 탭은 응답 없음이 된다)
-    public func suspendFrames() async {
+    /// 칸이 잠깐 안 보인다(가려짐·최소화): 그림만 멈추고 연결은 둔다 — 대화상자에 답할 연결을 지키려고(떼면 그 탭은 응답 없음이 된다).
+    /// `resumeFrames` 와 같이 부른 순서대로 보낸다(곧바로 다시 보여도 멈춤이 다시 받기 뒤에 도착해 화면이 서지 않게)
+    public func suspendFrames() {
         guard let session = lock.locked({ sessionId }) else { return }
-        _ = try? await client.send("Page.stopScreencast", sessionId: session, timeout: 2)
+        client.post("Page.stopScreencast", sessionId: session)
     }
 
     /// 다시 보인다: 그림을 다시 받는다
@@ -266,6 +267,32 @@ public final class ScreencastStream {
             return true
         }
         if changed { onUnresponsive?(target, !answered) }
+    }
+
+    /// 탭이 닫혔거나(targetDestroyed) 그 연결이 끊겼다(detachedFromTarget) — 닫힌 탭은 대화상자 닫힘 알림 없이 사라질 수 있다.
+    /// 그 연결로는 더 답할 수 없으니 그 탭의 대화상자·남겨 둔 연결을 잊는다.
+    private func forget(_ event: CDPEvent) {
+        let result: (target: String, shown: Bool, hadDialog: Bool, wasHung: Bool)? = lock.locked {
+            let target: String
+            if event.method == "Target.targetDestroyed" {
+                guard let t = event.params["targetId"] as? String else { return nil }
+                target = t
+                sessionTargets = sessionTargets.filter { $0.value != t }
+                kept[t] = nil
+            } else {
+                guard let session = event.params["sessionId"] as? String, let t = sessionTargets.removeValue(forKey: session) else { return nil }
+                target = t
+                if kept[t] == session { kept[t] = nil } else if !(targetId == t && sessionId == session) { return nil }
+            }
+            let shown = targetId == target
+            let hadDialog = dialogs.removeValue(forKey: target) != nil
+            let wasHung = shown && unresponsive
+            if wasHung { unresponsive = false }
+            return (target, shown, hadDialog, wasHung)
+        }
+        guard let result, result.shown else { return }
+        if result.hadDialog { onDialog?(nil) }
+        if result.wasHung { onUnresponsive?(result.target, false) }
     }
 
     fileprivate func dialogClosed(target: String) {
@@ -336,6 +363,10 @@ public final class ScreencastStream {
     public func handle(_ event: CDPEvent) -> Bool {
         if event.method == "Page.javascriptDialogOpening" || event.method == "Page.javascriptDialogClosed" {
             return handleDialog(event)
+        }
+        if event.method == "Target.targetDestroyed" || event.method == "Target.detachedFromTarget" {
+            forget(event) // 다른 쪽(feed)도 이 알림을 쓴다
+            return false
         }
         guard event.method == "Page.screencastFrame" else {
             // 응답 없던 탭에서 렌더러가 보내는 Page 알림(이동·읽기)이 왔다: 막혔던 렌더러가 풀려(다른 쪽이 대화상자에 답했거나

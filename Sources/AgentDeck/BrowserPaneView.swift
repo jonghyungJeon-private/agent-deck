@@ -1761,7 +1761,7 @@ final class BrowserFeed {
             frames = LatestFrameQueue<ScreencastFrame>()
             if let stream, stream.hasPendingDialogs {
                 framesSuspended = true
-                Task { await stream.suspendFrames() }
+                stream.suspendFrames()
             } else {
                 disconnect()
             }

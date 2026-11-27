@@ -223,7 +223,7 @@ final class ScreencastDialogTests: XCTestCase {
         // 칸이 잠깐 가려져도(그림만 멈춤) 연결은 그대로 둔다
         XCTAssertTrue(stream.hasPendingDialogs)
         let stops = t.methods("Page.stopScreencast").count
-        await stream.suspendFrames()
+        stream.suspendFrames()
         XCTAssertEqual(t.methods("Page.stopScreencast").count, stops + 1)
         XCTAssertEqual(t.methods("Target.detachFromTarget").count, 1)
         stream.resumeFrames()
@@ -232,6 +232,28 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertTrue(stream.handle(closedEvent("S-T1")))
         await until { t.methods("Target.detachFromTarget").count == 2 }
         XCTAssertEqual(t.methods("Target.detachFromTarget").last.flatMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }, "S-T1")
+    }
+
+    func testAClosedTabForgetsItsDialogAndKeptSession() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        try await stream.show(target: "T1")
+        _ = stream.handle(dialogEvent("S-T1"))
+        try await stream.show(target: "T2") // T1 의 연결은 남겨 둔다
+        XCTAssertTrue(stream.hasPendingDialogs)
+        // 칩으로 T1 을 닫았다: 대화상자 닫힘 알림 없이 사라진다
+        XCTAssertFalse(stream.handle(CDPEvent(method: "Target.detachedFromTarget", params: ["sessionId": "S-T1", "targetId": "T1"], sessionId: nil)))
+        XCTAssertFalse(stream.handle(CDPEvent(method: "Target.targetDestroyed", params: ["targetId": "T1"], sessionId: nil)))
+        XCTAssertFalse(stream.hasPendingDialogs)
+        XCTAssertFalse(stream.handle(dialogEvent("S-T1"))) // 잊은 연결
+        // 보는 탭이 닫혀도 카드를 걷는다
+        var seen: [PageDialog?] = []
+        stream.onDialog = { seen.append($0) }
+        _ = stream.handle(dialogEvent("S-T2"))
+        _ = stream.handle(CDPEvent(method: "Target.targetDestroyed", params: ["targetId": "T2"], sessionId: nil))
+        XCTAssertNil(stream.currentDialog)
+        XCTAssertEqual(seen.count, 2)
+        XCTAssertNil(seen.last!)
     }
 
     func testAHungTabIsShownAsUnresponsiveWithoutRetryingAndRecovers() async throws {
