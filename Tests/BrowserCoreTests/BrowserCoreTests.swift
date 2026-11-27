@@ -128,6 +128,8 @@ final class AutoTransport: CDPTransport {
     var onMessage: ((String) -> Void)?
     var onClose: ((Error?) -> Void)?
     var silent: Set<String> = []
+    /// 답을 보내기 직전에 부른다(method, sessionId) — 응답 전에 알림이 끼어드는 경우를 만든다
+    var beforeReply: ((String, String) -> Void)?
     private let lock = NSLock()
     private var _sent: [[String: Any]] = []
     var sent: [[String: Any]] { lock.locked { _sent } }
@@ -143,6 +145,7 @@ final class AutoTransport: CDPTransport {
             result = ["sessionId": "S-" + target]
         }
         if method == "Page.enable", silent.contains(String(session.dropFirst(2))) { return }
+        beforeReply?(method, session)
         let reply: [String: Any] = ["id": message["id"]!, "result": result]
         DispatchQueue.global().async { self.push(reply) }
     }
@@ -232,6 +235,22 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertTrue(stream.handle(closedEvent("S-T1")))
         await until { t.methods("Target.detachFromTarget").count == 2 }
         XCTAssertEqual(t.methods("Target.detachFromTarget").last.flatMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }, "S-T1")
+    }
+
+    func testADialogOpeningWhileLeavingTheTabKeepsItsSession() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        try await stream.show(target: "T1")
+        // 떠나며 screencast 를 멈추는 사이에 대화상자 알림이 온다
+        t.beforeReply = { method, session in
+            if method == "Page.stopScreencast", session == "S-T1" { _ = stream.handle(self.dialogEvent("S-T1")) }
+        }
+        try await stream.show(target: "T2")
+        XCTAssertTrue(t.methods("Target.detachFromTarget").isEmpty) // 떼지 않고 남겨 둔다
+        t.beforeReply = nil
+        try await stream.show(target: "T1")
+        XCTAssertEqual(t.methods("Target.attachToTarget").count, 2) // 돌아올 때 그 연결을 다시 쓴다
+        XCTAssertEqual(stream.currentDialog?.targetId, "T1")
     }
 
     func testAClosedTabForgetsItsDialogAndKeptSession() async throws {

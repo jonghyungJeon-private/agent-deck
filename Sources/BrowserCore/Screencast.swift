@@ -114,7 +114,7 @@ public final class ScreencastStream {
         // 떠나는 탭의 카드는 바로 걷는다(새 탭의 것은 붙은 뒤 announce 가 — 새 탭이 막혀 있으면 몇 초 걸린다)
         if let old = claimed.wasUnresponsive { onUnresponsive?(old, false) }
         if claimed.hadDialog { onDialog?(nil) }
-        if let previous = claimed.detach { await detach(previous) }
+        if let previous = claimed.detach { await detachOrKeep(previous) }
         if let parked = claimed.park { _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2) }
         if let session = claimed.reuse {
             // 대화상자 때문에 남겨 둔 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
@@ -204,7 +204,20 @@ public final class ScreencastStream {
             kept[target] = session
             return true
         }
-        if !park { await detach(session) }
+        if !park { await detachOrKeep(session) }
+    }
+
+    /// 다 쓴 연결을 뗀다 — screencast 를 멈추는 사이 그 탭에 대화상자가 떴으면(알림이 늦게 옴) 떼지 않고 남겨 둔다
+    private func detachOrKeep(_ session: String) async {
+        _ = try? await client.send("Page.stopScreencast", sessionId: session, timeout: 2)
+        let keep: Bool = lock.locked {
+            guard let target = sessionTargets[session], dialogs[target] != nil, targetId != target, kept[target] == nil else { return false }
+            kept[target] = session
+            return true
+        }
+        if keep { return }
+        _ = try? await client.send("Target.detachFromTarget", ["sessionId": session], timeout: 2)
+        lock.locked { _ = sessionTargets.removeValue(forKey: session) }
     }
 
     /// 답하지 않은 대화상자가 있다(보는 탭이든 남겨 둔 탭이든)
