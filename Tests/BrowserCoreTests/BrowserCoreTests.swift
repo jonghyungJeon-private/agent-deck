@@ -340,6 +340,29 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(t.methods("Target.attachToTarget").filter { ($0["params"] as? [String: Any])?["targetId"] as? String == "A" }.count, 1)
     }
 
+    func testComingBackWhileAKeptSessionIsBeingDetachedReusesIt() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        try await stream.show(target: "T1")
+        _ = stream.handle(dialogEvent("S-T1"))
+        try await stream.show(target: "T2")
+        // 남겨 둔 T1 의 대화상자가 닫혀 떼려고 멈추는 사이: 새 대화상자가 뜨고, 그 답이 오기 전에 T1 으로 돌아온다
+        let back = DispatchSemaphore(value: 0)
+        t.beforeReply = { method, session in
+            guard method == "Page.stopScreencast", session == "S-T1" else { return }
+            t.beforeReply = nil
+            _ = stream.handle(self.dialogEvent("S-T1", message: "또?"))
+            Task { try? await stream.show(target: "T1"); back.signal() }
+            XCTAssertEqual(back.wait(timeout: .now() + 2), .success)
+        }
+        XCTAssertTrue(stream.handle(closedEvent("S-T1")))
+        await until { stream.currentTarget == "T1" && stream.currentDialog?.message == "또?" }
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(t.methods("Target.attachToTarget").count, 2) // T1 에 다시 붙지 않는다
+        XCTAssertFalse(t.methods("Target.detachFromTarget").contains { ($0["params"] as? [String: Any])?["sessionId"] as? String == "S-T1" })
+        XCTAssertEqual(stream.currentDialog?.message, "또?")
+    }
+
     func testANewDialogRightAfterAKeptOneClosesKeepsTheSession() async throws {
         let t = AutoTransport()
         let stream = ScreencastStream(client: CDPClient(transport: t))

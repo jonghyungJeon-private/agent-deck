@@ -363,7 +363,9 @@ public final class ScreencastStream {
     fileprivate func dialogClosed(target: String) {
         let (shown, park): (Bool, String?) = lock.locked {
             guard dialogs.removeValue(forKey: target) != nil else { return (false, nil) }
-            return (targetId == target, kept.removeValue(forKey: target))
+            let park = kept.removeValue(forKey: target)
+            if let park { detaching[target] = park } // 떼는 사이 그 탭으로 돌아오면 이 연결을 다시 쓴다
+            return (targetId == target, park)
         }
         if shown { onDialog?(nil) }
         if let park { Task { await detachOrKeep(park) } } // 그새 같은 탭에 새 대화상자가 떴으면 남겨 둔다
