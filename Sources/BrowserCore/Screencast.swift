@@ -50,6 +50,8 @@ public final class ScreencastStream {
     private let settings: ScreencastSettings
     /// 탭에 붙은 뒤 Page.enable 을 기다리는 시간. 넘기면 그 탭은 "응답 없음"(대화상자가 떠 있는데 답할 연결이 없는 탭 등)
     private let enableTimeout: TimeInterval
+    /// 응답 없는 탭에 다시 물어보는 간격(오래 도는 스크립트 등은 이동 없이 풀린다 — 이동 알림만 기다리면 계속 막힌 것으로 남는다)
+    private let probeInterval: TimeInterval
     fileprivate let lock = NSLock()
     fileprivate var targetId: String?
     private var sessionId: String?
@@ -71,10 +73,12 @@ public final class ScreencastStream {
     /// 보는 탭이 응답하지 않게 됐다(true)·다시 응답한다(false). 아무 스레드에서나 불린다
     public var onUnresponsive: ((Bool) -> Void)?
 
-    public init(client: CDPClient, settings: ScreencastSettings = ScreencastSettings(), enableTimeout: TimeInterval = 5) {
+    public init(client: CDPClient, settings: ScreencastSettings = ScreencastSettings(), enableTimeout: TimeInterval = 5,
+                probeInterval: TimeInterval = 3) {
         self.client = client
         self.settings = settings
         self.enableTimeout = enableTimeout
+        self.probeInterval = probeInterval
     }
 
     public var currentTarget: String? { lock.locked { targetId } }
@@ -135,6 +139,7 @@ public final class ScreencastStream {
             if !answered { lock.locked { unresponsive = true } }
             _ = try await client.send("Page.startScreencast", screencastParams, sessionId: session)
             announce(target: target, generation: claimed.generation)
+            if !answered { probe(session, generation: claimed.generation) }
         } catch {
             // 실패하면 이 탭을 본다고 남기지 않는다(다음에 다시 시도할 수 있게)
             lock.locked { if generation == claimed.generation { targetId = nil; unresponsive = false } }
@@ -152,6 +157,25 @@ public final class ScreencastStream {
     }
 
     /// 붙은 연결을 이 스트림의 것으로 — 그새 다른 show·stop 이 왔으면 false
+    /// 응답 없는 탭: 이 탭을 보는 동안 `probeInterval` 마다 Page.enable(이미 켜졌으면 아무 일 없음)을 다시 보내 답이 오면 풀린 것으로 본다.
+    /// 다른 탭으로 옮기거나 멈추거나(세대가 바뀜) 다른 길로 풀리면 그만둔다.
+    private func probe(_ session: String, generation claimed: Int) {
+        Task { [weak self] in
+            while let self {
+                try? await Task.sleep(nanoseconds: UInt64(self.probeInterval * 1_000_000_000))
+                guard self.lock.locked({ self.generation == claimed && self.sessionId == session && self.unresponsive }) else { return }
+                guard (try? await self.client.send("Page.enable", sessionId: session, timeout: self.enableTimeout)) != nil else { continue }
+                let recovered: Bool = self.lock.locked {
+                    guard self.generation == claimed, self.sessionId == session, self.unresponsive else { return false }
+                    self.unresponsive = false
+                    return true
+                }
+                if recovered { self.onUnresponsive?(false) }
+                return
+            }
+        }
+    }
+
     private func install(_ session: String, generation claimed: Int) -> Bool {
         lock.locked {
             guard generation == claimed else { return false }

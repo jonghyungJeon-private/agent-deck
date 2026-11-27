@@ -243,6 +243,26 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(flags, [true, false])
     }
 
+    func testAnUnresponsiveTabThatRecoversWithoutNavigatingIsNoticedByProbing() async throws {
+        let t = AutoTransport()
+        t.silent = ["T1"]
+        let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.05, probeInterval: 0.05)
+        var flags: [Bool] = []
+        stream.onUnresponsive = { flags.append($0) }
+        try await stream.show(target: "T1")
+        XCTAssertTrue(stream.isUnresponsive)
+        await until { t.methods("Page.enable").count >= 3 } // 막혀 있는 동안 다시 묻는다
+        XCTAssertTrue(stream.isUnresponsive)
+        t.silent = [] // 오래 돌던 스크립트가 끝났다(이동 없음)
+        await until { !stream.isUnresponsive }
+        XCTAssertFalse(stream.isUnresponsive)
+        XCTAssertEqual(flags, [true, false])
+        // 풀리면 그만 묻는다
+        let asked = t.methods("Page.enable").count
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(t.methods("Page.enable").count, asked)
+    }
+
     func testAPageEventFromAnUnresponsiveTabMeansItAnswersAgain() async throws {
         let t = AutoTransport()
         t.silent = ["T1"]
