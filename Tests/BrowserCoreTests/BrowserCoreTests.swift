@@ -128,6 +128,9 @@ final class AutoTransport: CDPTransport {
     var onMessage: ((String) -> Void)?
     var onClose: ((Error?) -> Void)?
     var silent: Set<String> = []
+    /// 같은 탭에 다시 붙으면 다른 연결 이름("S-T1#2")을 준다
+    var uniqueSessions = false
+    private var attaches: [String: Int] = [:]
     /// 답을 보내기 직전에 부른다(method, sessionId) — 응답 전에 알림이 끼어드는 경우를 만든다
     var beforeReply: ((String, String) -> Void)?
     private let lock = NSLock()
@@ -142,9 +145,10 @@ final class AutoTransport: CDPTransport {
         let session = message["sessionId"] as? String ?? ""
         var result: [String: Any] = [:]
         if method == "Target.attachToTarget", let target = (message["params"] as? [String: Any])?["targetId"] as? String {
-            result = ["sessionId": "S-" + target]
+            let n = lock.locked { () -> Int in attaches[target, default: 0] += 1; return attaches[target]! }
+            result = ["sessionId": "S-" + target + (uniqueSessions && n > 1 ? "#\(n)" : "")]
         }
-        if method == "Page.enable", silent.contains(String(session.dropFirst(2))) { return }
+        if method == "Page.enable", silent.contains(String(session.dropFirst(2).split(separator: "#").first ?? "")) { return }
         beforeReply?(method, session)
         let reply: [String: Any] = ["id": message["id"]!, "result": result]
         DispatchQueue.global().async { self.push(reply) }
@@ -281,6 +285,30 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(t.methods("Page.startScreencast").last?["sessionId"] as? String, "S-T1")
         await stream.answerDialog(target: "T1", dialogId: try XCTUnwrap(stream.currentDialog?.id), accept: true)
         XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").map { $0["sessionId"] as? String }, ["S-T1"])
+    }
+
+    func testComingBackBeforeATabFinishedEnablingAttachesAgain() async throws {
+        let t = AutoTransport()
+        t.uniqueSessions = true
+        t.silent = ["T1"]
+        let stream = ScreencastStream(client: CDPClient(transport: t), enableTimeout: 0.3, probeInterval: 60)
+        let first = Task { try? await stream.show(target: "T1") }
+        await until { !t.methods("Page.enable").isEmpty }
+        // 켜는 중에 떠났다가, 떼기가 끝나기 전에 돌아온다: 그 연결은 응답하는지 모르니 다시 쓰지 않고 새로 붙어 잰다
+        let back = DispatchSemaphore(value: 0)
+        t.beforeReply = { method, session in
+            guard method == "Page.stopScreencast", session == "S-T1" else { return }
+            t.beforeReply = nil
+            Task { try? await stream.show(target: "T1"); back.signal() }
+            XCTAssertEqual(back.wait(timeout: .now() + 3), .success)
+        }
+        try await stream.show(target: "T2")
+        await first.value
+        XCTAssertEqual(t.methods("Target.attachToTarget").filter { ($0["params"] as? [String: Any])?["targetId"] as? String == "T1" }.count, 2)
+        XCTAssertEqual(stream.currentTarget, "T1")
+        XCTAssertTrue(stream.isUnresponsive) // 새 연결이 응답 없음을 잰다
+        await until { t.methods("Target.detachFromTarget").count == 2 }
+        XCTAssertEqual(Set(t.methods("Target.detachFromTarget").compactMap { ($0["params"] as? [String: Any])?["sessionId"] as? String }), ["S-T1", "S-T2"])
     }
 
     func testANewDialogRightAfterAKeptOneClosesKeepsTheSession() async throws {

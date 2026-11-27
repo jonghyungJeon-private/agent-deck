@@ -76,6 +76,8 @@ public final class ScreencastStream {
     /// 떠나며 떼는 중인 연결(탭 → 연결): 떼기가 끝나기 전에 그 탭으로 돌아오면 새로 붙지 않고 이것을 다시 쓴다 —
     /// 떼는 사이 그 탭에 대화상자가 떴으면 답할 수 있는 연결은 이것뿐이다
     private var detaching: [String: String] = [:]
+    /// Page.enable 이 답한 연결 — 떼던 연결을 다시 쓸 수 있는 것은 이것뿐(켜는 중에 떠났다 돌아오면 새로 붙어 응답 여부를 다시 잰다)
+    private var ready: Set<String> = []
     /// 보는 탭이 응답하지 않는다(Page.enable 이 시간 안에 끝나지 않음)
     private var unresponsive = false
 
@@ -117,8 +119,8 @@ public final class ScreencastStream {
                 kept[old] = previous
                 park = previous
                 detach = nil
-            } else if let previous = sessionId, let old = targetId, !unresponsive {
-                detaching[old] = previous // 응답 없는 탭의 연결은 다시 쓰지 않는다(돌아오면 새로 붙어 다시 잰다)
+            } else if let previous = sessionId, let old = targetId, !unresponsive, ready.contains(previous) {
+                detaching[old] = previous // 응답 없거나 아직 켜는 중인 탭의 연결은 다시 쓰지 않는다(돌아오면 새로 붙어 다시 잰다)
             }
             let wasUnresponsive = unresponsive ? targetId : nil
             defer { targetId = target; sessionId = nil; unresponsive = false }
@@ -130,7 +132,11 @@ public final class ScreencastStream {
         if let old = claimed.wasUnresponsive { onUnresponsive?(old, false) }
         if claimed.hadDialog { onDialog?(nil) }
         if let previous = claimed.detach { await detachOrKeep(previous) }
-        if let parked = claimed.park { _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2) }
+        if let parked = claimed.park {
+            _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2)
+            // 그 사이 그 탭으로 돌아와 이 연결을 다시 쓰고 있으면 멈춤이 다시 받기보다 늦게 닿았을 수 있다: 그림을 다시 받는다
+            if lock.locked({ sessionId == parked }) { client.post("Page.startScreencast", screencastParams, sessionId: parked) }
+        }
         if let session = claimed.reuse {
             // 대화상자 때문에 남겨 둔(또는 떼던) 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
             guard install(session, generation: claimed.generation) else { await release(session); return }
@@ -151,6 +157,7 @@ public final class ScreencastStream {
             }
             // 세대 확인과 표시를 한 자물쇠 안에서: 그새 다른 탭으로 옮겼으면 옛 탭의 시간 초과가 새 탭을 막힌 것으로 만들지 않는다
             let stillCurrent: Bool = lock.locked {
+                if answered { ready.insert(session) }
                 guard generation == claimed.generation else { return false }
                 if !answered { unresponsive = true }
                 return true
@@ -185,6 +192,7 @@ public final class ScreencastStream {
                 guard self.lock.locked({ self.generation == claimed && self.sessionId == session && self.unresponsive }) else { return }
                 guard (try? await self.client.send("Page.enable", sessionId: session, timeout: self.enableTimeout)) != nil else { continue }
                 let recovered: Bool = self.lock.locked {
+                    self.ready.insert(session)
                     guard self.generation == claimed, self.sessionId == session, self.unresponsive else { return false }
                     self.unresponsive = false
                     return true
@@ -239,7 +247,7 @@ public final class ScreencastStream {
         if outcome == .reused { client.post("Page.startScreencast", screencastParams, sessionId: session) }
         if outcome != .detach { return }
         _ = try? await client.send("Target.detachFromTarget", ["sessionId": session], timeout: 2)
-        lock.locked { _ = sessionTargets.removeValue(forKey: session) }
+        lock.locked { _ = sessionTargets.removeValue(forKey: session); _ = ready.remove(session) }
     }
 
     /// 답하지 않은 대화상자가 있다(보는 탭이든 남겨 둔 탭이든)
@@ -270,25 +278,39 @@ public final class ScreencastStream {
     private func detach(_ session: String) async {
         _ = try? await client.send("Page.stopScreencast", sessionId: session, timeout: 2)
         _ = try? await client.send("Target.detachFromTarget", ["sessionId": session], timeout: 2)
-        lock.locked { _ = sessionTargets.removeValue(forKey: session) }
+        lock.locked { _ = sessionTargets.removeValue(forKey: session); _ = ready.remove(session) }
     }
 
     /// `target` 탭의 대화상자에 답한다(`accept`: 확인·나가기, `text`: prompt 에 넣을 글) — 사람이 본 그 대화상자의 탭으로.
     /// 누른 뒤 보는 탭이 바뀌었어도 다른 탭의 대화상자에 답이 가지 않는다(그 탭이 남겨 둔 연결이면 그리로). 이미 닫혔으면 그렇다고 알린다.
     /// `dialogId`: 사람이 본 대화상자 — 그것이 아직 떠 있을 때 한 번만 답한다.
-    public func answerDialog(target: String, dialogId: Int, accept: Bool, text: String? = nil) async {
-        guard let session = lock.locked({ () -> String? in
-            guard dialogs[target]?.id == dialogId, answered.insert(dialogId).inserted else { return nil }
-            return targetId == target ? sessionId : kept[target]
-        }) else { return }
+    /// false = 보내지 못했다(다시 답할 수 있다). 이미 답했거나 그 대화상자가 없어졌으면 true(더 할 일 없음)
+    @discardableResult
+    public func answerDialog(target: String, dialogId: Int, accept: Bool, text: String? = nil) async -> Bool {
+        enum Pick { case send(String), done, unsendable }
+        let pick: Pick = lock.locked {
+            guard dialogs[target]?.id == dialogId, !answered.contains(dialogId) else { return .done }
+            guard let session = targetId == target ? sessionId : kept[target] else { return .unsendable }
+            answered.insert(dialogId)
+            return .send(session)
+        }
+        guard case .send(let session) = pick else {
+            if case .done = pick { return true }
+            return false
+        }
         var params: [String: Any] = ["accept": accept]
         if let text { params["promptText"] = text }
         do {
             _ = try await client.send("Page.handleJavaScriptDialog", params, sessionId: session)
+            return true
         } catch CDPError.protocolError {
             // "No dialog is showing": 다른 쪽(abx 등)이 먼저 답했다 — 닫힘 알림을 놓쳤어도 지운다
             dialogClosed(target: target)
-        } catch {}
+            return true
+        } catch {
+            lock.locked { _ = answered.remove(dialogId) } // 닿지 않았다: 다시 누를 수 있게
+            return false
+        }
     }
 
     /// `target` 이 보는 탭이면 새로고침한다(누른 뒤 다른 탭으로 옮겼으면 아무것도 하지 않는다). 아무도 답할 수 없는 대화상자가 떠 있어
@@ -298,6 +320,7 @@ public final class ScreencastStream {
         guard (try? await client.send("Page.reload", sessionId: session)) != nil else { return }
         let answered = (try? await client.send("Page.enable", sessionId: session, timeout: enableTimeout)) != nil
         let changed: Bool = lock.locked {
+            if answered { ready.insert(session) }
             guard sessionId == session, unresponsive == answered else { return false }
             unresponsive = !answered
             return true
@@ -313,11 +336,13 @@ public final class ScreencastStream {
             if event.method == "Target.targetDestroyed" {
                 guard let t = event.params["targetId"] as? String else { return nil }
                 target = t
+                ready.subtract(sessionTargets.filter { $0.value == t }.keys)
                 sessionTargets = sessionTargets.filter { $0.value != t }
                 kept[t] = nil
                 detaching[t] = nil
             } else {
                 guard let session = event.params["sessionId"] as? String, let t = sessionTargets.removeValue(forKey: session) else { return nil }
+                ready.remove(session)
                 target = t
                 if detaching[t] == session { detaching[t] = nil }
                 if kept[t] == session { kept[t] = nil } else if !(targetId == t && sessionId == session) { return nil }

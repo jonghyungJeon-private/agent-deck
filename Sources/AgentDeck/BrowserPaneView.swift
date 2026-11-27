@@ -418,10 +418,15 @@ final class BrowserPaneView: NSView {
     private func answerNotice(accept: Bool, text: String?) {
         onUserInteraction?()
         if let dialog = pageDialog {
-            guard acceptsInput, answeredDialog != dialog.id else { return }
+            guard acceptsInput, answeredDialog != dialog.id, let feed else { return }
             answeredDialog = dialog.id // 한 번만(두 번 눌러도, 닫힘 알림이 오기 전에 다시 Return 을 눌러도)
             updateNotice()
-            feed?.answerDialog(dialog, accept: accept, text: text)
+            // 보내지 못했으면(그새 제어가 넘어갔거나 연결이 끊김) 다시 누를 수 있게 되돌린다
+            feed.answerDialog(dialog, accept: accept, text: text) { [weak self] in
+                guard let self, self.answeredDialog == dialog.id else { return }
+                self.answeredDialog = nil
+                self.updateNotice()
+            }
         } else if let target = pageUnresponsive {
             // 카드의 그 탭에(그새 다른 탭으로 옮겼어도 다른 탭을 닫거나 새로고침하지 않게)
             if accept { feed?.reloadTab(target) } else { feed?.closeTab(target) }
@@ -1930,10 +1935,15 @@ final class BrowserFeed {
 
     /// 카드에 보인 대화상자(그 탭)에 답한다 — 그새 보는 탭이 바뀌어도 그 탭의 것에만.
     /// 페이지 입력과 같은 규칙: 사람이 제어를 가진 동안만(그새 에이전트에게 넘어갔으면 늦은 클릭은 버린다)
-    func answerDialog(_ dialog: PageDialog, accept: Bool, text: String?) {
+    /// `unsent`: 보내지 못했을 때 메인 스레드에서 부른다
+    func answerDialog(_ dialog: PageDialog, accept: Bool, text: String?, unsent: @escaping () -> Void) {
         queue.async { [self] in
-            guard control == .user, !releasing, let stream else { return }
-            Task { await stream.answerDialog(target: dialog.targetId, dialogId: dialog.id, accept: accept, text: text) }
+            guard control == .user, !releasing, let stream else { DispatchQueue.main.async(execute: unsent); return }
+            Task {
+                if await !stream.answerDialog(target: dialog.targetId, dialogId: dialog.id, accept: accept, text: text) {
+                    DispatchQueue.main.async(execute: unsent)
+                }
+            }
         }
     }
 
