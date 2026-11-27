@@ -98,15 +98,17 @@ final class PageNoticeView: NSView {
         case "beforeunload": ("이 페이지에서 나갈까요?", "머무르기", "나가기")
         default: ("페이지 알림", nil, "확인")
         }
-        let wasPrompt = isPrompt
+        let wasPrompt = isPrompt && !isHidden
+        let wasEnabled = field.isEnabled
         isPrompt = dialog.type == "prompt"
-        if isPrompt, !wasPrompt || isHidden { field.stringValue = dialog.defaultPrompt }
+        if isPrompt, !wasPrompt { field.stringValue = dialog.defaultPrompt }
         let message = dialog.message.isEmpty && dialog.type == "beforeunload" ? "변경한 내용이 저장되지 않을 수 있습니다." : dialog.message
         fill(title: title, message: message, cancel: cancel, ok: ok,
              hint: canAnswer ? nil : "답하려면 \u{201C}제어 가져오기\u{201D}", enabled: canAnswer)
         field.isHidden = !isPrompt
         field.isEnabled = canAnswer
-        if isPrompt, canAnswer, window?.firstResponder !== field.currentEditor() { window?.makeFirstResponder(field) }
+        // 글 칸은 prompt 가 막 떴거나 막 답할 수 있게 됐을 때만 잡는다 — 상태를 다시 그릴 때마다 잡으면 사람이 옮긴 포커스를 빼앗는다
+        if isPrompt, canAnswer, !wasPrompt || !wasEnabled { window?.makeFirstResponder(field) }
     }
 
     /// 보는 탭이 응답하지 않는다(답할 곳 없는 대화상자가 떠 있는 탭 등)
