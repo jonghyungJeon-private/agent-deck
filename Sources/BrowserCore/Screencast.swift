@@ -73,6 +73,9 @@ public final class ScreencastStream {
     /// 대화상자가 떠 있는 채로 다른 탭으로 옮겨 간 탭의 연결: 떼지 않고 둔다(떼면 그 대화상자는 아무도 닫을 수 없다).
     /// 그 탭으로 돌아오면 이 연결을 다시 쓴다. 대화상자가 닫히면(누가 답했든) 뗀다.
     private var kept: [String: String] = [:]
+    /// 떠나며 떼는 중인 연결(탭 → 연결): 떼기가 끝나기 전에 그 탭으로 돌아오면 새로 붙지 않고 이것을 다시 쓴다 —
+    /// 떼는 사이 그 탭에 대화상자가 떴으면 답할 수 있는 연결은 이것뿐이다
+    private var detaching: [String: String] = [:]
     /// 보는 탭이 응답하지 않는다(Page.enable 이 시간 안에 끝나지 않음)
     private var unresponsive = false
 
@@ -114,10 +117,13 @@ public final class ScreencastStream {
                 kept[old] = previous
                 park = previous
                 detach = nil
+            } else if let previous = sessionId, let old = targetId, !unresponsive {
+                detaching[old] = previous // 응답 없는 탭의 연결은 다시 쓰지 않는다(돌아오면 새로 붙어 다시 잰다)
             }
             let wasUnresponsive = unresponsive ? targetId : nil
             defer { targetId = target; sessionId = nil; unresponsive = false }
-            return (generation, detach, park, kept.removeValue(forKey: target), wasUnresponsive, park != nil)
+            let reuse = kept.removeValue(forKey: target) ?? detaching.removeValue(forKey: target)
+            return (generation, detach, park, reuse, wasUnresponsive, park != nil)
         }
         guard let claimed else { return }
         // 떠나는 탭의 카드는 바로 걷는다(새 탭의 것은 붙은 뒤 announce 가 — 새 탭이 막혀 있으면 몇 초 걸린다)
@@ -126,7 +132,7 @@ public final class ScreencastStream {
         if let previous = claimed.detach { await detachOrKeep(previous) }
         if let parked = claimed.park { _ = try? await client.send("Page.stopScreencast", sessionId: parked, timeout: 2) }
         if let session = claimed.reuse {
-            // 대화상자 때문에 남겨 둔 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
+            // 대화상자 때문에 남겨 둔(또는 떼던) 연결: Page 는 이미 켜져 있다(다시 켜면 멈춘 렌더러를 기다린다)
             guard install(session, generation: claimed.generation) else { await release(session); return }
             _ = try? await client.send("Page.startScreencast", screencastParams, sessionId: session)
             announce(target: target, generation: claimed.generation)
@@ -216,15 +222,22 @@ public final class ScreencastStream {
         if !park { await detachOrKeep(session) }
     }
 
-    /// 다 쓴 연결을 뗀다 — screencast 를 멈추는 사이 그 탭에 대화상자가 떴으면(알림이 늦게 옴) 떼지 않고 남겨 둔다
+    /// 다 쓴 연결을 뗀다 — screencast 를 멈추는 사이 그 탭에 대화상자가 떴으면(알림이 늦게 옴) 떼지 않고 남겨 둔다.
+    /// 그 사이 그 탭으로 돌아와 이 연결을 다시 쓰게 됐으면 떼지 않고, 멈춤이 다시 받기보다 늦게 닿았을 수 있어 그림을 다시 받는다
     private func detachOrKeep(_ session: String) async {
         _ = try? await client.send("Page.stopScreencast", sessionId: session, timeout: 2)
-        let keep: Bool = lock.locked {
-            guard let target = sessionTargets[session], dialogs[target] != nil, targetId != target, kept[target] == nil else { return false }
+        enum Outcome { case detach, keep, reused }
+        let outcome: Outcome = lock.locked {
+            guard let target = sessionTargets[session] else { return .detach }
+            if detaching[target] == session { detaching[target] = nil }
+            if sessionId == session { return .reused }
+            if kept[target] == session { return .keep }
+            guard dialogs[target] != nil, targetId != target, kept[target] == nil else { return .detach }
             kept[target] = session
-            return true
+            return .keep
         }
-        if keep { return }
+        if outcome == .reused { client.post("Page.startScreencast", screencastParams, sessionId: session) }
+        if outcome != .detach { return }
         _ = try? await client.send("Target.detachFromTarget", ["sessionId": session], timeout: 2)
         lock.locked { _ = sessionTargets.removeValue(forKey: session) }
     }
@@ -248,7 +261,7 @@ public final class ScreencastStream {
     public func stop() async {
         let sessions: [String] = lock.locked {
             generation += 1
-            defer { targetId = nil; sessionId = nil; unresponsive = false; kept = [:]; dialogs = [:] }
+            defer { targetId = nil; sessionId = nil; unresponsive = false; kept = [:]; dialogs = [:]; detaching = [:] }
             return (sessionId.map { [$0] } ?? []) + Array(kept.values)
         }
         for session in sessions { await detach(session) }
@@ -302,9 +315,11 @@ public final class ScreencastStream {
                 target = t
                 sessionTargets = sessionTargets.filter { $0.value != t }
                 kept[t] = nil
+                detaching[t] = nil
             } else {
                 guard let session = event.params["sessionId"] as? String, let t = sessionTargets.removeValue(forKey: session) else { return nil }
                 target = t
+                if detaching[t] == session { detaching[t] = nil }
                 if kept[t] == session { kept[t] = nil } else if !(targetId == t && sessionId == session) { return nil }
             }
             let shown = targetId == target

@@ -259,6 +259,30 @@ final class ScreencastDialogTests: XCTestCase {
         XCTAssertEqual(stream.currentDialog?.targetId, "T1")
     }
 
+    func testComingBackWhileTheTabIsStillBeingLeftReusesItsSession() async throws {
+        let t = AutoTransport()
+        let stream = ScreencastStream(client: CDPClient(transport: t))
+        try await stream.show(target: "T1")
+        // T1 을 떠나며 screencast 를 멈추는 사이 대화상자가 뜨고, 멈춤의 답이 오기 전에 T1 으로 돌아온다
+        let back = DispatchSemaphore(value: 0)
+        t.beforeReply = { method, session in
+            guard method == "Page.stopScreencast", session == "S-T1" else { return }
+            t.beforeReply = nil
+            _ = stream.handle(self.dialogEvent("S-T1"))
+            Task { try? await stream.show(target: "T1"); back.signal() }
+            XCTAssertEqual(back.wait(timeout: .now() + 2), .success)
+        }
+        try await stream.show(target: "T2")
+        await until { t.methods("Target.detachFromTarget").count == 1 }
+        // 대화상자를 가진 연결을 그대로 다시 쓴다: T1 에 새로 붙지 않고 S-T1 을 떼지 않는다(늦게 붙은 T2 만 뗀다)
+        XCTAssertEqual(t.methods("Target.attachToTarget").count, 2)
+        XCTAssertEqual(t.methods("Target.detachFromTarget").map { ($0["params"] as? [String: Any])?["sessionId"] as? String }, ["S-T2"])
+        XCTAssertEqual(stream.currentDialog?.targetId, "T1")
+        XCTAssertEqual(t.methods("Page.startScreencast").last?["sessionId"] as? String, "S-T1")
+        await stream.answerDialog(target: "T1", dialogId: try XCTUnwrap(stream.currentDialog?.id), accept: true)
+        XCTAssertEqual(t.methods("Page.handleJavaScriptDialog").map { $0["sessionId"] as? String }, ["S-T1"])
+    }
+
     func testANewDialogRightAfterAKeptOneClosesKeepsTheSession() async throws {
         let t = AutoTransport()
         let stream = ScreencastStream(client: CDPClient(transport: t))
